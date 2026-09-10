@@ -52,8 +52,15 @@ task updateTomlFiles {
     }
 }
 
-// Companion to updateTomlFiles, invoked by the release workflow so a version
-// bump lands in the repository rather than only in the build output.
+// Companion to updateTomlFiles: lands a version bump in the repository rather
+// than only in the build output.
+//
+// The io.ballerina.plugin wires this into the task graph itself -- confirmed
+// with `--dry-run`, which lists it under both `build` and `publish`, for a
+// -SNAPSHOT and a timestamped version alike. It is harmless in CI, which never
+// pushes, and a no-op whenever the toml files are actually unchanged, but a
+// local `./gradlew build` that does change them will commit on your branch
+// without asking. Pass `-x commitTomlFiles` when building locally.
 task commitTomlFiles {
     doLast {
         project.exec {
@@ -62,6 +69,34 @@ task commitTomlFiles {
                 commandLine 'cmd', '/c', "git commit -m \"[Automated] Update the toml files\" Ballerina.toml Dependencies.toml"
             } else {
                 commandLine 'sh', '-c', "git commit -m '[Automated] Update the toml files' Ballerina.toml Dependencies.toml"
+            }
+        }
+    }
+}
+
+// The `publish` task the root maven-publish plugin creates has nothing to
+// publish without this: `createArtifactZip` is the io.ballerina.plugin task
+// that packs the built bala, and this declares it as the single Maven
+// artifact, aimed at this repository's own GitHub Packages feed.
+//
+// The credentials come from publishUser / publishPAT, which the
+// build-timestamp-master and release workflows both set from the
+// BALLERINA_BOT secrets. Locally they are unset, so use publishToMavenLocal
+// rather than publish.
+publishing {
+    publications {
+        maven(MavenPublication) {
+            artifact source: createArtifactZip, extension: 'zip'
+        }
+    }
+
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/ballerina-platform/module-${packageOrg}-${packageName}")
+            credentials {
+                username = System.getenv("publishUser")
+                password = System.getenv("publishPAT")
             }
         }
     }
@@ -77,3 +112,10 @@ task commitTomlFiles {
 // updateTomlFiles, which runs first, so the distribution is in place before
 // anything needs it.
 updateTomlFiles.dependsOn copyStdlibs
+
+// The pom has to exist by the end of `build`, since the release workflow runs
+// `publish -x test` against an already-built tree. Both publish paths depend
+// on `build` so the bala createArtifactZip packs is never stale.
+build.dependsOn "generatePomFileForMavenPublication"
+publishToMavenLocal.dependsOn build
+publish.dependsOn build

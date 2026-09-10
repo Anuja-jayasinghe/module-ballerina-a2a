@@ -10,6 +10,7 @@
 
 pluginManagement {
     plugins {
+        id "net.researchgate.release" version "${releasePluginVersion}"
         id "io.ballerina.plugin" version "${ballerinaGradlePluginVersion}"
     }
 
@@ -25,8 +26,22 @@ pluginManagement {
     }
 }
 
+// The build workflows pass `--scan`. Without agreeing to the terms here the
+// scan is silently dropped ("The Gradle Terms of Use have not been agreed
+// to") and every build log carries that notice.
+plugins {
+    id "com.gradle.enterprise" version "3.13.2"
+}
+
 rootProject.name = 'a2a'
 
 include ':a2a-ballerina'
 
 project(':a2a-ballerina').projectDir = file('ballerina')
+
+gradleEnterprise {
+    buildScan {
+        termsOfServiceUrl = 'https://gradle.com/terms-of-service'
+        termsOfServiceAgree = 'yes'
+    }
+}

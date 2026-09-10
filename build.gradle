@@ -19,9 +19,28 @@
  * rather than left as dead references. See CONFORMANCE_CHECKLIST.md.
  */
 
+plugins {
+    // Provides the `release` task the release-package-template workflow runs
+    // as `./gradlew clean release -Prelease.useAutomaticVersion=true`. The
+    // spotbugs/shadow/download plugins the platform template also declares are
+    // omitted: all three exist to build native Java code, which this package
+    // has none of.
+    id "net.researchgate.release"
+}
+
 allprojects {
     group = project.group
     version = project.version
+
+    // maven-publish supplies the `publish` task. The master-branch build
+    // workflow (build-timestamp-master-template.yml) runs `./gradlew publish`
+    // to push a timestamped bala to GitHub Packages, and the release workflow
+    // runs it again with -PpublishToCentral=true; without this plugin both
+    // fail at configuration time with "Task 'publish' not found in root
+    // project 'a2a' and its subprojects". jacoco is applied alongside it for
+    // the coverage report the same workflow uploads to Codecov.
+    apply plugin: 'jacoco'
+    apply plugin: 'maven-publish'
 
     // Read by the io.ballerina.plugin at apply time. Without them the plugin
     // fails before it does anything, with "Cannot get property
@@ -78,6 +97,25 @@ subprojects {
         jbalTools("org.ballerinalang:jballerina-tools:${ballerinaLangVersion}") {
             transitive = false
         }
+    }
+}
+
+def moduleVersion = project.version.replace("-SNAPSHOT", "")
+
+// Drives the release workflow's `./gradlew clean release`: it bumps
+// gradle.properties, tags, and pushes. requireBranch keeps that from running
+// anywhere but the release branch the workflow creates.
+release {
+    failOnPublishNeeded = false
+
+    buildTasks = ["build"]
+    failOnSnapshotDependencies = true
+    versionPropertyFile = 'gradle.properties'
+    tagTemplate = 'v$version'
+
+    git {
+        requireBranch = "release-${moduleVersion}"
+        pushToRemote = 'origin'
     }
 }
 
