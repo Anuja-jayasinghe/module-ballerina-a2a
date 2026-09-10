@@ -1,0 +1,12 @@
+[package]
+org = "ballerina"
+name = "a2a"
+version = "@toml.version@"
+distribution = "2201.13.4"
+license = ["Apache-2.0"]
+authors = ["Ballerina"]
+keywords = ["a2a", "agent2agent", "agent", "protocol", "client"]
+repository = "https://github.com/ballerina-platform/module-ballerina-a2a"
+
+[build-options]
+observabilityIncluded = true
