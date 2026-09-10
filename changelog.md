@@ -14,6 +14,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Agent Card discovery and parsing: `resolveAgentCard`, `fetchAgentCardBody`, `parseAgentCardBody`.
 - Server-Sent Events streaming for `sendStreamingMessage` and `subscribeToTask`, with opt-in automatic reconnection.
 - Credential resolution by security-scheme name via `CredentialProvider` and `InMemoryCredentialStore`.
-- Agent Card signature verification (JWS over JCS, specification section 8.5): `verifyAgentCardSignature`, `canonicalizeAgentCardBody`.
-- Skill-level security helpers: `skillSecurityRequirements`, `resolveSecuritySchemes`, `isAuthorizationRequired`, `authorizationPrompt`.
 - The nine error types of specification section 5.4, each a distinct subtype of `Error`, plus `InternalError` for failures the protocol does not name.

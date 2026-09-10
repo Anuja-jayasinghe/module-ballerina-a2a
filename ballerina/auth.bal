@@ -191,12 +191,11 @@ isolated function credentialHeadersFor(AgentCard card, SecurityRequirement requi
 # is enough, so entries are tried in declared order and the first complete
 # match wins.
 #
-# Resolution is deliberately card-level, not per-skill. A `Message` carries
-# no skill identifier - neither in this library's type nor in the
-# specification's own proto - so at send time there is no way to know which
-# skill will serve a call, and therefore no way to pick that skill's
-# credential. `skillSecurityRequirements` (skill_security.bal) exposes the
-# per-skill view for callers that need it.
+# Resolution is deliberately card-level, not per-skill. A `a2a:Message` carries
+# no skill identifier — neither here nor in the specification's own proto — so
+# at send time there is no way to know which skill will serve a call, and
+# therefore no way to pick that skill's credential. Read
+# `AgentSkill.securityRequirements` off the card for the per-skill view.
 #
 # + card - The agent's card
 # + provider - Supplies credentials by scheme name, or () if the client was

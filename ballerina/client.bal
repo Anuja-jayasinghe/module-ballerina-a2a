@@ -160,13 +160,8 @@ isolated function stripTrailingSlash(string url) returns string {
 # tracing use rather than credentials.
 #
 # Reach for this only when the raw body itself is needed — verifying the card's
-# signature is the usual reason, since `a2a:verifyAgentCardSignature` must see
-# the response exactly as received. Otherwise use `a2a:resolveAgentCard`.
-#
-# ```ballerina
-# json raw = check a2a:fetchAgentCardBody("https://agent.example.com");
-# check a2a:verifyAgentCardSignature(raw, keyProvider);
-# ```
+# `signatures` is the usual reason, since section 8.4.3's canonicalization must
+# run on the response exactly as received. Otherwise use `a2a:resolveAgentCard`.
 #
 # + agentBaseUrl - Root URL of the agent with no path component
 # + clientConfig - Optional HTTP configuration for auth, TLS, or proxy

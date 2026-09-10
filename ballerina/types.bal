@@ -178,10 +178,10 @@ public type AgentCard record {|
     SecurityRequirement[] securityRequirements?;
     # JWS signatures over this card, per specification section 8.4.
     #
-    # Verification is not automatic — a caller supplies the public key, so it
-    # cannot be. Pass the raw card body and a key provider to
-    # `verifyAgentCardSignature`, which performs the RFC 8785 canonicalization
-    # section 8.4.3 requires and checks RS256 or ES256.
+    # Parsed but not verified by this library. Section 8.4.3's procedure needs
+    # a public key only the caller can supply, and canonicalizing the raw body
+    # rather than this record — a record carries defaults the signer never
+    # sent. Fetch the body with `a2a:fetchAgentCardBody` to verify it yourself.
     AgentCardSignature[] signatures?;
     // v1.0 removed the top-level `protocolVersion` and `url` fields: a card
     // now declares both per interface, in supportedInterfaces. They are

@@ -10,7 +10,6 @@ It includes capabilities for:
 2. **Delegating work** – Send a message and receive either a direct reply or a long-running task to follow.
 3. **Following progress** – Stream updates as they happen, or register a webhook and be called back.
 4. **Authenticating** – Satisfy the security schemes an agent declares, per skill where they differ.
-5. **Trusting a card** – Verify an Agent Card's signature before acting on what it claims.
 
 The specification defines three transport bindings. This module implements **HTTP+JSON**; a card declaring only JSON-RPC or gRPC is rejected when the client is constructed, rather than at the first call.
 
@@ -30,7 +29,7 @@ A `Client` is cheap to construct and needs no teardown — there is deliberately
 
 ### 1.1 Connecting from an already-resolved card
 
-When you have already fetched the card — to inspect its skills, or to verify its signature first — hand it over directly and it is not fetched twice:
+When you have already fetched the card — to inspect its skills before deciding to call it — hand it over directly and it is not fetched twice:
 
 ```ballerina
 a2a:AgentCard card = check a2a:resolveAgentCard("https://agent.example.com");
@@ -209,28 +208,26 @@ Implement `CredentialProvider` yourself to source credentials from wherever they
 
 ### 4.3 Skill-level requirements
 
-A skill can require more than the agent as a whole does. Read what a given skill asks for before calling it:
+A skill can require more than the agent as a whole does. `AgentSkill.securityRequirements` carries what a given skill asks for, and an empty list means it inherits the card's:
 
 ```ballerina
-a2a:SecurityRequirement[] required =
-    check a2a:skillSecurityRequirements(card, "adjust-payroll");
-
-foreach a2a:SecurityRequirement requirement in required {
-    map<a2a:SecurityScheme> schemes = check a2a:resolveSecuritySchemes(card, requirement);
-    // inspect what each scheme needs
+foreach a2a:AgentSkill skill in card.skills {
+    if skill.id == "adjust-payroll" {
+        io:println(skill.securityRequirements);
+    }
 }
 ```
 
-When an agent needs authorization it cannot obtain itself, it parks the task in `TASK_STATE_AUTH_REQUIRED` and explains what it needs:
+When an agent needs authorization it cannot obtain itself, it parks the task in `TASK_STATE_AUTH_REQUIRED` and attaches a status message explaining what it needs (specification section 7.6):
 
 ```ballerina
-if a2a:isAuthorizationRequired(task) {
-    a2a:Message? prompt = a2a:authorizationPrompt(task);
+if task.status.state == a2a:TASK_STATE_AUTH_REQUIRED {
+    a2a:Message? prompt = task.status?.message;
     // surface the prompt to whoever can satisfy it, then resume
 }
 ```
 
-## 5. Trusting a card
+## 5. Inspecting a card
 
 `resolveAgentCard` fetches and parses a card without constructing a client — useful for inspecting an agent's skills before deciding to call it:
 
@@ -241,15 +238,13 @@ foreach a2a:AgentSkill skill in card.skills {
 }
 ```
 
-A card can be signed. Verify it against the raw body rather than a parsed record — canonicalizing a parsed `AgentCard` would inject every Ballerina-side default the signer never included, and verification would fail against a conformant signer:
+A card may carry `signatures` (specification section 8.4). They are parsed onto the card but not verified: section 8.4.3's procedure needs a public key only you can supply, and it must run over the raw body rather than a parsed record, since a record carries defaults the signer never sent. Use `a2a:fetchAgentCardBody` to get that body:
 
 ```ballerina
 json raw = check a2a:fetchAgentCardBody("https://agent.example.com");
-check a2a:verifyAgentCardSignature(raw, keyProvider);
+// verify raw against your own trust store, then:
 a2a:AgentCard card = check a2a:parseAgentCardBody(raw);
 ```
-
-`verifyAgentCardSignature` performs the RFC 8785 canonicalization specification section 8.4.3 requires, and accepts RS256 or ES256. The `keyProvider` you supply resolves a signing key from the `kid` and `jku` in each signature's protected header.
 
 ### 5.1 The extended Agent Card
 
