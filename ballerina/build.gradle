@@ -66,3 +66,14 @@ task commitTomlFiles {
         }
     }
 }
+
+// The plugin provides unpackJballerinaTools / unpackStdLibs / copyStdlibs but
+// does not wire them into `build` itself. Without this, every task that shells
+// out to the distribution fails with
+//
+//     sh: .../build/jballerina-tools-<version>/bin/bal: No such file or directory
+//
+// because nothing ever unpacked it. The platform template chains it through
+// updateTomlFiles, which runs first, so the distribution is in place before
+// anything needs it.
+updateTomlFiles.dependsOn copyStdlibs

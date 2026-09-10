@@ -2,7 +2,7 @@
 org = "ballerina"
 name = "a2a"
 version = "0.1.0"
-distribution = "2201.13.4"
+distribution = "2201.13.5"
 license = ["Apache-2.0"]
 authors = ["Ballerina"]
 keywords = ["a2a", "agent2agent", "agent", "protocol", "client"]

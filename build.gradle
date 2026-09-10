@@ -57,6 +57,12 @@ allprojects {
 subprojects {
     configurations {
         jbalTools
+        // Declared but left empty: the plugin's unpackStdLibs task reads this
+        // configuration unconditionally and fails with "Could not get unknown
+        // property 'ballerinaStdLibs'" when it is absent. This package pulls
+        // its dependencies from Central at build time rather than bundling
+        // them, so there is nothing to list here yet.
+        ballerinaStdLibs
     }
 
     dependencies {
