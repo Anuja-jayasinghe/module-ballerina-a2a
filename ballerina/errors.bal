@@ -28,52 +28,53 @@ public type ErrorDetail record {|
     json...;
 |};
 
-# Base type for every A2A protocol error. Distinct so that `is Error`
-# reliably matches any of its subtypes, and each subtype below is in turn
-# distinguishable from its siblings via `is`.
+# Base type for every A2A protocol error.
+#
+# Distinct, so `is a2a:Error` matches any subtype and each subtype is
+# distinguishable from its siblings the same way. The nine below are the
+# canonical types of specification section 5.4.
 public type Error distinct error<ErrorDetail>;
 
-# Each specific error derives from Error — adding a new one later means
-# adding one line here, nothing else in the codebase changes.
+# The agent does not know the task the request named.
 public type TaskNotFoundError distinct Error;
 
+# The task exists but has reached a state it cannot be canceled from.
 public type TaskNotCancelableError distinct Error;
 
+# The agent does not support the operation, or its Agent Card declares the
+# capability the operation needs as false.
 public type UnsupportedOperationError distinct Error;
 
+# The agent cannot produce or accept the media types the request asked for.
 public type ContentTypeNotSupportedError distinct Error;
 
+# The agent's response did not match the shape the operation expects.
 public type InvalidAgentResponseError distinct Error;
 
+# The agent does not speak the A2A protocol version this request used.
 public type VersionNotSupportedError distinct Error;
 
+# The agent does not support push notifications, so its webhook configuration
+# operations are unavailable.
 public type PushNotificationNotSupportedError distinct Error;
 
+# The agent supports extended Agent Cards but has none configured to return.
 public type ExtendedAgentCardNotConfiguredError distinct Error;
 
+# The agent requires an A2A extension the request did not declare.
 public type ExtensionSupportRequiredError distinct Error;
 
-# This library's catch-all, for failures that map to no A2A error type.
+# This library's catch-all, for failures the A2A error taxonomy does not name.
 #
-# Specification section 5.4 lists the canonical A2A error types and their
-# bindings; there are nine, and the other nine types in this file are exactly
-# those. `InternalError` is not one of them — it shares a name with
-# JSON-RPC's standard `-32603`, but it is not that specifically, and its
-# `code` here is whatever the failure carried: an HTTP status with no A2A
-# error code behind it, a JSON-RPC standard code, or none at all.
+# Specification section 5.4 lists nine canonical error types, and the nine
+# above are exactly those. This one covers what is left:
 #
-# It covers three kinds of failure the specification's own taxonomy has no
-# entry for:
+# - a transport failure carrying no A2A error code
+# - a malformed response that never reached an operation
+# - a client-side precondition failure, caught before any request is sent
 #
-# - a transport-level failure carrying no A2A error code
-# - a malformed envelope that never reached an operation
-# - a client-side precondition failure, caught before any request is sent —
-#   the specification defines no error for these at all, since sections
-#   3.3.2 and 5.4 both describe *server* behaviour
-#
-# A caller matching on a specific protocol condition should match one of the
-# nine typed errors above; this one means "something failed that the protocol
-# does not name".
+# Match one of the nine for a specific protocol condition; this one means
+# something failed that the protocol does not describe.
 public type InternalError distinct Error;
 
 # Builds a client-side InvalidAgentResponseError with the same JSON-RPC
@@ -82,8 +83,8 @@ public type InternalError distinct Error;
 # this library goes through this, rather than letting the underlying
 # `cloneWithType`/`ensureType` failure propagate as a bare, untyped error.
 #
-# + message - what specifically failed to parse
-# + return - a typed InvalidAgentResponseError
+# + message - What specifically failed to parse
+# + return - A typed InvalidAgentResponseError
 isolated function invalidAgentResponse(string message) returns InvalidAgentResponseError {
     return error InvalidAgentResponseError(message, message = message, code = -32006);
 }
@@ -91,22 +92,19 @@ isolated function invalidAgentResponse(string message) returns InvalidAgentRespo
 # Wraps a raw, untyped error (a connection failure from `ballerina/http`/
 # `ballerina/grpc`, a mime-parsing failure, an unencodable parameter
 # value, ...) into an InternalError, so no public method returns a
-# bare `error` a caller can't pattern-match against. Idempotent: passes
-# an already-typed Error straight through unchanged, so this is safe
-# to call at every boundary between this library's internals and its
-# public surface without needing to know in advance whether the error
-# it's given has already been wrapped.
+# bare `error` a caller cannot pattern-match against.
 #
-# Does not use Ballerina's built-in `cause` — confirmed empirically it
-# isn't accepted once an error's detail type has named fields of its own
-# (ErrorDetail's `message`/`code`/`data` are), only on the bare
-# default `error` detail shape. The original error's own message is
-# folded into the new one's instead, so the real failure reason is still
-# visible to a caller/log, just not as a structurally separate cause.
+# Idempotent: an already-typed `a2a:Error` passes through unchanged, so this
+# is safe to call at every boundary without knowing whether the error was
+# already wrapped.
 #
-# + e - the raw error to wrap, or an already-typed Error to pass through
-# + return - e unchanged if it was already an Error, otherwise a new
-#            InternalError carrying e's message
+# The original message is folded into the new one rather than attached as a
+# `cause`, which Ballerina does not accept once an error's detail type has
+# named fields of its own.
+#
+# + e - The raw error to wrap, or an already-typed `a2a:Error` to pass through
+# + return - `e` unchanged if it was already an `a2a:Error`, otherwise a new
+#            `a2a:InternalError` carrying its message
 isolated function wrapTransportError(error e) returns Error {
     if e is Error {
         return e;
@@ -123,10 +121,10 @@ isolated function wrapTransportError(error e) returns Error {
 # google.rpc.ErrorInfo entry inside the error body's `details` array, per
 # the reference a2a-python SDK's REST error-parsing shape.
 #
-# + statusCode - the HTTP status code the response carried
-# + body - the parsed JSON error body, if any (absent for e.g. a stream
+# + statusCode - The HTTP status code the response carried
+# + body - The parsed JSON error body, if any (absent for e.g. a stream
 #          drop with no body available)
-# + return - the corresponding typed Error, with detail.code synthesized
+# + return - The corresponding typed Error, with detail.code synthesized
 #            to the equivalent JSON-RPC code so a caller checking
 #            detail.code sees identical values regardless of binding
 isolated function toA2AErrorFromRest(int statusCode, json? body) returns Error {
@@ -194,8 +192,8 @@ isolated function toA2AErrorFromRest(int statusCode, json? body) returns Error {
 # "@"-prefixed key ("@type") isn't valid dot-syntax, so this reads through
 # a map<json> bracket index instead.
 #
-# + body - the parsed JSON error body, if any
-# + return - the matching ErrorInfo entry as a map, or () if none is found
+# + body - The parsed JSON error body, if any
+# + return - The matching ErrorInfo entry as a map, or () if none is found
 isolated function extractRestErrorDetail(json? body) returns map<json>? {
     if body is () {
         return ();
@@ -269,8 +267,8 @@ isolated function extractRestErrorMetadata(json? body) returns json? {
 # this never reached the network, so a caller inspecting the error text (e.g.
 # in logs) can still tell the two apart.
 #
-# + operation - the operation name, for the error text (e.g. "subscribeToTask")
-# + return - a typed, client-side UnsupportedOperationError
+# + operation - The operation name, for the error text (e.g. "subscribeToTask")
+# + return - A typed, client-side UnsupportedOperationError
 isolated function streamingUnsupportedError(string operation) returns UnsupportedOperationError {
     string message = string `${operation}: AgentCard.capabilities.streaming is false - rejected client-side, no request sent`;
     return error UnsupportedOperationError(message, message = message, code = -32004);
@@ -287,7 +285,7 @@ isolated function streamingUnsupportedError(string operation) returns Unsupporte
 # -- section 3.1.11 defines the output as the extended card *when the
 # operation is available*, not a substitute when it is not.
 #
-# + return - the typed rejection
+# + return - The typed rejection
 isolated function extendedCardUnsupportedError() returns UnsupportedOperationError {
     string message = "getExtendedAgentCard: AgentCard.capabilities.extendedAgentCard is false "
         + "or not present - rejected client-side, no request sent";
@@ -297,8 +295,8 @@ isolated function extendedCardUnsupportedError() returns UnsupportedOperationErr
 # Builds the client-side rejection for a push-notification-config call the
 # held card says is unsupported. Same rationale as streamingUnsupportedError.
 #
-# + operation - the operation name, for the error text
-# + return - a typed, client-side PushNotificationNotSupportedError
+# + operation - The operation name, for the error text
+# + return - A typed, client-side PushNotificationNotSupportedError
 isolated function pushNotificationsUnsupportedError(string operation) returns PushNotificationNotSupportedError {
     string message = string `${operation}: AgentCard.capabilities.pushNotifications is false - rejected client-side, no request sent`;
     return error PushNotificationNotSupportedError(message, message = message, code = -32003);

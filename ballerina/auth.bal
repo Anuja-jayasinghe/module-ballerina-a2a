@@ -22,8 +22,7 @@
 // 1. `clientConfig.auth` and `headers` — the direct route, unchanged, and
 //    the only route for OAuth2, OpenID Connect, and mutual TLS. These need
 //    a live token exchange or a client certificate rather than a single
-//    string, and ballerina/http (plus projectToGrpcClientConfig below, for
-//    the gRPC binding) already handles them properly, token refresh
+//    string, and ballerina/http already handles them properly, token refresh
 //    included.
 // 2. `CredentialProvider` — optional, opt-in, and scoped on purpose to the
 //    schemes that *do* reduce to one string: API-key-in-header and HTTP
@@ -43,26 +42,24 @@
 # Supplies credentials by security-scheme name.
 #
 # The name is the key an AgentCard uses in its `securitySchemes` map, so a
-# provider holding several credentials can keep them apart even when they
-# are the same kind - two different bearer tokens on one agent, for
-# instance, which is otherwise impossible to express through the single
-# `headers` map.
+# provider holding several credentials keeps them apart even when they are the
+# same kind — two different bearer tokens on one agent, which a single
+# `headers` map cannot express.
 #
-# Implement this to source credentials from wherever they actually live -
-# a vault, a config file, an environment variable, a per-session store.
-# `InMemoryCredentialStore` is provided for the simple cases.
+# Implement this to source credentials from wherever they live: a vault, a
+# config file, an environment variable, a per-session store. Use
+# `a2a:InMemoryCredentialStore` for the simple cases.
 #
-# Returning `()` is normal and not an error: the request is then sent
-# without that credential and the agent decides how to respond, matching
-# the best-effort behaviour of the reference SDKs' own auth interceptors.
+# Returning `()` is normal and not an error — the request is sent without that
+# credential and the agent decides how to respond.
 public type CredentialProvider isolated object {
 
     # Returns the credential for one security scheme.
     #
-    # + schemeName - the scheme's key in `AgentCard.securitySchemes`
-    # + return - the credential, or () if none is held for this scheme.
-    #            For HTTP basic, return the raw `username:password`; this
-    #            library base64-encodes it.
+    # + schemeName - The scheme's key in `AgentCard.securitySchemes`
+    # + return - The credential, or `()` if none is held for this scheme —
+    #            for HTTP basic, the raw `username:password`, which this
+    #            library base64-encodes
     public isolated function getCredential(string schemeName) returns string?;
 };
 
@@ -82,15 +79,19 @@ public isolated class InMemoryCredentialStore {
 
     # Creates a store, optionally pre-populated.
     #
-    # + credentials - initial credentials, keyed by security-scheme name
+    # ```ballerina
+    # a2a:InMemoryCredentialStore store = new ({"bearerAuth": "eyJhbGciOi..."});
+    # ```
+    #
+    # + credentials - Initial credentials, keyed by security-scheme name
     public isolated function init(map<string> credentials = {}) {
         self.credentials = credentials.clone();
     }
 
     # Adds or replaces one credential.
     #
-    # + schemeName - the scheme's key in `AgentCard.securitySchemes`
-    # + credential - the credential value
+    # + schemeName - The scheme's key in `AgentCard.securitySchemes`
+    # + credential - The credential value
     public isolated function setCredential(string schemeName, string credential) {
         lock {
             self.credentials[schemeName] = credential;
@@ -99,8 +100,8 @@ public isolated class InMemoryCredentialStore {
 
     # Returns the credential for one security scheme.
     #
-    # + schemeName - the scheme's key in `AgentCard.securitySchemes`
-    # + return - the credential, or () if none is held
+    # + schemeName - The scheme's key in `AgentCard.securitySchemes`
+    # + return - The credential, or () if none is held
     public isolated function getCredential(string schemeName) returns string? {
         lock {
             return self.credentials[schemeName];
@@ -128,10 +129,10 @@ final readonly & string[] RESERVED_CREDENTIAL_HEADERS = ["a2a-version", "content
 # file's header comment), when an API key is carried somewhere other than a
 # header, or when the resolved header name is reserved.
 #
-# + card - the agent's card, source of the scheme definitions
-# + requirement - the requirement to try
-# + provider - supplies credentials by scheme name
-# + return - the headers satisfying the whole requirement, or () if it
+# + card - The agent's card, source of the scheme definitions
+# + requirement - The requirement to try
+# + provider - Supplies credentials by scheme name
+# + return - The headers satisfying the whole requirement, or () if it
 #            cannot be satisfied
 isolated function credentialHeadersFor(AgentCard card, SecurityRequirement requirement,
         CredentialProvider provider) returns map<string>? {
@@ -197,10 +198,10 @@ isolated function credentialHeadersFor(AgentCard card, SecurityRequirement requi
 # credential. `skillSecurityRequirements` (skill_security.bal) exposes the
 # per-skill view for callers that need it.
 #
-# + card - the agent's card
-# + provider - supplies credentials by scheme name, or () if the client was
+# + card - The agent's card
+# + provider - Supplies credentials by scheme name, or () if the client was
 #              built without one
-# + return - headers for the first satisfiable requirement; empty if there
+# + return - Headers for the first satisfiable requirement; empty if there
 #            is no provider, no declared requirement, or none can be met
 isolated function resolveCredentialHeaders(AgentCard card, CredentialProvider? provider) returns map<string> {
     if provider is () {

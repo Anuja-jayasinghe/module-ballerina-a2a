@@ -19,18 +19,13 @@
 
 import ballerina/lang.array;
 
-# The set of field names that can hold, directly or transitively, a Part
-# (or a structure containing one) somewhere in the v1.0 type hierarchy:
-# Message.parts, Artifact.parts, Task.history (Message[]), Task.artifacts
-# (Artifact[]), TaskStatus.message, TaskStatusUpdateEvent.status,
-# TaskArtifactUpdateEvent.artifact, StreamResponse.task/.message/
-# .statusUpdate/.artifactUpdate, SendMessageResult.task/.message, and
-# ListTasksResult.tasks. `encodeRawBytesForWire`/`decodeRawBytesFromWire`
-# only ever recurse into these exact key names — this is what keeps the
-# walkers from touching free-form fields such as `metadata` (map<json> on
-# Message/Task/Artifact/the two update events) or a data-Part's own
-# `data` field, even when those free-form trees happen to contain a key
-# literally named "raw" that has nothing to do with Part.raw.
+# The field names that can hold a `Part`, directly or transitively, anywhere
+# in the v1.0 type hierarchy.
+#
+# `encodeRawBytesForWire` and `decodeRawBytesFromWire` recurse into these key
+# names only. That is what stops the walkers touching free-form fields —
+# `metadata`, or a data-Part's own `data` — when those happen to contain a key
+# named "raw" that has nothing to do with `Part.raw`.
 final readonly & string[] partBearingContainerKeys = [
     "history", "artifacts", "message", "status", "task", "statusUpdate",
     "artifactUpdate", "artifact", "tasks"
@@ -60,9 +55,9 @@ final readonly & string[] PART_VARIANTS = ["text", "raw", "url", "data"];
 # for a wrong count via outboundPartVariantError/inboundPartVariantError,
 # since one direction is a caller mistake and the other is the agent's.
 #
-# + partMap - one Part-shaped element of a `parts` array, already
+# + partMap - One Part-shaped element of a `parts` array, already
 #             confirmed to be a map<json>
-# + return - how many of the four variant fields are present
+# + return - How many of the four variant fields are present
 isolated function countSetPartVariantsJson(map<json> partMap) returns int {
     int count = 0;
     foreach string variant in PART_VARIANTS {
@@ -77,8 +72,8 @@ isolated function countSetPartVariantsJson(map<json> partMap) returns int {
 # used by encodeV03Part and the gRPC binding's Part encode/decode, which
 # work with the typed record rather than raw JSON.
 #
-# + part - the Part to check
-# + return - how many of the four variant fields are present
+# + part - The Part to check
+# + return - How many of the four variant fields are present
 isolated function countSetPartVariants(Part part) returns int {
     int count = 0;
     foreach string variant in PART_VARIANTS {
@@ -94,8 +89,8 @@ isolated function countSetPartVariants(Part part) returns int {
 # error type encodeV03Part's own (superseded) zero-set check already
 # used, for consistency.
 #
-# + count - the actual count, for the message
-# + return - a typed InternalError
+# + count - The actual count, for the message
+# + return - A typed InternalError
 isolated function outboundPartVariantError(int count) returns error {
     string msg = string `Part must have exactly one of text, raw, url, or data set; found ${count}`;
     return error InternalError(msg, message = msg);
@@ -106,8 +101,8 @@ isolated function outboundPartVariantError(int count) returns error {
 # so this uses the same error type every other "the agent's response
 # doesn't parse into what this call expects" case in this library uses.
 #
-# + count - the actual count, for the message
-# + return - a typed InvalidAgentResponseError
+# + count - The actual count, for the message
+# + return - A typed InvalidAgentResponseError
 isolated function inboundPartVariantError(int count) returns error {
     string msg = string `Part must have exactly one of text, raw, url, or data set; found ${count}`;
     return error InvalidAgentResponseError(msg, message = msg, code = -32006);
@@ -127,10 +122,10 @@ isolated function inboundPartVariantError(int count) returns error {
 # more than one set is a mistake on our side of the wire, never the
 # agent's.
 #
-# + partsValue - the json value of a `parts` field; expected to be a
+# + partsValue - The json value of a `parts` field; expected to be a
 #                json[] of Part-shaped objects, but tolerates other shapes
 #                by returning them unchanged
-# + return - the same array with every Part.raw integer-array rewritten to
+# + return - The same array with every Part.raw integer-array rewritten to
 #            a base64 string, or an InternalError if a Part-shaped
 #            element doesn't have exactly one of text/raw/url/data set
 isolated function encodePartsRawField(json partsValue) returns json|error {
@@ -172,8 +167,8 @@ isolated function encodePartsRawField(json partsValue) returns json|error {
 # InvalidAgentResponseError -- an agent sending zero or more than one is
 # a malformed response, not a caller-side mistake.
 #
-# + partsValue - the json value of a `parts` field
-# + return - the same array with every Part.raw base64 string rewritten to
+# + partsValue - The json value of a `parts` field
+# + return - The same array with every Part.raw base64 string rewritten to
 #            an integer-array, or an error if a "raw" string on an actual
 #            Part isn't valid base64, or an InvalidAgentResponseError if
 #            a Part-shaped element doesn't have exactly one of
@@ -206,31 +201,20 @@ isolated function decodePartsRawField(json partsValue) returns json|error {
     return result;
 }
 
-# Recursively walks a json value (already produced by a type's default
-# .toJson()), converting any Part's raw field from the integer-array shape
-# Ballerina's default byte[] serialization produces into a base64 string —
-# the wire encoding every other A2A implementation expects for bytes
-# fields (protobuf JSON mapping), and the only shape a real server can
-# parse. Applied once, after toJson(), to any v1.0 Message/Task/Artifact/
-# StreamResponse/etc. tree before it is sent — the v0.3 compat layer
-# (compat_v03.bal's encodeV03Part) already handles this correctly on its
-# own dialect-specific path and needs no change.
+# Rewrites every `Part.raw` in a `json` tree from the integer array
+# Ballerina's `byte[]` serialization produces into a base64 string.
 #
-# Structure-aware, not key-name-driven: this only ever recurses into the
-# fixed set of key names that can actually hold a Part somewhere beneath
-# them (see `partBearingContainerKeys`), and within a `parts` array only
-# ever touches the "raw" key of each Part-shaped element. Free-form
-# fields — `metadata` on Message/Task/Artifact/the update events, and a
-# data-Part's own `data` field — are never in that allow-list, so a
-# caller's own JSON containing an unrelated key named "raw" (e.g.
-# `metadata: {"raw": [1, 2, 3]}`) is passed through completely unchanged
-# instead of being silently mistaken for Part.raw.
+# Base64 is the protobuf JSON mapping for bytes fields, and the only shape a
+# real server parses. Applied once to a tree already produced by `toJson`,
+# before it is sent.
 #
-# Also propagates encodePartsRawField's Part-variant validation, since it
-# is now fallible.
+# Structure-aware, not key-name-driven: it recurses only into the key names
+# that can hold a `Part` (see `partBearingContainerKeys`), and within a
+# `parts` array touches only each element's "raw" key. A caller's own
+# `metadata: {"raw": [1, 2, 3]}` therefore passes through untouched.
 #
-# + value - a json value (or subtree) to walk
-# + return - the same tree with every Part.raw integer-array rewritten to
+# + value - A json value (or subtree) to walk
+# + return - The same tree with every Part.raw integer-array rewritten to
 #            a base64 string, or an InternalError if a Part-shaped
 #            element doesn't have exactly one of text/raw/url/data set
 isolated function encodeRawBytesForWire(json value) returns json|error {
@@ -272,8 +256,8 @@ isolated function encodeRawBytesForWire(json value) returns json|error {
 # arbitrary non-base64 text no longer fails to decode — that key is
 # simply never visited, because `metadata` is not in the allow-list.
 #
-# + value - a json value (or subtree) to walk
-# + return - the same tree with every Part.raw base64 string rewritten to
+# + value - A json value (or subtree) to walk
+# + return - The same tree with every Part.raw base64 string rewritten to
 #            an integer-array, or an error if a "raw" string on an actual
 #            Part isn't valid base64
 isolated function decodeRawBytesFromWire(json value) returns json|error {

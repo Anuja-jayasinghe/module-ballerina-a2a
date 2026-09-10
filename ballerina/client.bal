@@ -23,24 +23,22 @@
 
 import ballerina/http;
 
-# Parses a raw AgentCard JSON body into a typed AgentCard, applying the
-# tolerant parsing of securitySchemes, securityRequirements, signatures,
-# and each skill's securityRequirements before the main typed clone, so a
-# card carrying one malformed entry in any of those four fields does not
-# fail to parse entirely.
+# Parses a raw AgentCard JSON body into a typed `a2a:AgentCard`.
 #
-# Public so a caller who separately fetched the raw body via
-# fetchAgentCardBody (typically to verify its signature first, via
-# signature.bal) can still get the typed AgentCard afterward without a
-# second network round trip.
+# `securitySchemes`, `securityRequirements`, `signatures`, and each skill's
+# `securityRequirements` are parsed tolerantly, so one malformed entry in any
+# of them does not fail the whole card.
 #
-# + body - the raw JSON AgentCard body, straight off the wire
-# + return - the parsed AgentCard, or a typed Error: a
-#            VersionNotSupportedError if the card is a pre-v1.0 one, an
-#            InvalidAgentResponseError if `body` isn't a JSON object or the
-#            remainder of the card doesn't match the AgentCard shape, or an
-#            InternalError wrapping anything else the tolerant-field
-#            parsers reject
+# Pair it with `a2a:fetchAgentCardBody` when the raw body is needed first —
+# to verify the card's signature, say — to get the typed card without a
+# second round trip.
+#
+# + body - The raw JSON AgentCard body, straight off the wire
+# + return - The parsed card, or an `a2a:VersionNotSupportedError` for a
+#            pre-v1.0 card, an `a2a:InvalidAgentResponseError` if `body` is
+#            not a JSON object or does not match the AgentCard shape, or an
+#            `a2a:InternalError` wrapping anything the tolerant parsers
+#            reject
 public isolated function parseAgentCardBody(json body) returns AgentCard|Error {
     AgentCard|error result = parseAgentCardBodyRaw(body);
     if result is error {
@@ -51,19 +49,14 @@ public isolated function parseAgentCardBody(json body) returns AgentCard|Error {
 
 # Whether a raw card map is a pre-v1.0 (A2A v0.3) card.
 #
-# v0.3 declared transports with `preferredTransport` (naming what is served
-# at the top-level `url`) plus an `additionalInterfaces` array; v1.0 replaced
-# both with the REQUIRED `supportedInterfaces`. A card with neither of the
-# former and no `supportedInterfaces` still declares its single endpoint via
-# the legacy top-level `url` alone.
+# v0.3 declared transports with `preferredTransport` plus
+# `additionalInterfaces`, or with a bare top-level `url`; v1.0 replaced all
+# three with the required `supportedInterfaces`. Detected explicitly so such
+# a card fails by version rather than as a missing-field shape mismatch,
+# which would say nothing about why.
 #
-# Detected explicitly so such a card fails with VersionNotSupportedError
-# naming the version, rather than with `cloneWithType`'s "missing required
-# field 'supportedInterfaces'" — accurate, but it tells the caller nothing
-# about why.
-#
-# + cardMap - the raw card map
-# + return - true if this card predates v1.0
+# + cardMap - The raw card map
+# + return - Whether this card predates v1.0
 isolated function isLegacyCard(map<json> cardMap) returns boolean {
     json? existing = cardMap["supportedInterfaces"];
     if existing is json[] && existing.length() > 0 {
@@ -143,16 +136,14 @@ isolated function parseAgentCardBodyRaw(json body) returns AgentCard|error {
     return card;
 }
 
-# An AgentInterface url commonly carries a trailing slash (nothing in the
-# spec forbids it), and callers are expected to pass that value straight
-# back in as `agentBaseUrl` on a follow-up resolve. Without stripping it
-# here, `http:Client` joins a base ending in `/` with a request path
-# starting in `/.well-known/...` into a double slash, which 404s against
-# every well-known-endpoint server tested (confirmed against a real agent
-# whose card declares a url ending in `/`).
+# Removes a single trailing slash from a base URL.
 #
-# + url - a base URL, possibly with a trailing slash
-# + return - the same URL with any single trailing slash removed
+# An AgentInterface URL may legitimately end in `/`, and `http:Client` joins
+# such a base with a path starting in `/.well-known/...` into a double slash,
+# which 404s against every well-known endpoint tested.
+#
+# + url - A base URL, possibly with a trailing slash
+# + return - The same URL with any single trailing slash removed
 isolated function stripTrailingSlash(string url) returns string {
     if url.endsWith("/") {
         return url.substring(0, url.length() - 1);
@@ -163,26 +154,25 @@ isolated function stripTrailingSlash(string url) returns string {
 # Fetches a remote agent's Agent Card as raw, unparsed JSON from its
 # well-known endpoint.
 #
-# Per spec 8.2 the canonical discovery path is
-# /.well-known/agent-card.json relative to the agent's base URL. That
-# endpoint is public and unauthenticated by design (spec 14.3), so the
-# headers parameter is for proxy or tracing use rather than credentials.
+# The canonical discovery path is `/.well-known/agent-card.json` relative to
+# the agent's base URL (specification section 8.2). That endpoint is public and
+# unauthenticated by design (section 14.3), so `headers` is for proxy or
+# tracing use rather than credentials.
 #
-# Exists as its own function, separate from resolveAgentCard, because
-# verifyAgentCardSignature (signature.bal) needs the response exactly as
-# received: canonicalizing a parsed AgentCard record instead would inject
-# every field's Ballerina-side default (e.g. requestedExtensions = [],
-# securitySchemes = {}) whether or not the signer actually included it,
-# guaranteeing signature verification failure against a spec-conformant
-# signer. Most callers still want resolveAgentCard's typed result;
-# reach for this only when the raw body itself is needed.
+# Reach for this only when the raw body itself is needed — verifying the card's
+# signature is the usual reason, since `a2a:verifyAgentCardSignature` must see
+# the response exactly as received. Otherwise use `a2a:resolveAgentCard`.
+#
+# ```ballerina
+# json raw = check a2a:fetchAgentCardBody("https://agent.example.com");
+# check a2a:verifyAgentCardSignature(raw, keyProvider);
+# ```
 #
 # + agentBaseUrl - Root URL of the agent with no path component
 # + clientConfig - Optional HTTP configuration for auth, TLS, or proxy
 # + headers - Optional default headers
-# + return - The raw JSON AgentCard body exactly as received, or a typed
-#            InternalError for a connection failure or malformed JSON
-#            (wrapped by wrapTransportError).
+# + return - The raw JSON AgentCard body exactly as received, or an
+#            `a2a:InternalError` for a connection failure or malformed JSON
 public isolated function fetchAgentCardBody(
         string agentBaseUrl,
         http:ClientConfiguration clientConfig = {},
@@ -217,13 +207,15 @@ public isolated function fetchAgentCardBody(
 # Fetches and parses a remote agent's Agent Card from its well-known
 # endpoint.
 #
+# ```ballerina
+# a2a:AgentCard card = check a2a:resolveAgentCard("https://agent.example.com");
+# ```
+#
 # + agentBaseUrl - Root URL of the agent with no path component
 # + clientConfig - Optional HTTP configuration for auth, TLS, or proxy
 # + headers - Optional default headers
-# + return - The parsed AgentCard, or a typed Error -- a connection
-#            failure or malformed JSON comes back as an InternalError
-#            (wrapped by fetchAgentCardBody/parseAgentCardBody), the same
-#            as every other typed failure this can produce.
+# + return - The parsed card, or an `a2a:InternalError` for a connection
+#            failure or malformed JSON
 public isolated function resolveAgentCard(
         string agentBaseUrl,
         http:ClientConfiguration clientConfig = {},
@@ -252,17 +244,13 @@ const TransportBinding GRPC = "GRPC";
 # come from the same entry the url did, not be independently re-derived (a
 # card can list several interfaces with different tenant/version values).
 #
-# Among multiple entries declaring the same protocolBinding, the earliest
-# on the card wins. Per spec 8.3.2 the supportedInterfaces array is ordered
-# by the server's own preference — "the first entry represents the
-# preferred interface", and a client should "prefer earlier entries in the
-# ordered list" — so the order is the server's decision to make, not this
-# library's to second-guess. The reference Java SDK reads it the same way,
-# keeping only the first entry per binding.
+# Among several entries declaring the same binding, the earliest wins.
+# Specification section 8.3.2 orders `supportedInterfaces` by the server's own
+# preference, so the order is the server's decision, not this library's.
 #
-# + card - the agent card to read the endpoint from
-# + preferredBinding - which transport binding to look for
-# + return - the earliest supportedInterfaces entry declaring the matching
+# + card - The agent card to read the endpoint from
+# + preferredBinding - Which transport binding to look for
+# + return - The earliest supportedInterfaces entry declaring the matching
 #            protocolBinding, or an InternalError if none exists — a
 #            card/binding mismatch, not a wire-protocol error
 isolated function selectInterface(
@@ -279,9 +267,9 @@ isolated function selectInterface(
 
 # Resolves the URL to construct a client against.
 #
-# + card - the agent card to read the endpoint from
-# + preferredBinding - which transport binding to resolve a URL for
-# + return - the matching supportedInterfaces entry's url, or an
+# + card - The agent card to read the endpoint from
+# + preferredBinding - Which transport binding to resolve a URL for
+# + return - The matching supportedInterfaces entry's url, or an
 #            InternalError if the card declares no such entry
 isolated function primaryUrl(AgentCard card, TransportBinding preferredBinding) returns string|Error {
     AgentInterface iface = check selectInterface(card, preferredBinding);
@@ -298,9 +286,9 @@ isolated function primaryUrl(AgentCard card, TransportBinding preferredBinding) 
 # of the request. Checking at construction turns that into an immediate,
 # named error instead.
 #
-# + card - the resolved Agent Card
-# + preferredBinding - the binding whose interface to read the version from
-# + return - a VersionNotSupportedError when that interface declares a 0.x
+# + card - The resolved Agent Card
+# + preferredBinding - The binding whose interface to read the version from
+# + return - A VersionNotSupportedError when that interface declares a 0.x
 #            protocol version, otherwise nil
 isolated function requireV1Interface(AgentCard card, TransportBinding preferredBinding) returns Error? {
     AgentInterface iface = check selectInterface(card, preferredBinding);
@@ -315,49 +303,23 @@ isolated function requireV1Interface(AgentCard card, TransportBinding preferredB
 
 # An A2A protocol client for a remote agent.
 #
-# Resolves the Agent Card, requires it to declare an HTTP+JSON interface,
-# and delegates every operation to a `RestClient` built against it.
+# Resolves the Agent Card, requires it to declare an HTTP+JSON interface, and
+# delegates every operation to an `a2a:RestClient` built against it.
 #
 # ```ballerina
 # a2a:Client agent = check new ("https://agent.example.com");
 # a2a:Task|a2a:Message reply = check agent->sendMessage({message: msg});
 # ```
 #
-# This release implements the HTTP+JSON binding only, so a card declaring
-# only JSONRPC or GRPC is rejected at construction. When those bindings
-# arrive, this type gains the ability to select among them from the card's
-# own ordering (spec section 8.3.2) with no change to its signature — which
-# is why it takes no `binding` parameter today.
+# This release implements the HTTP+JSON binding only, so a card declaring only
+# JSON-RPC or gRPC is rejected at construction rather than at the first call.
 #
-# Both client types in this module share one method-signature declaration
-# internally (`ClientMethods`, client_methods.bal) rather than repeating all
-# eleven — not part of the public API; Ballerina's structural typing means a
-# caller who wants to write their own code across both can declare a local
-# type covering whichever methods they use and hand it either one, with no
-# dependency on this library exporting a name for that shape.
-#
-# See `ClientMethods`'s doc comment for this type's error contract: the
-# Error subtype named on each method below is what a protocol-level
-# failure produces, not the only kind of error that can come back.
-#
-# LIFECYCLE: there is deliberately no `close`. Unlike the reference a2a-sdk
-# (Python), whose close() method disposes the `httpx.AsyncClient` it was
-# handed, a Ballerina `http:Client` holds no per-instance connection state to
-# dispose: it routes through the process-wide `globalHttpClientConnPool`, which
-# evicts idle connections on its own. `http:Client` exposes no client-side
-# close for this reason, so there is no underlying call to make. The A2A
-# specification says nothing about client resource release either - it governs
-# the wire, not SDK object lifetimes.
-#
-# A Client is therefore cheap to construct and needs no teardown. Two caveats
-# worth knowing:
-#
-# - Prefer one long-lived Client per agent over constructing one per request.
-#   Construction still builds an `http:Client`, which is wasted work per call
-#   even though it leaks nothing.
-# - Setting `poolConfig` inside `clientConfig` opts that Client out of the
-#   shared pool and gives it a private one, which *cannot* be released. If you
-#   do that, reuse the Client - do not create them per request.
+# A client is cheap to construct and needs no teardown — there is deliberately
+# no `close`, because an `http:Client` routes through a process-wide pool that
+# evicts idle connections on its own. Still, prefer one long-lived client per
+# agent: construction is wasted work per call. Setting `poolConfig` in
+# `clientConfig` opts out of the shared pool into a private one that cannot be
+# released, so reuse is required there rather than merely preferred.
 public isolated client class Client {
     *ClientMethods;
 
@@ -371,11 +333,11 @@ public isolated client class Client {
     # it is passed straight to the transport-specific client, so it is
     # never fetched twice.
     #
-    # + agent - the agent's base URL, or an AgentCard already resolved via
+    # + agent - The agent's base URL, or an AgentCard already resolved via
     #           resolveAgentCard
     # + clientConfig - Full http:ClientConfiguration. Covers auth, TLS,
     #                  retry, circuit breaker, proxy, timeouts, and
-    #                  connection pooling.
+    #                  connection pooling
     # + headers - Default headers merged into every outbound request
     # + tenant - Optional multi-tenant routing identifier; the selected
     #            interface supplies one automatically when it declares it,
@@ -388,8 +350,8 @@ public isolated client class Client {
     #                 schemes that reduce to a single string (API key in a
     #                 header, HTTP bearer/basic); OAuth2, OpenID Connect,
     #                 and mutual TLS belong on `clientConfig.auth`, which
-    #                 handles their token exchange properly.
-    # + return - a typed Error: from resolveAgentCard, if the card
+    #                 handles their token exchange properly
+    # + return - A typed Error: from resolveAgentCard, if the card
     #            declares no HTTP+JSON interface, or from the underlying
     #            RestClient's own construction
     public isolated function init(
@@ -493,7 +455,7 @@ public isolated client class Client {
     # specification section 3.1.10.
     #
     # + request - The parent task id and the config's own id
-    # + return - nil on success, or a typed Error
+    # + return - Nil on success, or a typed Error
     isolated remote function deleteTaskPushNotificationConfig(DeleteTaskPushNotificationConfigRequest request)
             returns Error? {
         return self.delegate->deleteTaskPushNotificationConfig(request);

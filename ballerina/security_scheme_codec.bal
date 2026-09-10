@@ -45,8 +45,8 @@ final readonly & string[] V10_SECURITY_SCHEME_ARM_KEYS = [
 # through to the v0.3 clone below — where `MutualTlsSecurityScheme` (no
 # required fields, defaulted `type`) would match it and silently mislabel it.
 #
-# + entry - the raw securitySchemes entry
-# + return - true if any of the ten recognized wrapper keys is present
+# + entry - The raw securitySchemes entry
+# + return - True if any of the ten recognized wrapper keys is present
 isolated function hasV10SecuritySchemeArm(map<json> entry) returns boolean {
     foreach string armKey in V10_SECURITY_SCHEME_ARM_KEYS {
         if entry.hasKey(armKey) {
@@ -59,10 +59,10 @@ isolated function hasV10SecuritySchemeArm(map<json> entry) returns boolean {
 # Returns one v1.0 oneof arm's payload as a mutable copy, looked up under
 # either spelling the spec accepts for it.
 #
-# + entry - the raw securitySchemes entry
-# + camelKey - the lowerCamelCase spelling, per the spec schema's `properties`
-# + snakeKey - the snake_case spelling, per its `patternProperties`
-# + return - the arm's payload, or () if this entry declares no such arm (or
+# + entry - The raw securitySchemes entry
+# + camelKey - The lowerCamelCase spelling, per the spec schema's `properties`
+# + snakeKey - The snake_case spelling, per its `patternProperties`
+# + return - The arm's payload, or () if this entry declares no such arm (or
 #            declares it as something other than an object)
 isolated function v10SecuritySchemeArm(map<json> entry, string camelKey, string snakeKey) returns map<json>? {
     json? value = entry[camelKey];
@@ -76,9 +76,9 @@ isolated function v10SecuritySchemeArm(map<json> entry, string camelKey, string 
 # differs from this module's record field name. A no-op when the source field
 # is absent, and never overwrites an existing target field.
 #
-# + fields - the object to rewrite
-# + wireName - the field name as it arrives on the wire
-# + recordName - the field name this module's record declares
+# + fields - The object to rewrite
+# + wireName - The field name as it arrives on the wire
+# + recordName - The field name this module's record declares
 isolated function renameJsonField(map<json> fields, string wireName, string recordName) {
     if fields.hasKey(wireName) && !fields.hasKey(recordName) {
         fields[recordName] = fields.remove(wireName);
@@ -88,31 +88,23 @@ isolated function renameJsonField(map<json> fields, string wireName, string reco
 # Converts one v1.0 oneof-wrapped securitySchemes entry into the equivalent
 # typed SecurityScheme.
 #
-# Mirrors `decodeGrpcSecurityScheme` (grpc_binding.bal), which already performs
-# this same arm-by-arm mapping for the gRPC binding — the two paths must agree
-# on which arm means what, and on rejecting an out-of-range apiKey location.
+# Two kinds of field-name fixup are needed: `location` becomes `in`, a genuine
+# rename between the v1.0 and OpenAPI spellings, and the three multi-word
+# fields the specification also accepts in snake_case are normalized to
+# camelCase. Every other name already matches, since protobuf JSON emits
+# lowerCamelCase.
 #
-# Only two kinds of field-name fixup are needed. `location` becomes `in`
-# (a genuine rename between the v1.0 and OpenAPI spellings), and the three
-# multi-word fields the spec also accepts in snake_case are normalized to their
-# camelCase form. Every other field name already matches, since protobuf JSON
-# emits lowerCamelCase.
+# The apiKey `location` value is compared case-insensitively, since a server
+# generating it from a protobuf enum can emit casing other than the lowercase
+# the proto documents.
 #
-# The apiKey `location` value is compared case-insensitively. The proto
-# documents it as lowercase "query"/"header"/"cookie", but a server generating
-# it from a protobuf enum can emit other casing, and the reference Python SDK
-# likewise lowercases before comparing (`AuthInterceptor`).
+# Known limitation: nested OAuth flow objects are not snake_case-normalized,
+# so a card sending `{"authorization_code": ...}` inside `flows` leaves it in
+# `OAuthFlows`' rest field rather than the typed one. This library never acts
+# on OAuth2 flows itself, so this costs typing detail, not function.
 #
-# KNOWN LIMITATION: nested OAuth *flow* objects are not snake_case-normalized —
-# only the scheme-level fields are. A v1.0 card sending
-# `{"authorization_code": ...}` inside `flows` parses without error but leaves
-# that flow in `OAuthFlows`' open rest field rather than its typed
-# `authorizationCode` field. This library does not act on OAuth2 flows
-# itself — auth is caller-configured (see auth.bal) — so this costs typing
-# detail, not function.
-#
-# + entry - a raw securitySchemes entry already known to declare an arm
-# + return - the typed SecurityScheme, or () if the arm's payload doesn't
+# + entry - A raw securitySchemes entry already known to declare an arm
+# + return - The typed SecurityScheme, or () if the arm's payload doesn't
 #            match the shape that arm requires (the caller drops it)
 isolated function unwrapV10SecurityScheme(map<json> entry) returns SecurityScheme? {
     map<json>? apiKey = v10SecuritySchemeArm(entry, "apiKeySecurityScheme", "api_key_security_scheme");
@@ -167,17 +159,14 @@ isolated function unwrapV10SecurityScheme(map<json> entry) returns SecuritySchem
 # failing the whole AgentCard parse. This keeps AgentCard parsing
 # forward-compatible with scheme kinds a server might add in the future.
 #
-# Handles both wire dialects. A v1.0 card wraps each scheme in one of the
-# five oneof arm keys (see `unwrapV10SecurityScheme`); a v0.3 card
-# discriminates on a `type` field, which clones into the SecurityScheme union
-# directly. The two forms are distinguished up front rather than by trying the
-# union first: `MutualTlsSecurityScheme` requires no fields and defaults its
-# `type`, so it matches *any* object without a `type` key — which is exactly
-# what a v1.0 wrapper is, and why every v1.0 scheme used to be silently
-# mislabelled as mutual TLS.
+# A v1.0 card wraps each scheme in one of the five oneof arm keys; an entry
+# carrying a `type` field instead clones into the union directly. The two are
+# distinguished up front rather than by trying the union first, because
+# `MutualTlsSecurityScheme` requires no fields and so matches any object
+# without a `type` key — including every v1.0 wrapper.
 #
-# + raw - the raw JSON value of the AgentCard's `securitySchemes` field
-# + return - a map containing only the entries that parsed successfully
+# + raw - The raw JSON value of the AgentCard's `securitySchemes` field
+# + return - A map containing only the entries that parsed successfully
 isolated function parseSecuritySchemes(json raw) returns map<SecurityScheme>|error {
     map<json> rawMap = check raw.ensureType();
     map<SecurityScheme> result = {};
@@ -209,9 +198,9 @@ isolated function parseSecuritySchemes(json raw) returns map<SecurityScheme>|err
 # This module's SecurityRequirement type is the flat v0.3-shaped
 # `map<string[]>`, so the v1.0 form has to be flattened onto it.
 #
-# + entry - one raw securityRequirements array element, already known to
+# + entry - One raw securityRequirements array element, already known to
 #           be an object carrying an object-valued `schemes` key
-# + return - the flattened requirement, or () if any scheme's value isn't
+# + return - The flattened requirement, or () if any scheme's value isn't
 #            a StringList-shaped object
 isolated function unwrapV10SecurityRequirement(map<json> entry) returns SecurityRequirement? {
     map<json>|error schemes = entry["schemes"].ensureType();
@@ -246,8 +235,8 @@ isolated function unwrapV10SecurityRequirement(map<json> entry) returns Security
 # principle name a scheme "schemes", but its value would then be a scope
 # *array*, never an object. Only an object-valued `schemes` key means v1.0.
 #
-# + entry - one raw securityRequirements array element
-# + return - true if this entry is the v1.0 wrapper form
+# + entry - One raw securityRequirements array element
+# + return - True if this entry is the v1.0 wrapper form
 isolated function hasV10SecurityRequirementWrapper(map<json> entry) returns boolean {
     return entry["schemes"] is map<json>;
 }
@@ -264,8 +253,8 @@ isolated function hasV10SecurityRequirementWrapper(map<json> entry) returns bool
 # OpenAPI-style map this module's type is shaped around, which clones
 # directly.
 #
-# + raw - the raw JSON value of a securityRequirements field
-# + return - a list containing only the entries that parsed successfully
+# + raw - The raw JSON value of a securityRequirements field
+# + return - A list containing only the entries that parsed successfully
 isolated function parseSecurityRequirements(json raw) returns SecurityRequirement[]|error {
     json[] rawArray = check raw.ensureType();
     SecurityRequirement[] result = [];
@@ -293,8 +282,8 @@ isolated function parseSecurityRequirements(json raw) returns SecurityRequiremen
 # shape, rather than failing the whole AgentCard parse over one
 # malformed signature.
 #
-# + raw - the raw JSON value of the AgentCard's `signatures` field
-# + return - a list containing only the entries that parsed successfully
+# + raw - The raw JSON value of the AgentCard's `signatures` field
+# + return - A list containing only the entries that parsed successfully
 isolated function parseAgentCardSignatures(json raw) returns AgentCardSignature[]|error {
     json[] rawArray = check raw.ensureType();
     AgentCardSignature[] result = [];

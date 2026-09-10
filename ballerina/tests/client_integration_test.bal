@@ -23,11 +23,9 @@
 
 import ballerina/test;
 
-# A card declaring exactly one interface, for pinning which binding Client
-# selects. Points at whichever mock serves that binding.
-#
-# + binding - the single protocolBinding to declare
-# + return - a minimal card offering only that binding
+// A card declaring exactly one interface, for pinning which binding Client
+// selects. Points at whichever mock serves that binding.
+//
 isolated function cardForBinding(TransportBinding binding) returns AgentCard => {
     name: "n", description: "d", version: "1.0.0",
     capabilities: {streaming: true, pushNotifications: true, extendedAgentCard: true},
@@ -56,11 +54,11 @@ function testClientSelectsRestAndSpeaksIt() returns error? {
 
 // ---- every delegation is wired to the operation it claims to be -------
 
-# Client has eleven hand-written one-line delegations. A copy-paste slip -
-# getTask forwarding to cancelTask, say - would compile, return the right
-# type, and pass every per-binding test, because the concrete clients are
-# all correct. Only asserting the method name each Client call actually
-# puts on the wire catches it.
+// Client has eleven hand-written one-line delegations. A copy-paste slip -
+// getTask forwarding to cancelTask, say - would compile, return the right
+// type, and pass every per-binding test, because the concrete clients are
+// all correct. Only asserting the method name each Client call actually
+// puts on the wire catches it.
 @test:Config {}
 function testClientDelegatesEachOperationToItsOwnMethod() returns error? {
     Client c = check new (cardForBinding("HTTP+JSON"));
@@ -103,8 +101,8 @@ function testClientDelegatesEachOperationToItsOwnMethod() returns error? {
     test:assertEquals(getLastRestRequest().path, "/extendedAgentCard");
 }
 
-# The two streaming operations, which delegate a stream rather than a
-# value and so cannot be covered by the unary sweep above.
+// The two streaming operations, which delegate a stream rather than a
+// value and so cannot be covered by the unary sweep above.
 @test:Config {}
 function testClientDelegatesStreamingOperations() returns error? {
     Client c = check new (cardForBinding("HTTP+JSON"));
@@ -137,8 +135,8 @@ function testClientDelegatesStreamingOperations() returns error? {
 
 // ---- delegation carries arguments and state faithfully ---------------
 
-# Arguments have to survive the hop. A delegation that dropped or reordered
-# a parameter would still compile.
+// Arguments have to survive the hop. A delegation that dropped or reordered
+// a parameter would still compile.
 @test:Config {}
 function testClientDelegationPassesArgumentsThrough() returns error? {
     Client c = check new (cardForBinding("HTTP+JSON"));
@@ -161,8 +159,8 @@ function testClientDelegationPassesArgumentsThrough() returns error? {
     test:assertEquals(req.queryParams["pageToken"], "cursor-abc");
 }
 
-# The card handed to Client is passed straight to the delegate, so a
-# construction from an already-resolved card must not fetch it again.
+// The card handed to Client is passed straight to the delegate, so a
+// construction from an already-resolved card must not fetch it again.
 @test:Config {}
 function testClientFromCardDoesNotRefetchIt() returns error? {
     AgentCard card = check resolveAgentCard(getServerBaseUrl());
@@ -178,9 +176,9 @@ function testClientFromCardDoesNotRefetchIt() returns error? {
             "a Client built from a resolved card must hand that card to its delegate rather than fetching a second time");
 }
 
-# Confirms all three concrete types still satisfy the shared internal
-# ClientMethods shape as the codebase evolves — not a caller-facing
-# capability (ClientMethods isn't public; see client_methods.bal).
+// Confirms all three concrete types still satisfy the shared internal
+// ClientMethods shape as the codebase evolves — not a caller-facing
+// capability (ClientMethods isn't public; see client_methods.bal).
 @test:Config {}
 function testClientMethodsAcceptsEveryImplementation() returns error? {
     ClientMethods viaCommon = check new Client(cardForBinding("HTTP+JSON"));
@@ -193,8 +191,8 @@ function testClientMethodsAcceptsEveryImplementation() returns error? {
     test:assertTrue(true);
 }
 
-# This release implements HTTP+JSON only, so a card offering nothing else
-# must fail at construction rather than at the first call.
+// This release implements HTTP+JSON only, so a card offering nothing else
+// must fail at construction rather than at the first call.
 @test:Config {}
 function testClientRejectsCardWithNoHttpJsonInterface() {
     AgentCard card = {
@@ -212,8 +210,8 @@ function testClientRejectsCardWithNoHttpJsonInterface() {
             "a card declaring no HTTP+JSON interface must fail construction");
 }
 
-# A v1.0-shaped card can still declare a 0.x protocolVersion on its
-# interface; requireV1Interface catches that at construction.
+// A v1.0-shaped card can still declare a 0.x protocolVersion on its
+// interface; requireV1Interface catches that at construction.
 @test:Config {}
 function testClientRejectsV03ProtocolVersionOnItsInterface() {
     AgentCard card = {

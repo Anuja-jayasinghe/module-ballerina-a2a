@@ -28,8 +28,8 @@ import ballerina/http;
 # StreamResponse and closing the stream once a terminal task status is
 # reached.
 #
-# + resp - the HTTP response opened with `Accept: text/event-stream`
-# + return - a stream of decoded StreamResponse values
+# + resp - The HTTP response opened with `Accept: text/event-stream`
+# + return - A stream of decoded StreamResponse values
 isolated function readSseStream(http:Response resp)
         returns stream<StreamResponse, error?>|Error {
     stream<http:SseEvent, error?>|error sseStream = resp.getSseEventStream();
@@ -53,6 +53,7 @@ class A2aStreamGenerator {
         self.sseStream = sseStream;
     }
 
+    # + return - The next event, `()` at end of stream, or an error
     public isolated function next() returns record {| StreamResponse value; |}|error? {
         if self.closed {
             return ();
@@ -113,8 +114,8 @@ class A2aStreamGenerator {
     # The caller skips these and reads on, which is what specification 5.7's
     # "SHOULD ignore unrecognized fields" asks for.
     #
-    # + data - one raw SSE `data:` payload
-    # + return - the decoded event, `()` to skip it, or an error
+    # + data - One raw SSE `data:` payload
+    # + return - The decoded event, `()` to skip it, or an error
     private isolated function decodeEvent(string data) returns StreamResponse?|error {
         // HTTP+JSON events carry a bare StreamResponse, with no enclosing
         // envelope.
@@ -122,6 +123,7 @@ class A2aStreamGenerator {
         return decodeStreamResponseEnvelope(check decodeRawBytesFromWire(envelope));
     }
 
+    # + return - An error if the underlying stream could not be closed
     public isolated function close() returns error? {
         self.closed = true;
         return self.sseStream.close();
@@ -137,8 +139,8 @@ class A2aStreamGenerator {
 # event this yields is already the finished result - nothing further would
 # ever arrive on a real stream either.
 #
-# + result - the unary sendMessage reply to wrap
-# + return - a stream yielding exactly that one event, then closing
+# + result - The unary sendMessage reply to wrap
+# + return - A stream yielding exactly that one event, then closing
 isolated function singleEventStream(Task|Message result) returns stream<StreamResponse, error?> {
     // Task and Message are both arms of the StreamResponse union, so the
     // value needs no wrapping -- it already is a StreamResponse.
@@ -154,33 +156,25 @@ class SingleEventStreamGenerator {
         self.pending = {value};
     }
 
+    # + return - The next event, `()` at end of stream, or an error
     public isolated function next() returns record {| StreamResponse value; |}|error? {
         record {| StreamResponse value; |}? p = self.pending;
         self.pending = ();
         return p;
     }
 
+    # + return - An error if the underlying stream could not be closed
     public isolated function close() returns error? {
         self.pending = ();
     }
 }
 
-# Wraps an existing StreamResponse stream, transparently reconnecting via
-# subscribeToTask when the underlying stream ends with an error instead of
-# a clean terminal-state close — up to a caller-configured attempt limit.
-# Per specification section 3.1.6, a resubscription's first delivered event
-# is always the task's current state, so no event is lost across a
-# reconnect, only possibly duplicated (a status the client already saw
-# delivered again) — callers already need to tolerate duplicate/out-of-order
-# status updates per the spec's own guidance on this, so this is not a new
-# burden.
-# The single capability ReconnectingStreamGenerator needs from the client
-# that owns it: reopening a task subscription, raw, without wrapping the
-# result in another reconnect layer.
+# The single capability `ReconnectingStreamGenerator` needs from the client
+# that owns it: reopening a task subscription raw, without wrapping the result
+# in another reconnect layer.
 #
-# Declared as an object type rather than naming a concrete class so that
-# every transport-specific client can hand itself to the generator. The
-# generator has no interest in which binding it is reconnecting over.
+# An object type rather than a concrete class, so any transport client can
+# hand itself to the generator.
 type StreamReconnectable isolated object {
     isolated function openTaskSubscriptionStream(string taskId, string? tenant) returns stream<StreamResponse, error?>|error;
 };
@@ -214,6 +208,7 @@ class ReconnectingStreamGenerator {
         self.tenant = tenant;
     }
 
+    # + return - The next event, `()` at end of stream, or an error
     public isolated function next() returns record {| StreamResponse value; |}|error? {
         if self.done {
             return ();
@@ -265,6 +260,7 @@ class ReconnectingStreamGenerator {
         return result;
     }
 
+    # + return - An error if the underlying stream could not be closed
     public isolated function close() returns error? {
         self.done = true;
         return self.current.close();
@@ -282,18 +278,17 @@ class ReconnectingStreamGenerator {
 # rather than being handed back raw; that keeps the peeked value spliced
 # back on either way.
 #
-# Shared by every transport binding: reconnection is a client-side policy
-# over a stream of StreamResponse values and has nothing to say about how
-# those values arrived.
+# Reconnection is a client-side policy over a stream of `a2a:StreamResponse`
+# values, independent of how those values arrived.
 #
-# + rawStream - the stream just opened by the transport
-# + owner - the client to resubscribe through on a drop
-# + maxReconnectAttempts - the caller's configured attempt budget; zero or
+# + rawStream - The stream just opened by the transport
+# + owner - The client to resubscribe through on a drop
+# + maxReconnectAttempts - The caller's configured attempt budget; zero or
 #                          less returns rawStream untouched
-# + tenant - the originating call's per-call tenant override, which must be
+# + tenant - The originating call's per-call tenant override, which must be
 #            threaded through so a reconnect resubscribes under the same
 #            tenant rather than falling back to the client-level default
-# + return - the stream to hand the caller, or an error if the first event
+# + return - The stream to hand the caller, or an error if the first event
 #            was itself an error
 isolated function wrapReconnecting(
         stream<StreamResponse, error?> rawStream,
@@ -333,8 +328,8 @@ isolated function wrapReconnecting(
 
 # A stream terminates only on a status update carrying a terminal state.
 #
-# + event - the decoded stream event to inspect
-# + return - true if this event should close the stream
+# + event - The decoded stream event to inspect
+# + return - True if this event should close the stream
 isolated function isTerminalEvent(StreamResponse event) returns boolean {
     if event !is TaskStatusUpdateEvent {
         return false;
@@ -359,9 +354,9 @@ isolated function isTerminalEvent(StreamResponse event) returns boolean {
 # (`specification.md`, "member presence acts as discriminator"). Testing for
 # a non-nil value instead would misread a legitimately-null arm as absent.
 #
-# + envelope - the raw envelope object
-# + arms - the arm names this caller understands, in specification order
-# + return - the matched arm's name and payload; `()` when the envelope
+# + envelope - The raw envelope object
+# + arms - The arm names this caller understands, in specification order
+# + return - The matched arm's name and payload; `()` when the envelope
 #            carries no arm this caller recognizes, which a newer
 #            specification revision can legitimately produce; or an
 #            InvalidAgentResponseError when more than one arm is set
@@ -386,8 +381,8 @@ isolated function oneofArm(json envelope, string[] arms) returns [string, json]?
 
 # Decodes one StreamResponse envelope into its single arm.
 #
-# + envelope - the raw `{"task": {...}}` / `{"statusUpdate": {...}}` object
-# + return - the decoded arm; `()` when the envelope carries no arm this
+# + envelope - The raw `{"task": {...}}` / `{"statusUpdate": {...}}` object
+# + return - The decoded arm; `()` when the envelope carries no arm this
 #            client recognizes, so the caller can skip the event and read
 #            on; or an InvalidAgentResponseError if the arm's payload does
 #            not match its type

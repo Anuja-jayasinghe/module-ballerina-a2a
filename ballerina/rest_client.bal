@@ -43,8 +43,8 @@ import ballerina/url;
 # (types.bal), so a card that omits the field is treated as not supporting
 # streaming.
 #
-# + card - the client's held AgentCard, or () if it has none
-# + return - true if streaming should be short-circuited client-side
+# + card - The client's held AgentCard, or () if it has none
+# + return - True if streaming should be short-circuited client-side
 isolated function cardDeniesStreaming(AgentCard? card) returns boolean {
     return card is AgentCard && !card.capabilities.streaming;
 }
@@ -52,8 +52,8 @@ isolated function cardDeniesStreaming(AgentCard? card) returns boolean {
 # Whether the held Agent Card rules out push notifications, per issue #11.
 # Same "denied" framing as cardDeniesStreaming.
 #
-# + card - the client's held AgentCard, or () if it has none
-# + return - true if the push-notification-config operations should be
+# + card - The client's held AgentCard, or () if it has none
+# + return - True if the push-notification-config operations should be
 #            short-circuited client-side
 isolated function cardDeniesPushNotifications(AgentCard? card) returns boolean {
     return card is AgentCard && !card.capabilities.pushNotifications;
@@ -67,9 +67,9 @@ isolated function cardDeniesPushNotifications(AgentCard? card) returns boolean {
 # path to carry it, so dropping the body copy would make the two kinds of
 # operation disagree about where tenant lives.
 #
-# + body - the body to add to, mutated in place
-# + effectiveTenant - the per-call override, or the client's default
-# + return - the same map, for call-site chaining
+# + body - The body to add to, mutated in place
+# + effectiveTenant - The per-call override, or the client's default
+# + return - The same map, for call-site chaining
 isolated function applyTenant(map<json> body, string? effectiveTenant) returns map<json> {
     if effectiveTenant is string {
         body["tenant"] = effectiveTenant;
@@ -79,11 +79,11 @@ isolated function applyTenant(map<json> body, string? effectiveTenant) returns m
 
 # Builds the request body for sendMessage/sendStreamingMessage.
 #
-# + message - the message to send
-# + config - optional send configuration
-# + metadata - optional additional context
-# + effectiveTenant - the per-call override, or the client's default
-# + return - the body, or an error if the message can't be encoded
+# + message - The message to send
+# + config - Optional send configuration
+# + metadata - Optional additional context
+# + effectiveTenant - The per-call override, or the client's default
+# + return - The body, or an error if the message can't be encoded
 isolated function buildSendMessageBody(
         Message message,
         SendMessageConfiguration? config,
@@ -109,8 +109,8 @@ isolated function buildSendMessageBody(
 # The wire response wraps the payload -- {"task": {...}} or
 # {"message": {...}} -- rather than returning either one flat.
 #
-# + result - the raw result payload
-# + return - the Task or Message the agent replied with, or an
+# + result - The raw result payload
+# + return - The Task or Message the agent replied with, or an
 #            InvalidAgentResponseError if it doesn't match the expected shape
 isolated function decodeSendMessageResult(json result) returns Task|Message|Error {
     json|error rewired = decodeRawBytesFromWire(result);
@@ -137,8 +137,8 @@ isolated function decodeSendMessageResult(json result) returns Task|Message|Erro
 # Decodes a response whose payload is a bare Task. Shared by getTask and
 # cancelTask, which differ only in the request they send.
 #
-# + result - the raw result payload
-# + return - the decoded Task, or an InvalidAgentResponseError if it
+# + result - The raw result payload
+# + return - The decoded Task, or an InvalidAgentResponseError if it
 #            doesn't match the expected shape
 isolated function decodeTaskResult(json result) returns Task|Error {
     json|error rewired = decodeRawBytesFromWire(result);
@@ -153,8 +153,8 @@ isolated function decodeTaskResult(json result) returns Task|Error {
     return decoded;
 }
 
-# + result - the raw result payload
-# + return - the decoded page of tasks, or an InvalidAgentResponseError if
+# + result - The raw result payload
+# + return - The decoded page of tasks, or an InvalidAgentResponseError if
 #            it doesn't match the expected shape
 isolated function decodeListTasksResponse(json result) returns ListTasksResponse|Error {
     json|error rewired = decodeRawBytesFromWire(result);
@@ -174,8 +174,8 @@ isolated function decodeListTasksResponse(json result) returns ListTasksResponse
     return decoded;
 }
 
-# + result - the raw result payload
-# + return - the decoded config, or an InvalidAgentResponseError if it
+# + result - The raw result payload
+# + return - The decoded config, or an InvalidAgentResponseError if it
 #            doesn't match the expected shape
 isolated function decodeTaskPushNotificationConfig(json result) returns TaskPushNotificationConfig|Error {
     TaskPushNotificationConfig|error decoded = result.cloneWithType(TaskPushNotificationConfig);
@@ -185,8 +185,8 @@ isolated function decodeTaskPushNotificationConfig(json result) returns TaskPush
     return decoded;
 }
 
-# + result - the raw result payload
-# + return - the decoded page of configs, or an InvalidAgentResponseError
+# + result - The raw result payload
+# + return - The decoded page of configs, or an InvalidAgentResponseError
 #            if it doesn't match the expected shape
 isolated function decodeListTaskPushNotificationConfigsResponse(json result)
         returns ListTaskPushNotificationConfigsResponse|Error {
@@ -202,8 +202,8 @@ isolated function decodeListTaskPushNotificationConfigsResponse(json result)
 # Percent-encodes a value for use in a REST request path or query string,
 # wrapping any encoding failure into this library's own error type.
 #
-# + value - the raw value to encode
-# + return - the percent-encoded value, or a typed Error if it can't be
+# + value - The raw value to encode
+# + return - The percent-encoded value, or a typed Error if it can't be
 #            encoded
 isolated function urlEncodeOrWrap(string value) returns string|Error {
     string|error encoded = url:encode(value, "UTF-8");
@@ -217,9 +217,9 @@ isolated function urlEncodeOrWrap(string value) returns string|Error {
 # binding's path-prefix convention (`/{tenant}{path}`). A no-op when no
 # tenant applies.
 #
-# + path - the request path, before any tenant prefix
-# + tenant - the effective tenant for this call, or () if none applies
-# + return - the path with the tenant segment prepended, or unchanged if
+# + path - The request path, before any tenant prefix
+# + tenant - The effective tenant for this call, or () if none applies
+# + return - The path with the tenant segment prepended, or unchanged if
 #            tenant is (), or a typed Error if tenant can't be encoded
 isolated function prefixTenant(string path, string? tenant) returns string|Error {
     if tenant is () {
@@ -235,8 +235,8 @@ isolated function prefixTenant(string path, string? tenant) returns string|Error
 # generic "whatever's left over" set to iterate here, unlike the old
 # table-driven version.
 #
-# + queryParams - the query parameters to include, already as strings
-# + return - the query string including its leading `?`, or `""` if
+# + queryParams - The query parameters to include, already as strings
+# + return - The query string including its leading `?`, or `""` if
 #            queryParams is empty, or a typed Error if a value can't be
 #            encoded
 isolated function buildQueryString(map<string> queryParams) returns string|Error {
@@ -259,19 +259,14 @@ isolated function buildQueryString(map<string> queryParams) returns string|Error
 #
 # ```ballerina
 # a2a:RestClient agent = check new ("https://agent.example.com");
-# a2a:Task|a2a:Message reply = check agent->sendMessage(msg);
+# a2a:Task|a2a:Message reply = check agent->sendMessage({message: msg});
 # ```
 #
-# A2A v0.3 does define a REST binding, but this library does not implement
-# it: `compat_v03.bal` is a JSON-RPC dialect translator (v0.3 method names
-# like `tasks/get` have no meaning as a REST path), and the paths used
-# below are v1.0's. A card resolving to v0.3 is therefore rejected at
-# construction rather than at the first call. Use `JsonRpcClient` for a v0.3
-# agent. See issue #31.
+# The paths below are A2A v1.0's, so a card declaring a 0.x protocol version
+# is rejected at construction rather than at the first call.
 #
-# See `ClientMethods`'s doc comment for this type's error contract: the
-# Error subtype named on each method below is what a protocol-level
-# failure produces, not the only kind of error that can come back.
+# Each method's `+ return` names the `a2a:Error` subtype a protocol failure
+# produces; a transport or decode failure comes back as `a2a:InternalError`.
 public isolated client class RestClient {
     *ClientMethods;
 
@@ -290,19 +285,17 @@ public isolated client class RestClient {
     # The most recent AgentCard this client knows about; replaced by the
     # extended card once getExtendedAgentCard fetches one.
     private AgentCard? agentCard;
-    # Learned, not configured: flips to true the first time a server
-    # rejects the spec-mandated application/a2a+json with a 415, so every
-    # later call on this instance skips straight to the legacy
-    # application/json instead of paying a 415 round trip each time. See
-    # buildHeaders and performRestCallWithNegotiation.
+    # Learned, not configured: set the first time a server rejects
+    # `application/a2a+json` with a 415, so later calls on this instance skip
+    # the retry.
     private boolean useLegacyContentType = false;
 
     # Creates a REST client pointed at a remote A2A agent.
     #
-    # + agent - the agent's base URL, or an AgentCard already resolved via
+    # + agent - The agent's base URL, or an AgentCard already resolved via
     #           resolveAgentCard
     # + clientConfig - Full http:ClientConfiguration. Also used for the
-    #                  card fetch when agent is a URL.
+    #                  card fetch when agent is a URL
     # + headers - Default headers merged into every outbound request
     # + tenant - Optional multi-tenant routing identifier; the card's
     #            HTTP+JSON interface supplies one automatically when it
@@ -311,7 +304,7 @@ public isolated client class RestClient {
     # + maxReconnectAttempts - Opt-in automatic SSE reconnection
     # + credentials - Optional provider consulted per request for the
     #                 credentials the card's securityRequirements call for
-    # + return - a typed Error: from resolveAgentCard, from URL
+    # + return - A typed Error: from resolveAgentCard, from URL
     #            derivation when the card declares no HTTP+JSON
     #            interface, a VersionNotSupportedError if the card
     #            resolves to A2A v0.3, or an InternalError if the
@@ -355,7 +348,7 @@ public isolated client class RestClient {
         self.agentCard = card.clone();
     }
 
-    # + return - the headers to send with the request
+    # + return - The headers to send with the request
     private isolated function buildHeaders() returns map<string> {
         // The A2A spec's REST/HTTP+JSON binding requires the
         // application/a2a+json media type, not plain application/json
@@ -397,12 +390,12 @@ public isolated client class RestClient {
     # callers that need negotiation go through performRestCallWithNegotiation
     # instead.
     #
-    # + httpMethod - the HTTP verb to send, e.g. "GET" or "POST"
-    # + path - the full request path, tenant prefix and path params already
+    # + httpMethod - The HTTP verb to send, e.g. "GET" or "POST"
+    # + path - The full request path, tenant prefix and path params already
     #          substituted
-    # + body - the request body, or () for a bodiless request
-    # + headers - the exact headers to send
-    # + return - the raw HTTP response, or a transport-level error
+    # + body - The request body, or () for a bodiless request
+    # + headers - The exact headers to send
+    # + return - The raw HTTP response, or a transport-level error
     private isolated function rawRestCall(string httpMethod, string path, json? body, map<string> headers) returns http:Response|Error {
         http:Response|error result;
         if httpMethod == "GET" {
@@ -422,13 +415,13 @@ public isolated client class RestClient {
     # application/json content type if the server rejects the spec-mandated
     # application/a2a+json with a 415 -- see buildHeaders' doc comment.
     #
-    # + httpMethod - the HTTP verb to send, e.g. "GET" or "POST"
-    # + path - the full request path, tenant prefix and path params already
+    # + httpMethod - The HTTP verb to send, e.g. "GET" or "POST"
+    # + path - The full request path, tenant prefix and path params already
     #          substituted
-    # + body - the request body, or () for a bodiless request
-    # + extraHeaders - additional headers merged in on top of buildHeaders'
+    # + body - The request body, or () for a bodiless request
+    # + extraHeaders - Additional headers merged in on top of buildHeaders'
     #                  defaults (e.g. Accept: text/event-stream)
-    # + return - the raw HTTP response (from whichever attempt settled),
+    # + return - The raw HTTP response (from whichever attempt settled),
     #            or a transport-level error
     private isolated function performRestCallWithNegotiation(
             string httpMethod, string path, json? body, map<string> extraHeaders = {}) returns http:Response|Error {
@@ -460,11 +453,11 @@ public isolated client class RestClient {
     # real content fails its own cloneWithType instead, which is the right
     # place for that failure to surface.
     #
-    # + httpMethod - the HTTP verb to send, e.g. "GET" or "POST"
-    # + path - the full request path, tenant prefix and path params already
+    # + httpMethod - The HTTP verb to send, e.g. "GET" or "POST"
+    # + path - The full request path, tenant prefix and path params already
     #          substituted
-    # + body - the request body, or () for a bodiless request
-    # + return - the unwrapped result json, or a typed Error for a non-2xx
+    # + body - The request body, or () for a bodiless request
+    # + return - The unwrapped result json, or a typed Error for a non-2xx
     #            response (via toA2AErrorFromRest) or a connection failure
     #            (wrapped as InternalError)
     private isolated function restCall(string httpMethod, string path, json? body) returns json|Error {
@@ -487,8 +480,8 @@ public isolated client class RestClient {
     # any operation-specific retry (e.g. subscribeToTask's GET-then-POST
     # fallback) happens before this is called, not inside it.
     #
-    # + resp - the HTTP response to an SSE request
-    # + return - a stream of StreamResponse values, or a typed Error for a
+    # + resp - The HTTP response to an SSE request
+    # + return - A stream of StreamResponse values, or a typed Error for a
     #            non-streaming error response (via toA2AErrorFromRest)
     private isolated function finishSseResponse(http:Response resp) returns stream<StreamResponse, error?>|Error {
         if !resp.getContentType().startsWith("text/event-stream") {
@@ -498,9 +491,11 @@ public isolated client class RestClient {
         return readSseStream(resp);
     }
 
-    # Opens the raw, unwrapped subscribeToTask stream. See
-    # JsonRpcClient.openTaskSubscriptionStream for why reconnection must
-    # resubscribe through this rather than the public remote function.
+    # Opens the raw, unwrapped subscribeToTask stream.
+    #
+    # Reconnection resubscribes through this rather than the remote function,
+    # which would wrap each reconnected stream in a fresh generator with its
+    # own attempt budget and so never give up.
     #
     # + taskId - The task to subscribe to
     # + tenant - Optional per-call tenant override
@@ -526,11 +521,11 @@ public isolated client class RestClient {
     # capability-gated fallback (issue #11) can call it without going
     # through a remote method on self.
     #
-    # + message - the message to send
-    # + config - optional send configuration
-    # + tenant - optional per-call tenant override
-    # + metadata - optional additional context
-    # + return - the finished Task or a plain Message reply
+    # + message - The message to send
+    # + config - Optional send configuration
+    # + tenant - Optional per-call tenant override
+    # + metadata - Optional additional context
+    # + return - The finished Task or a plain Message reply
     private isolated function sendMessageUnary(
             Message message,
             SendMessageConfiguration? config,
@@ -799,20 +794,13 @@ public isolated client class RestClient {
     # Deletes a push-notification webhook config. Idempotent per
     # specification section 3.1.10.
     #
-    # Gated on capabilities.pushNotifications like the other three config
-    # operations. This used to be deliberately ungated, on the grounds that
-    # deletion is idempotent per specification section 3.1.10 so a stale
-    # card should not block a legitimate no-op. That conflated two separate
-    # rules: section 3.1.10's idempotency is about *repeated deletes of the
-    # same config* having the same effect, and says nothing about capability
-    # gating. Section 3.3.4 names this operation explicitly -- "operations
-    # related to push notification configuration (Create, Get, List, Delete)
-    # MUST return PushNotificationNotSupportedError" when the capability is
-    # false or not present. An agent that never supported push notifications
-    # has no config to idempotently delete.
+    # Gated on `capabilities.pushNotifications` like the other three config
+    # operations: section 3.3.4 names Create, Get, List, and Delete
+    # explicitly. Section 3.1.10's idempotency is about repeated deletes of
+    # the same config, not about capability gating.
     #
     # + request - The parent task id and the config's own id
-    # + return - nil on success, or a typed Error
+    # + return - Nil on success, or a typed Error
     isolated remote function deleteTaskPushNotificationConfig(DeleteTaskPushNotificationConfigRequest request)
             returns Error? {
         boolean denied;

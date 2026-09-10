@@ -609,11 +609,10 @@ function testTaskArtifactUpdateEventToleratesUnrecognizedField() returns error? 
     test:assertEquals((check reserialized.futureField), "some value from a newer spec revision");
 }
 
-# StreamResponse is a union of the four arms, so an event *is* one of them
-# rather than a wrapper holding one. The wire form is still the keyed
-# envelope, which decodeStreamResponseEnvelope unwraps.
-#
-# + return - an error if any step other than the assertions themselves fails
+// StreamResponse is a union of the four arms, so an event *is* one of them
+// rather than a wrapper holding one. The wire form is still the keyed
+// envelope, which decodeStreamResponseEnvelope unwraps.
+//
 @test:Config {}
 function testStreamResponseEnvelopeDecodesToItsArm() returns error? {
     json envelope = {
@@ -631,10 +630,9 @@ function testStreamResponseEnvelopeDecodesToItsArm() returns error? {
     test:assertFalse(decoded is TaskArtifactUpdateEvent);
 }
 
-# An arm's own unrecognized fields still round-trip, since every arm type is
-# an open record.
-#
-# + return - an error if any step other than the assertions themselves fails
+// An arm's own unrecognized fields still round-trip, since every arm type is
+// an open record.
+//
 @test:Config {}
 function testStreamResponseArmToleratesUnrecognizedField() returns error? {
     json envelope = {
@@ -655,12 +653,11 @@ function testStreamResponseArmToleratesUnrecognizedField() returns error? {
     }
 }
 
-# An envelope naming an arm this client does not know is skipped, not
-# rejected: StreamResponse is a specification oneof, and a later revision may
-# add an arm. Failing the stream on the first such event would break every
-# existing client the moment that happened.
-#
-# + return - an error if any step other than the assertions themselves fails
+// An envelope naming an arm this client does not know is skipped, not
+// rejected: StreamResponse is a specification oneof, and a later revision may
+// add an arm. Failing the stream on the first such event would break every
+// existing client the moment that happened.
+//
 @test:Config {}
 function testStreamResponseEnvelopeSkipsUnknownArm() returns error? {
     json envelope = {futureEvent: {someField: 1}};
@@ -670,8 +667,8 @@ function testStreamResponseEnvelopeSkipsUnknownArm() returns error? {
     test:assertTrue(decoded is (), "an unrecognized arm yields () so the caller can skip the event");
 }
 
-# A conformant oneof sets exactly one arm; two is malformed, and silently
-# picking the first would hide a broken agent.
+// A conformant oneof sets exactly one arm; two is malformed, and silently
+// picking the first would hide a broken agent.
 @test:Config {}
 function testStreamResponseEnvelopeRejectsTwoArms() {
     json envelope = {
@@ -1221,12 +1218,12 @@ function testDecodeRawBytesFromWireRejectsMultipleVariantsSet() {
 
 // ---- Part variant counting and required-array validation ---------------
 
-# `Part.data` is `google.protobuf.Value`, the one field in the specification
-# where a JSON null is legal. Counting variants by non-nil value read
-# `{"data": null}` as zero variants set and rejected a conformant data part
-# as malformed; counting by member presence -- which is what the
-# specification names as the discriminator -- reads it as the one variant it
-# is.
+// `Part.data` is `google.protobuf.Value`, the one field in the specification
+// where a JSON null is legal. Counting variants by non-nil value read
+// `{"data": null}` as zero variants set and rejected a conformant data part
+// as malformed; counting by member presence -- which is what the
+// specification names as the discriminator -- reads it as the one variant it
+// is.
 @test:Config {}
 function testDataPartHoldingNullCountsAsOneVariant() {
     Part dataHoldingNull = {data: ()};
@@ -1238,7 +1235,7 @@ function testDataPartHoldingNullCountsAsOneVariant() {
             "and the same holds on the raw wire form");
 }
 
-# Absence and a null value are different states, and only presence counts.
+// Absence and a null value are different states, and only presence counts.
 @test:Config {}
 function testPartWithNoVariantCountsAsZero() {
     Part noVariant = {mediaType: "text/plain"};
@@ -1246,8 +1243,8 @@ function testPartWithNoVariantCountsAsZero() {
     test:assertEquals(countSetPartVariantsJson({"mediaType": "text/plain"}), 0);
 }
 
-# Artifact.parts is the only array the proto itself marks non-empty ("Must
-# contain at least one part"), and a2a-java enforces it too.
+// Artifact.parts is the only array the proto itself marks non-empty ("Must
+// contain at least one part"), and a2a-java enforces it too.
 @test:Config {}
 function testEmptyArtifactPartsIsRejected() {
     Task task = {
@@ -1262,8 +1259,8 @@ function testEmptyArtifactPartsIsRejected() {
             "an artifact carrying no parts violates specification section 4.1.7");
 }
 
-# Message.parts carries no proto statement, but it is the message's content
-# container and a2a-java enforces it (Message.java:70).
+// Message.parts carries no proto statement, but it is the message's content
+// container and a2a-java enforces it (Message.java:70).
 @test:Config {}
 function testEmptyMessagePartsIsRejectedOutbound() {
     Message empty = {messageId: "m1", role: ROLE_USER, parts: []};
@@ -1274,11 +1271,11 @@ function testEmptyMessagePartsIsRejectedOutbound() {
             "a caller's own malformed message is caught before the request is sent");
 }
 
-# An AgentCard with no skills is explicitly valid: the specification's own
-# canonicalization example in section 8.4.1 publishes one and annotates
-# `"skills": []` as "REQUIRED field -> include". Section 5.7's blanket
-# "required arrays MUST contain at least one element" cannot be read
-# literally against that.
+// An AgentCard with no skills is explicitly valid: the specification's own
+// canonicalization example in section 8.4.1 publishes one and annotates
+// `"skills": []` as "REQUIRED field -> include". Section 5.7's blanket
+// "required arrays MUST contain at least one element" cannot be read
+// literally against that.
 @test:Config {}
 function testAgentCardWithNoSkillsIsAccepted() returns error? {
     json payload = {
@@ -1299,8 +1296,8 @@ function testAgentCardWithNoSkillsIsAccepted() returns error? {
     test:assertEquals(card.skills.length(), 0, "an empty skills array is conformant");
 }
 
-# An empty page is a legitimate "no results matched", not a malformed
-# response.
+// An empty page is a legitimate "no results matched", not a malformed
+// response.
 @test:Config {}
 function testEmptyListTasksPageIsAccepted() returns error? {
     json payload = {tasks: [], nextPageToken: "", pageSize: 50, totalSize: 0};

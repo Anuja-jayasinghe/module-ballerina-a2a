@@ -90,12 +90,11 @@ function testPrimaryUrlPrefersSupportedInterfaces() returns error? {
     test:assertEquals(check primaryUrl(card, JSONRPC), "https://primary.example.com");
 }
 
-# Confirms primaryUrl filters by protocolBinding rather than blindly
-# taking supportedInterfaces[0] — a card listing a binding this Client
-# doesn't speak (e.g. GRPC) before its JSONRPC entry must still resolve
-# to the JSONRPC one, not fail non-obviously on the first real request.
-#
-# + return - an error if any step other than the assertion itself fails
+// Confirms primaryUrl filters by protocolBinding rather than blindly
+// taking supportedInterfaces[0] — a card listing a binding this Client
+// doesn't speak (e.g. GRPC) before its JSONRPC entry must still resolve
+// to the JSONRPC one, not fail non-obviously on the first real request.
+//
 @test:Config {}
 function testPrimaryUrlSkipsNonJsonRpcInterfaces() returns error? {
     AgentCard card = {
@@ -198,11 +197,11 @@ function testSelectInterfaceMixedCardOrdering() returns error? {
     test:assertEquals(check primaryUrl(card, "HTTP+JSON"), "http://localhost:8081");
 }
 
-# Spec 8.3.2: supportedInterfaces is ordered by the server's own
-# preference, so among entries sharing a protocolBinding the earliest wins.
-# The entry's protocolVersion plays no part in the choice — the server
-# ordered the list deliberately, and the reference Java SDK reads it the
-# same way (it keeps only the first entry per binding).
+// Spec 8.3.2: supportedInterfaces is ordered by the server's own
+// preference, so among entries sharing a protocolBinding the earliest wins.
+// The entry's protocolVersion plays no part in the choice — the server
+// ordered the list deliberately, and the reference Java SDK reads it the
+// same way (it keeps only the first entry per binding).
 @test:Config {}
 function testSelectInterfaceTakesFirstEntryForBinding() returns error? {
     AgentCard card = {
@@ -219,9 +218,9 @@ function testSelectInterfaceTakesFirstEntryForBinding() returns error? {
     test:assertEquals(iface.url, "http://first.example");
 }
 
-# The discriminating case: the card lists its 0.3 interface first. A client
-# must still honour that ordering rather than hunting for a higher
-# protocolVersion further down the list.
+// The discriminating case: the card lists its 0.3 interface first. A client
+// must still honour that ordering rather than hunting for a higher
+// protocolVersion further down the list.
 @test:Config {}
 function testSelectInterfaceHonoursCardOrderOverProtocolVersion() returns error? {
     AgentCard card = {
@@ -239,9 +238,9 @@ function testSelectInterfaceHonoursCardOrderOverProtocolVersion() returns error?
             "the server's declared order wins; selection must not rank by protocolVersion");
 }
 
-# A card declaring a tenant on its JSONRPC interface. The shared default
-# mock card deliberately declares none, so tenant auto-wiring gets its own
-# fixture rather than silently colouring every other test's request params.
+// A card declaring a tenant on its JSONRPC interface. The shared default
+// mock card deliberately declares none, so tenant auto-wiring gets its own
+// fixture rather than silently colouring every other test's request params.
 isolated function cardWithTenant(string tenant) returns AgentCard => {
     name: "n", description: "d", version: "1.0.0",
     capabilities: {streaming: true},
@@ -270,8 +269,8 @@ function testClientInitFromAgentCard() returns error? {
     test:assertTrue(result is Task || result is Message);
 }
 
-# When the selected AgentInterface declares a tenant, init must read it
-# automatically and send it on every request without the caller repeating it.
+// When the selected AgentInterface declares a tenant, init must read it
+// automatically and send it on every request without the caller repeating it.
 @test:Config {}
 function testClientInitAutoWiresTenantFromCard() returns error? {
     setNextRestResponse({task: {id: "t1", status: {state: "TASK_STATE_COMPLETED"}}});
@@ -281,7 +280,7 @@ function testClientInitAutoWiresTenantFromCard() returns error? {
     test:assertEquals(check params.tenant, "acme-corp");
 }
 
-# An explicitly-passed tenant must win over the card's own declared value.
+// An explicitly-passed tenant must win over the card's own declared value.
 @test:Config {}
 function testClientInitExplicitTenantOverridesCard() returns error? {
     setNextRestResponse({task: {id: "t1", status: {state: "TASK_STATE_COMPLETED"}}});
@@ -291,13 +290,13 @@ function testClientInitExplicitTenantOverridesCard() returns error? {
     test:assertEquals(check params.tenant, "explicit-tenant");
 }
 
-# A card offering only HTTP+JSON is perfectly usable: Client takes its
-# binding from the card, so it builds a RestClient.
-#
-# This previously failed. Client defaulted to JSONRPC and never consulted
-# the card ordering, which made a valid REST-only agent unreachable through
-# the common client - the behaviour spec section 8.3.2 rules out, and the
-# defect this delegator fixes.
+// A card offering only HTTP+JSON is perfectly usable: Client takes its
+// binding from the card, so it builds a RestClient.
+//
+// This previously failed. Client defaulted to JSONRPC and never consulted
+// the card ordering, which made a valid REST-only agent unreachable through
+// the common client - the behaviour spec section 8.3.2 rules out, and the
+// defect this delegator fixes.
 @test:Config {}
 function testClientInitUsesTheOnlyBindingTheCardOffers() returns error? {
     AgentCard card = {
@@ -317,8 +316,8 @@ function testClientInitUsesTheOnlyBindingTheCardOffers() returns error? {
             "a REST-only card must produce a client that actually speaks REST");
 }
 
-# The card's ordering is its preference, so the first entry wins even when
-# a later one names a binding the caller might have preferred.
+// The card's ordering is its preference, so the first entry wins even when
+// a later one names a binding the caller might have preferred.
 @test:Config {}
 function testClientInitFollowsCardOrderNotLibraryPreference() returns error? {
     AgentCard card = {
@@ -339,7 +338,7 @@ function testClientInitFollowsCardOrderNotLibraryPreference() returns error? {
             "HTTP+JSON is listed first, so it must be chosen over the JSONRPC entry behind it");
 }
 
-# Nothing this library can speak, and no legacy url to fall back on.
+// Nothing this library can speak, and no legacy url to fall back on.
 @test:Config {}
 function testClientInitErrorsWhenCardOffersNoSupportedBinding() {
     AgentCard card = {
@@ -356,7 +355,7 @@ function testClientInitErrorsWhenCardOffersNoSupportedBinding() {
             "a card declaring only a binding this library cannot speak must fail construction");
 }
 
-# An unreachable discovery URL must surface resolveAgentCard's error, not panic.
+// An unreachable discovery URL must surface resolveAgentCard's error, not panic.
 @test:Config {}
 function testClientInitFromUrlUnreachableEndpoint() {
     Client|error result = new ("http://localhost:1");
@@ -392,11 +391,10 @@ function testSendMessageHappyPath() returns error? {
     test:assertEquals(extractArtifactText((task.artifacts ?: [])[0]), "29 degrees Celsius and partly cloudy.");
 }
 
-# SendMessageRequest.metadata (specification section 3.2.1) is a
-# request-level field, distinct from Message.metadata — confirms it's
-# actually placed at the top level of params, not nested under "message".
-#
-# + return - an error if any step other than the assertions themselves fails
+// SendMessageRequest.metadata (specification section 3.2.1) is a
+// request-level field, distinct from Message.metadata — confirms it's
+// actually placed at the top level of params, not nested under "message".
+//
 @test:Config {}
 function testSendMessageIncludesRequestLevelMetadataWhenSet() returns error? {
     setNextRestResponse({task: {id: "task-1", status: {state: "TASK_STATE_COMPLETED"}}});
@@ -482,12 +480,11 @@ function testClientInitAppliesCallerSuppliedAuthAndHeaders() returns error? {
             "an explicit headers entry must be sent");
 }
 
-# The real reference server's SendMessage response wraps the payload —
-# {"result": {"task": {...}}} or {"result": {"message": {...}}} — never a
-# flat Task/Message. The happy-path test above only ever exercised the
-# task branch; this covers the message branch of that same wrapper.
-#
-# + return - an error if any step other than the assertions themselves fails
+// The real reference server's SendMessage response wraps the payload —
+// {"result": {"task": {...}}} or {"result": {"message": {...}}} — never a
+// flat Task/Message. The happy-path test above only ever exercised the
+// task branch; this covers the message branch of that same wrapper.
+//
 @test:Config {}
 function testSendMessageHappyPathMessageVariant() returns error? {
     setNextRestResponse({
@@ -513,13 +510,12 @@ function testSendMessageHappyPathMessageVariant() returns error? {
     test:assertEquals(reply.parts[0]?.text, "Hi there!");
 }
 
-# A conforming server can't produce this (task/message form a real
-# protobuf oneof upstream), but SendMessageResult is a plain open record on
-# our side with no such enforcement — a non-conforming server sending both
-# should be treated as a malformed response, not silently resolved by
-# preferring one field over the other.
-#
-# + return - an error if any step other than the assertions themselves fails
+// A conforming server can't produce this (task/message form a real
+// protobuf oneof upstream), but SendMessageResult is a plain open record on
+// our side with no such enforcement — a non-conforming server sending both
+// should be treated as a malformed response, not silently resolved by
+// preferring one field over the other.
+//
 @test:Config {}
 function testSendMessageRejectsResponseWithBothTaskAndMessage() returns error? {
     setNextRestResponse({
@@ -692,7 +688,7 @@ function testTenantPropagatesOnEveryMethod() returns error? {
     ];
 
     setNextRestResponse(wrappedTaskResponse);
-    Task|Message|error sendMessageResult = c->sendMessage({message: msg});
+    Task|Message _ = check c->sendMessage({message: msg});
     check assertLastRequestTenant(tenant, "sendMessage");
 
     setNextRestSseResponse(minimalSseResponse);
@@ -701,11 +697,11 @@ function testTenantPropagatesOnEveryMethod() returns error? {
     check closeIfStream(sendStreamingMessageResult);
 
     setNextRestResponse(validTaskResponse);
-    Task|error getTaskResult = c->getTask({id: "task-tenant"});
+    Task _ = check c->getTask({id: "task-tenant"});
     check assertLastRequestTenant(tenant, "getTask");
 
     setNextRestResponse(validTaskResponse);
-    Task|error cancelTaskResult = c->cancelTask({id: "task-tenant"});
+    Task _ = check c->cancelTask({id: "task-tenant"});
     check assertLastRequestTenant(tenant, "cancelTask");
 
     setNextRestSseResponse(minimalSseResponse);
@@ -717,29 +713,29 @@ function testTenantPropagatesOnEveryMethod() returns error? {
     // same as the other five calls above, c is already a V1_0-mode client
     // (no agentCard was supplied to its constructor).
     setNextRestResponse({tasks: [], nextPageToken: "", pageSize: 20, totalSize: 0});
-    ListTasksResponse|error listTasksResult = c->listTasks();
+    ListTasksResponse _ = check c->listTasks();
     check assertLastRequestTenant(tenant, "listTasks");
 
     setNextRestResponse({url: "https://client.example.com/webhooks/a2a", id: "webhook-1", taskId: "task-tenant"});
-    TaskPushNotificationConfig|error createConfigResult = c->createTaskPushNotificationConfig({
+    TaskPushNotificationConfig _ = check c->createTaskPushNotificationConfig({
         url: "https://client.example.com/webhooks/a2a",
         taskId: "task-tenant"
     });
     check assertLastRequestTenant(tenant, "createTaskPushNotificationConfig");
 
     setNextRestResponse({url: "https://client.example.com/webhooks/a2a", id: "webhook-1", taskId: "task-tenant"});
-    TaskPushNotificationConfig|error getConfigResult = c->getTaskPushNotificationConfig({taskId: "task-tenant", id: "webhook-1"});
+    TaskPushNotificationConfig _ = check c->getTaskPushNotificationConfig({taskId: "task-tenant", id: "webhook-1"});
     check assertLastRequestTenant(tenant, "getTaskPushNotificationConfig");
 
     setNextRestResponse({
         configs: [{url: "https://client.example.com/webhooks/a2a", id: "webhook-1"}],
         nextPageToken: ""
     });
-    ListTaskPushNotificationConfigsResponse|error listConfigsResult = c->listTaskPushNotificationConfigs({taskId: "task-tenant"});
+    ListTaskPushNotificationConfigsResponse _ = check c->listTaskPushNotificationConfigs({taskId: "task-tenant"});
     check assertLastRequestTenant(tenant, "listTaskPushNotificationConfigs");
 
     setNextRestResponse({});
-    error? deleteConfigResult = c->deleteTaskPushNotificationConfig({taskId: "task-tenant", id: "webhook-1"});
+    check c->deleteTaskPushNotificationConfig({taskId: "task-tenant", id: "webhook-1"});
     check assertLastRequestTenant(tenant, "deleteTaskPushNotificationConfig");
 
     setNextRestResponse({
@@ -751,15 +747,13 @@ function testTenantPropagatesOnEveryMethod() returns error? {
         defaultInputModes: ["text"],
         defaultOutputModes: ["text"]
     , supportedInterfaces: [{url: "http://localhost:19199", protocolBinding: "HTTP+JSON", protocolVersion: "1.0"}]});
-    AgentCard|error getExtendedAgentCardResult = c->getExtendedAgentCard();
+    AgentCard _ = check c->getExtendedAgentCard();
     check assertLastRequestTenant(tenant, "getExtendedAgentCard");
 }
 
-# Drains and closes a possibly-opened SSE stream so the mock server isn't
-# left trying to write to an abandoned connection between tests.
-#
-# + result - the raw remote-call result, only acted on if it's a stream
-# + return - an error if closing the stream fails
+// Drains and closes a possibly-opened SSE stream so the mock server isn't
+// left trying to write to an abandoned connection between tests.
+//
 isolated function closeIfStream(stream<StreamResponse, error?>|error result) returns error? {
     if result is stream<StreamResponse, error?> {
         record {| StreamResponse value; |}|error? next = result.next();
@@ -781,14 +775,14 @@ function testPerCallTenantOverridesClientDefault() returns error? {
         parts: [{text: "hello"}]
     };
 
-    Task|Message|error result = c->sendMessage({message: msg, tenant: "override-tenant"});
+    Task|Message _ = check c->sendMessage({message: msg, tenant: "override-tenant"});
 
     check assertLastRequestTenant("override-tenant", "sendMessage with a per-call override");
 }
 
-# The REST binding routes the tenant as a leading path segment, and
-# duplicates it into the body for operations that have one. Asserting on the
-# path covers both: every operation carries it there.
+// The REST binding routes the tenant as a leading path segment, and
+// duplicates it into the body for operations that have one. Asserting on the
+// path covers both: every operation carries it there.
 isolated function assertLastRequestTenant(string expectedTenant, string label) returns error? {
     string path = getLastRestRequest().path;
     test:assertTrue(path.startsWith(string `/${expectedTenant}/`),
@@ -844,11 +838,10 @@ function testListTasksHappyPath() returns error? {
     test:assertEquals(result.totalSize, 1);
 }
 
-# Confirms filter fields actually reach the wire. ListTasks is a GET in the
-# REST binding, so its filter travels in the query string rather than a
-# body — every value therefore arrives as a string.
-#
-# + return - an error if any step other than the assertions themselves fails
+// Confirms filter fields actually reach the wire. ListTasks is a GET in the
+// REST binding, so its filter travels in the query string rather than a
+// body — every value therefore arrives as a string.
+//
 @test:Config {}
 function testListTasksSendsFilterFieldsOnWire() returns error? {
     setNextRestResponse({tasks: [], nextPageToken: "", pageSize: 20, totalSize: 0});
@@ -1166,10 +1159,10 @@ function testSendMessageStreamReconnectsOnDrop() returns error? {
     test:assertEquals((<TaskStatusUpdateEvent>third).status.state, TASK_STATE_COMPLETED);
 }
 
-# Regression guard: maxReconnectAttempts defaults to 0, which must preserve
-# today's exact pre-reconnect behavior — a dropped stream surfaces its
-# error immediately to the caller, with no reconnect attempted. Proves the
-# feature is truly opt-in, not silently on by default.
+// Regression guard: maxReconnectAttempts defaults to 0, which must preserve
+// today's exact pre-reconnect behavior — a dropped stream surfaces its
+// error immediately to the caller, with no reconnect attempted. Proves the
+// feature is truly opt-in, not silently on by default.
 @test:Config {}
 function testSendMessageStreamDoesNotReconnectByDefault() returns error? {
     setNextRestSseResponseThenDrop([
@@ -1196,12 +1189,12 @@ function testSendMessageStreamDoesNotReconnectByDefault() returns error? {
     test:assertTrue(third is error, "with maxReconnectAttempts = 0 (the default), a dropped stream should surface its error immediately, not reconnect");
 }
 
-# Edge case called out explicitly in the design: a bare Message (no task)
-# as sendStreamingMessage's first event carries nothing to resubscribe with,
-# so wrapping must be a no-op even when maxReconnectAttempts > 0 — a
-# dropped connection after a Message-only reply surfaces its error
-# immediately, exactly like the maxReconnectAttempts = 0 case, rather than
-# attempting (and failing) to call subscribeToTask with no taskId.
+// Edge case called out explicitly in the design: a bare Message (no task)
+// as sendStreamingMessage's first event carries nothing to resubscribe with,
+// so wrapping must be a no-op even when maxReconnectAttempts > 0 — a
+// dropped connection after a Message-only reply surfaces its error
+// immediately, exactly like the maxReconnectAttempts = 0 case, rather than
+// attempting (and failing) to call subscribeToTask with no taskId.
 @test:Config {}
 function testSendMessageStreamDoesNotReconnectAfterBareMessage() returns error? {
     setNextRestSseResponseThenDrop([
@@ -1225,11 +1218,11 @@ function testSendMessageStreamDoesNotReconnectAfterBareMessage() returns error? 
     test:assertTrue(second is error, "a bare Message first event has no task to resubscribe to, so a dropped connection should surface its error immediately, not reconnect");
 }
 
-# subscribeToTask is the reconnect primitive ReconnectingStreamGenerator
-# calls internally, but its own wrapping (simpler than
-# sendStreamingMessage's — the taskId is already the input parameter, no
-# peeking needed) had no direct coverage; this exercises it in isolation,
-# not just as a side effect of sendStreamingMessage's reconnect.
+// subscribeToTask is the reconnect primitive ReconnectingStreamGenerator
+// calls internally, but its own wrapping (simpler than
+// sendStreamingMessage's — the taskId is already the input parameter, no
+// peeking needed) had no direct coverage; this exercises it in isolation,
+// not just as a side effect of sendStreamingMessage's reconnect.
 @test:Config {}
 function testSubscribeToTaskReconnectsOnDrop() returns error? {
     setNextRestSseResponseThenDrop([
@@ -1249,18 +1242,18 @@ function testSubscribeToTaskReconnectsOnDrop() returns error? {
     test:assertEquals((<TaskStatusUpdateEvent>second).status.state, TASK_STATE_COMPLETED);
 }
 
-# Regression test for a real bug caught during review: on reconnect,
-# ReconnectingStreamGenerator used to call
-# self.a2aClient.openTaskSubscriptionStream(self.taskId) with no tenant
-# argument, so a reconnect always fell back to the client-level default
-# tenant (or no tenant at all) — even when the originating
-# subscribeToTask(id, tenant = "x") call specified a per-call tenant
-# override. In a multi-tenant deployment this silently resubscribes under
-# the wrong tenant after a drop. This client is constructed with NO
-# client-level default tenant, and the originating call passes a per-call
-# tenant override; the mock's captured request body on the reconnect must
-# still carry that same per-call tenant, not omit it or substitute a
-# different one.
+// Regression test for a real bug caught during review: on reconnect,
+// ReconnectingStreamGenerator used to call
+// self.a2aClient.openTaskSubscriptionStream(self.taskId) with no tenant
+// argument, so a reconnect always fell back to the client-level default
+// tenant (or no tenant at all) — even when the originating
+// subscribeToTask(id, tenant = "x") call specified a per-call tenant
+// override. In a multi-tenant deployment this silently resubscribes under
+// the wrong tenant after a drop. This client is constructed with NO
+// client-level default tenant, and the originating call passes a per-call
+// tenant override; the mock's captured request body on the reconnect must
+// still carry that same per-call tenant, not omit it or substitute a
+// different one.
 @test:Config {}
 function testSubscribeToTaskReconnectPreservesPerCallTenant() returns error? {
     setNextRestSseResponseThenDrop([
@@ -1283,11 +1276,11 @@ function testSubscribeToTaskReconnectPreservesPerCallTenant() returns error? {
             "reconnect must resubscribe using the originating call's per-call tenant override, not the client-level default (or no tenant)");
 }
 
-# Proves attempt exhaustion actually surfaces the final error to the
-# caller, rather than retrying indefinitely or swallowing it: with
-# maxReconnectAttempts = 1, a second consecutive drop (the resubscribed
-# stream itself failing immediately) must exhaust the single allotted
-# attempt and return that second drop's error, not silently retry again.
+// Proves attempt exhaustion actually surfaces the final error to the
+// caller, rather than retrying indefinitely or swallowing it: with
+// maxReconnectAttempts = 1, a second consecutive drop (the resubscribed
+// stream itself failing immediately) must exhaust the single allotted
+// attempt and return that second drop's error, not silently retry again.
 @test:Config {}
 function testSendMessageStreamGivesUpAfterExhaustingReconnectAttempts() returns error? {
     setNextRestSseResponseThenDrop([
@@ -1313,20 +1306,20 @@ function testSendMessageStreamGivesUpAfterExhaustingReconnectAttempts() returns 
     test:assertTrue(third is error, "a second consecutive drop after the single allotted reconnect attempt should surface as an error, not retry again or hang");
 }
 
-# Regression test for a real bug caught during review: ReconnectingStreamGenerator
-# used to reconnect by calling the *public* subscribeToTask remote function,
-# which wraps its own returned stream in a brand-new
-# ReconnectingStreamGenerator with a fresh attemptsUsed = 0 and the full
-# maxReconnectAttempts budget every time. Since each reconnect attempt
-# went through that same public, budget-resetting path, the attempt count
-# was silently reset on every single reconnect — against a mock (or
-# agent) that fails every single reconnect attempt, not just once,
-# reconnection never actually exhausted and recursed effectively without
-# bound (confirmed to hang indefinitely before the fix, extracting the raw
-# openTaskSubscriptionStream helper in client.bal). This scripts a target
-# that keeps failing every reconnect attempt (not just the first) with
-# maxReconnectAttempts = 2, so a persistently-unreachable agent must still
-# give up after exactly 2 reconnect attempts, quickly, not hang.
+// Regression test for a real bug caught during review: ReconnectingStreamGenerator
+// used to reconnect by calling the *public* subscribeToTask remote function,
+// which wraps its own returned stream in a brand-new
+// ReconnectingStreamGenerator with a fresh attemptsUsed = 0 and the full
+// maxReconnectAttempts budget every time. Since each reconnect attempt
+// went through that same public, budget-resetting path, the attempt count
+// was silently reset on every single reconnect — against a mock (or
+// agent) that fails every single reconnect attempt, not just once,
+// reconnection never actually exhausted and recursed effectively without
+// bound (confirmed to hang indefinitely before the fix, extracting the raw
+// openTaskSubscriptionStream helper in client.bal). This scripts a target
+// that keeps failing every reconnect attempt (not just the first) with
+// maxReconnectAttempts = 2, so a persistently-unreachable agent must still
+// give up after exactly 2 reconnect attempts, quickly, not hang.
 @test:Config {}
 function testSendMessageStreamGivesUpWhenEveryReconnectAttemptFails() returns error? {
     setNextRestSseResponseThenDrop([
@@ -1606,14 +1599,13 @@ function testRestFallbackDoesNotFireForOtherOperations() returns error? {
     test:assertTrue(result is error, "a 405 on GetTask must surface as an error, not silently retry with a different verb");
 }
 
-# Integration-level proof that decodeRawBytesFromWire is actually wired
-# into getTask's response handling, not just unit-tested in isolation.
-# Scripts the mock server to return a Task whose history contains a Part
-# with a base64-encoded raw field — exactly what a real, spec-conformant
-# v1.0 server would send on the wire — and confirms getTask correctly
-# decodes it back to the original bytes.
-#
-# + return - an error if any step other than the assertions themselves fails
+// Integration-level proof that decodeRawBytesFromWire is actually wired
+// into getTask's response handling, not just unit-tested in isolation.
+// Scripts the mock server to return a Task whose history contains a Part
+// with a base64-encoded raw field — exactly what a real, spec-conformant
+// v1.0 server would send on the wire — and confirms getTask correctly
+// decodes it back to the original bytes.
+//
 @test:Config {}
 function testGetTaskDecodesBase64EncodedPartRawFromRealisticServerResponse() returns error? {
     byte[] expectedBytes = "hello from a real server".toBytes();
@@ -1642,13 +1634,12 @@ function testGetTaskDecodesBase64EncodedPartRawFromRealisticServerResponse() ret
     test:assertEquals(firstPart?.raw, expectedBytes, "Part.raw nested inside Task.history must be decoded from base64 back into the original bytes");
 }
 
-# Integration-level proof that encodeRawBytesForWire is actually wired
-# into sendMessage's request encoding, not just unit-tested in isolation.
-# Sends a Message containing a Part.raw value and confirms the wire body
-# captured by getLastRestBody() carries it as a base64 string — not
-# Ballerina's default integer-array shape, which no real server can parse.
-#
-# + return - an error if any step other than the assertions themselves fails
+// Integration-level proof that encodeRawBytesForWire is actually wired
+// into sendMessage's request encoding, not just unit-tested in isolation.
+// Sends a Message containing a Part.raw value and confirms the wire body
+// captured by getLastRestBody() carries it as a base64 string — not
+// Ballerina's default integer-array shape, which no real server can parse.
+//
 @test:Config {}
 function testSendMessageEncodesPartRawAsBase64OnTheWire() returns error? {
     setNextRestResponse({task: {id: "task-raw-2", status: {state: "TASK_STATE_COMPLETED"}}});
@@ -1681,7 +1672,7 @@ function testSendMessageEncodesPartRawAsBase64OnTheWire() returns error? {
 // mislabelled it. These tests pin the v1.0 form down explicitly.
 // ---------------------------------------------------------------------------
 
-# Overrides the well-known card with a body whose securitySchemes are supplied raw.
+// Overrides the well-known card with a body whose securitySchemes are supplied raw.
 isolated function setV10SchemeCard(json securitySchemes) {
     setWellKnownOverride({
         "name": "V1.0 Agent",
@@ -1851,10 +1842,10 @@ function testResolveAgentCardV10SchemesAreNeverMislabelledAsMutualTls() returns 
 // request the mock saw is still that one.
 // ---------------------------------------------------------------------------
 
-# Builds a minimal AgentCard declaring a given extendedAgentCard capability.
-# The supportedInterfaces entry is required, not decorative: a card without
-# one is treated as a pre-1.0 legacy card by detectProtocolModeForBinding,
-# which would put the Client in V0_3 mode and change the wire method names.
+// Builds a minimal AgentCard declaring a given extendedAgentCard capability.
+// The supportedInterfaces entry is required, not decorative: a card without
+// one is treated as a pre-1.0 legacy card by detectProtocolModeForBinding,
+// which would put the Client in V0_3 mode and change the wire method names.
 isolated function cardWithExtendedSupport(boolean supported, string name = "Held Card") returns AgentCard => {
     name,
     description: "d",
@@ -1866,9 +1857,9 @@ isolated function cardWithExtendedSupport(boolean supported, string name = "Held
     defaultOutputModes: ["text"]
 };
 
-# Sends one getTask so the mock's last-seen request is a known,
-# distinguishable one, then returns the path it recorded. The REST binding
-# names its operation in the path, so that is what identifies the request.
+// Sends one getTask so the mock's last-seen request is a known,
+// distinguishable one, then returns the path it recorded. The REST binding
+// names its operation in the path, so that is what identifies the request.
 isolated function primeLastRequest(Client c) returns string|error {
     setNextRestResponse({id: "t-prime", contextId: "c1", status: {state: "TASK_STATE_COMPLETED"}});
     Task _ = check c->getTask({id: "t-prime"});
@@ -2104,9 +2095,9 @@ function testDeleteTaskPushNotificationConfigIsGatedLikeTheOtherThree() returns 
 
 // ---- v0.3 extended-card-support normalization -------------------------
 
-# A v1.0 card already declares supportedInterfaces and must pass through
-# untouched, even on the vanishingly unlikely chance it also carries a
-# legacy field.
+// A v1.0 card already declares supportedInterfaces and must pass through
+// untouched, even on the vanishingly unlikely chance it also carries a
+// legacy field.
 @test:Config {}
 function testV10CardSupportedInterfacesAreNeverRewritten() returns error? {
     AgentCard card = check parseAgentCardBody({

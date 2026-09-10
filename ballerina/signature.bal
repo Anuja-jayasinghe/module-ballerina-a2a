@@ -14,76 +14,48 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// AgentCard signature verification, per specification section 8.4.
+// AgentCard signature verification, per specification section 8.4:
+// RFC 8785 (JCS) canonicalization, proto3 default-stripping, and JWS
+// (RS256/ES256) verification.
 //
-// Implements the spec's canonicalize-and-verify procedure exactly as far
-// as it is defined, and no further: JCS (RFC 8785) canonicalization,
-// proto3 default-stripping, and JWS (RS256/ES256) verification. What it
-// deliberately does not do is fetch a signing key from a card's `jku`
-// (JWK Set URL) - per §8.4.3 step 2, that requires resolving and parsing
-// a JWK Set, which neither reference SDK's own verifier does either:
-// a2a-js's `verifyAgentCardSignature(retrievePublicKey)` and Python's
-// `key_provider(kid, jku)` both hand key resolution to a caller-supplied
-// callback. This module matches that shape - callers already doing their
-// own key management (a truststore, a pinned key, their own jku fetch)
-// are the common case, and the boundary is the same one every other A2A
-// client library already drew.
+// Canonicalization must run on the raw JSON as received, never on a parsed
+// AgentCard record: a record carries every field's declared default whether
+// or not the signer put it on the wire, so the typed form signs content the
+// signer never signed.
 //
-// A prior version of this file was removed before release (issue #12)
-// because it verified signatures over `AgentCard.toJsonString()` -
-// Ballerina's own record serialization, not JCS - so it could only ever
-// verify signatures computed over its own output, never a real signer's.
-// This version fixes that at the root: canonicalization runs on the raw
-// JSON exactly as received (see `fetchAgentCardBody`, client.bal), never
-// on a parsed `AgentCard` record. A record carries every field's declared
-// default whether or not the signer included it on the wire
-// (`requestedExtensions = []`, `securitySchemes = {}`, ...), so
-// canonicalizing the typed form would inject content the signer never
-// signed and guarantee failure - the exact class of bug this module
-// exists to avoid repeating.
+// Resolving a key from a card's `jku` is left to the caller-supplied key
+// provider, matching a2a-js and a2a-sdk (Python).
 
 import ballerina/crypto;
 import ballerina/lang.array;
 
 # Resolves the public key for one AgentCard signature entry.
 #
-# Called once per signature on the card (spec: verification succeeds if
-# **any** signature verifies), so a card signed by multiple parties with
-# different keys is handled correctly - each `kid` gets its own lookup.
+# Called once per signature on the card, so a card signed by several parties
+# with different keys resolves each `kid` separately. This library never
+# fetches `jku` itself; it is passed through so an implementation that wants
+# to resolve it can.
 #
-# This library does not fetch `jku` itself (see the file header comment);
-# `jku` is passed through only so an implementation that does want to
-# resolve it can, matching the reference SDKs' key-provider shape.
-#
-# + kid - the `kid` (key ID) claim from the signature's protected header
-# + jku - the `jku` (JWK Set URL) claim from the protected header, if the
+# + kid - The `kid` (key ID) claim from the signature's protected header
+# + jku - The `jku` (JWK Set URL) claim from the protected header, if the
 #         signer included one
-# + return - the public key to verify that signature entry with
+# + return - The public key to verify that signature entry with
 public type AgentCardKeyProvider isolated function (string kid, string? jku) returns crypto:PublicKey|error;
 
-# Raised when no signature on the card could be verified - either none
-# verified against the key(s) the AgentCardKeyProvider supplied, no
-# `signatures` were present at all, or a signature entry was structurally
-# malformed (missing protected-header claims, an unsupported `alg`, a
-# non-base64url field). Deliberately one error type for all of these:
-# spec 8.4.3's procedure has no notion of a partially-valid signature, so
-# a caller only ever needs to know "trusted" versus "not," not which of
-# several ways verification failed for any one entry.
+# Raised when no signature on the card could be verified.
+#
+# Covers every failure mode as one type — none verified against the supplied
+# keys, no `signatures` were present, or an entry was malformed — because
+# specification section 8.4.3 has no notion of a partially-valid signature.
+# A caller needs to know trusted or not, not which entry failed and how.
 public type AgentCardSignatureError distinct error;
 
-# Wraps any raw error (JSON shape mismatch, invalid UTF-8, malformed
-# base64url, a crypto library failure, a key provider's own error) into
-# this module's single public error type, so nothing but
-# AgentCardSignatureError ever crosses verifyAgentCardSignature's or
-# canonicalizeAgentCardBody's boundary - matching errors.bal's
-# wrapTransportError, but for this module's own error type rather than
-# Error, since signature verification is a distinct concern from
-# transport/protocol handling and already had its own dedicated error
-# type before this change.
+# Wraps a raw error into this module's public error type, so nothing else
+# crosses the boundary of the two public functions here.
 #
-# + e - the raw error to wrap
-# + return - `e` unchanged if it is already an AgentCardSignatureError,
-#            otherwise a new AgentCardSignatureError wrapping its message
+# + e - The raw error to wrap
+# + return - `e` unchanged if it is already an `a2a:AgentCardSignatureError`,
+#            otherwise a new one wrapping its message
 isolated function wrapSignatureError(error e) returns AgentCardSignatureError {
     if e is AgentCardSignatureError {
         return e;
@@ -100,14 +72,17 @@ isolated function wrapSignatureError(error e) returns AgentCardSignatureError {
 # a2a:AgentCard card = check a2a:parseAgentCardBody(rawCard);
 # ```
 #
-# Must be called with the **raw** JSON body - see the file header comment
-# for why a parsed `AgentCard` record cannot be substituted here.
+# Verification succeeds if any one signature on the card verifies.
 #
-# + rawCard - the raw JSON AgentCard body exactly as received (e.g. from
-#             `fetchAgentCardBody`)
-# + keyProvider - resolves the public key for a signature's `kid`/`jku`
+# Must be called with the raw JSON body. A parsed `a2a:AgentCard` cannot be
+# substituted: it carries defaults the signer never sent, so canonicalizing
+# it produces a payload no conformant signature matches.
+#
+# + rawCard - The raw JSON AgentCard body exactly as received, from
+#             `a2a:fetchAgentCardBody`
+# + keyProvider - Resolves the public key for a signature's `kid` and `jku`
 # + return - `()` if at least one signature verified, or an
-#            AgentCardSignatureError if none did
+#            `a2a:AgentCardSignatureError` if none did
 public isolated function verifyAgentCardSignature(json rawCard, AgentCardKeyProvider keyProvider) returns AgentCardSignatureError? {
     map<json>|error cardMapResult = rawCard.ensureType();
     if cardMapResult is error {
@@ -141,12 +116,12 @@ public isolated function verifyAgentCardSignature(json rawCard, AgentCardKeyProv
 # Verifies a single `signatures[]` entry against the already-canonicalized
 # payload.
 #
-# + entry - one raw `signatures[]` array element
-# + encodedPayload - the base64url-encoded canonical payload (the JWS
+# + entry - One raw `signatures[]` array element
+# + encodedPayload - The base64url-encoded canonical payload (the JWS
 #                     signing input's second segment)
-# + payloadBytes - the same payload, undecoded, for algorithms whose
+# + payloadBytes - The same payload, undecoded, for algorithms whose
 #                   ballerina/crypto verify function wants raw bytes
-# + keyProvider - resolves the public key for this entry's `kid`/`jku`
+# + keyProvider - Resolves the public key for this entry's `kid`/`jku`
 # + return - `()` if this entry verified, or an error if it didn't (never
 #            propagated to the caller of verifyAgentCardSignature -
 #            callers only see the aggregate result)
@@ -238,9 +213,9 @@ isolated function verifyOneSignatureEntry(
 # whether it is genuinely valid - confirmed empirically against a real
 # a2a-js-generated signature while writing this module.
 #
-# + rawSignature - the 64-byte raw R‖S signature, as carried in a JWS
+# + rawSignature - The 64-byte raw R‖S signature, as carried in a JWS
 #                   `signature` field
-# + return - the same signature, DER-encoded
+# + return - The same signature, DER-encoded
 isolated function ecdsaJwsSignatureToDer(byte[] rawSignature) returns byte[]|AgentCardSignatureError {
     if rawSignature.length() != 64 {
         return error AgentCardSignatureError(
@@ -266,8 +241,8 @@ isolated function ecdsaJwsSignatureToDer(byte[] rawSignature) returns byte[]|Age
 # with its high bit set as negative, which R and S, as unsigned
 # coordinates, never are.
 #
-# + value - the 32-byte unsigned big-endian integer
-# + return - the DER `INTEGER` TLV (tag 0x02, length, content)
+# + value - The 32-byte unsigned big-endian integer
+# + return - The DER `INTEGER` TLV (tag 0x02, length, content)
 isolated function derInteger(byte[] value) returns byte[] {
     int firstNonZero = 0;
     while firstNonZero < value.length() - 1 && value[firstNonZero] == 0 {
@@ -288,8 +263,8 @@ isolated function derInteger(byte[] value) returns byte[] {
 # characters - the same tradeoff `buildRestRequest` (client.bal) already
 # made for path-placeholder substitution.
 #
-# + data - the bytes to encode
-# + return - the base64url encoding, unpadded
+# + data - The bytes to encode
+# + return - The base64url encoding, unpadded
 isolated function encodeBase64Url(byte[] data) returns string {
     string standard = data.toBase64();
     string[] pieces = [];
@@ -309,8 +284,8 @@ isolated function encodeBase64Url(byte[] data) returns string {
 # Reverses `encodeBase64Url`: swaps the alphabet back and restores the
 # `=` padding standard base64 decoding requires.
 #
-# + encoded - the base64url string to decode (unpadded, per RFC 4648 §5)
-# + return - the decoded bytes, or an error if `encoded` isn't valid
+# + encoded - The base64url string to decode (unpadded, per RFC 4648 §5)
+# + return - The decoded bytes, or an error if `encoded` isn't valid
 #            base64url
 isolated function decodeBase64Url(string encoded) returns byte[]|AgentCardSignatureError {
     string[] pieces = [];
@@ -351,73 +326,27 @@ final readonly & string[] AGENT_CARD_V1_FIELDS = [
 ];
 
 # Canonicalizes a raw AgentCard JSON body for signing or verification, per
-# specification section 8.4.1: keeps only the fields the v1.0 `AgentCard`
-# proto message actually defines, strips every proto3-default-valued
-# property among those, then serializes with RFC 8785 JSON Canonicalization
-# (JCS) - object keys sorted, no insignificant whitespace.
+# specification section 8.4.1.
 #
-# Exposed publicly, matching both reference SDKs (`canonicalizeAgentCard`
-# in a2a-js, the equivalent in Python's `a2a-sdk`): a caller doing their
-# own signing tooling, or debugging why a signature doesn't verify, needs
-# to be able to reproduce exactly what gets signed.
+# Keeps only the fields the v1.0 `AgentCard` proto message defines, strips the
+# proto3-default-valued ones among them, and serializes with RFC 8785 JSON
+# Canonicalization — object keys sorted, no insignificant whitespace.
 #
-# **The schema-filtering step matters more than it first looks.** Spec
-# 8.4.1 says canonicalization must respect "Protocol Buffer field
-# presence semantics" - i.e. operate on the *proto* shape, not whatever
-# JSON happened to arrive on the wire. A real v1.0 card can legitimately
-# carry the legacy top-level `url` field too (for older v0.3 clients'
-# benefit; this library's own `primaryUrl` reads it as a fallback), but
-# `url` is not a field of the v1.0 `AgentCard` proto message at all - so
-# a spec-conformant signer's own proto round-trip drops it before
-# signing, and a verifier that doesn't drop it the same way computes a
-# different payload and never verifies a legitimately-signed card.
-# Confirmed the hard way: an earlier version of this function canonicalized
-# the raw map directly (no schema filter) and failed to reproduce a real
-# a2a-js-signed fixture's canonical payload byte-for-byte, off by exactly
-# the retained `url` field - see the design plan and signature_test.bal's
-# comment for how that fixture was produced and cross-checked.
+# Public so a caller running their own signing tooling, or debugging why a
+# signature will not verify, can reproduce exactly what gets signed.
 #
-# Applied at the **top level only**, not recursively into nested messages
-# (`AgentSkill`, `AgentInterface`, `SecurityScheme`, ...) - a bounded gap,
-# not an oversight: modeling every nested message's own field list is
-# real added complexity for a case this library's own AgentCard-producing
-# code never creates (nested legacy/unknown fields would only appear from
-# a third party's non-conformant card), whereas the top-level `url` case
-# is something a real, otherwise-conformant v1.0 agent can and does
-# legitimately publish.
-#
-# Two more known, deliberately bounded gaps against a byte-perfect RFC 8785
-# implementation, both confirmed against the real reference implementation
-# rather than assumed:
-#
-# - **Number formatting** is Ballerina's own `json` number-to-string
-#   conversion, not a hand-rolled ECMAScript `Number::toString`
-#   (RFC 8785 §3.2.2.3). `1.0` renders as `"1.0"` here where JCS/JS would
-#   render `"1"`. AgentCard's schema carries no numeric fields at all
-#   (pageSize/historyLength are the closest, both plain integers, which
-#   render identically either way); a mismatch is only reachable through
-#   an open/rest `json` field carrying a float, e.g.
-#   `AgentExtension.params`. a2a-js's own `jcsStringify` has the identical
-#   gap - it delegates every leaf value to native `JSON.stringify`, which
-#   is exactly ECMAScript `Number::toString`, but is *not* attempting
-#   RFC 8785's specific canonical-number-string algorithm either; the two
-#   only coincide because ECMAScript's own JSON.stringify already matches
-#   it for ordinary numbers.
-# - **Default-value stripping** matches what the reference SDKs actually
-#   do (confirmed by reading a2a-js's `cleanEmpty` directly), not a
-#   literal proto3 field-presence check: a property is stripped when its
-#   value is `""`, `null`, `[]`, or `{}` (after the same stripping is
-#   applied recursively first). `false` and `0` are explicit values, kept
-#   as-is - proto3's own zero-value story more literally, but not what
-#   `cleanEmpty` implements, and matching the reference implementation's
-#   actual behavior is what makes a real signature verify.
-#
-# + rawCard - the raw JSON AgentCard body (with or without a `signatures`
-#             field, and with or without legacy fields like `url` - all
-#             are excluded either way)
-# + return - the canonical JSON string, or an error if rawCard is not a
-#            JSON object
+# + rawCard - The raw JSON AgentCard body; `signatures` and any legacy fields
+#             are excluded either way
+# + return - The canonical JSON string, or an `a2a:AgentCardSignatureError` if
+#            `rawCard` is not a JSON object
 public isolated function canonicalizeAgentCardBody(json rawCard) returns string|AgentCardSignatureError {
+    // Filter to the proto field set before canonicalizing. Section 8.4.1
+    // requires Protocol Buffer field-presence semantics, so a field a real
+    // card may carry but the v1.0 AgentCard message does not define must be
+    // dropped -- a signer's proto round-trip drops it, and a verifier that
+    // keeps it computes a different payload and never verifies.
+    //
+    // Top level only. Nested messages are a known, bounded gap.
     map<json>|error cardMapResult = rawCard.ensureType();
     if cardMapResult is error {
         return wrapSignatureError(cardMapResult);
@@ -444,8 +373,8 @@ public isolated function canonicalizeAgentCardBody(json rawCard) returns string|
 # booleans and numbers, `false`/`0` included, are never stripped - only
 # string/array/object emptiness is.
 #
-# + value - the value to strip, at any depth
-# + return - the stripped value, or `()` to signal to the caller (an
+# + value - The value to strip, at any depth
+# + return - The stripped value, or `()` to signal to the caller (an
 #            enclosing array/object) that this value counts as empty and
 #            should itself be omitted
 isolated function stripJcsDefaults(json value) returns json {
@@ -482,8 +411,8 @@ isolated function stripJcsDefaults(json value) returns json {
 # no whitespace anywhere, and leaf values delegated to toJsonString()
 # (see the two bounded gaps documented on `canonicalizeAgentCardBody`).
 #
-# + value - the value to serialize, at any depth
-# + return - the canonical JSON string for this value
+# + value - The value to serialize, at any depth
+# + return - The canonical JSON string for this value
 isolated function jcsSerialize(json value) returns string {
     if value is map<json> {
         string[] sortedKeys = value.keys().sort();

@@ -16,6 +16,11 @@
 
 // Spec-facing types for the A2A protocol.
 
+# Who a `a2a:Message` came from.
+#
+# `ROLE_USER` is the client's side of the conversation and `ROLE_AGENT` the
+# remote agent's. `ROLE_UNSPECIFIED` is the proto3 zero value and should not
+# appear on a conformant message.
 public enum Role {
     ROLE_UNSPECIFIED,
     ROLE_USER,
@@ -289,17 +294,14 @@ public type TaskArtifactUpdateEvent record {|
 # a Message, a status update, or an artifact update — never a wrapper that
 # might hold two of them, or none.
 #
-# The four arms are mutually distinguishable by `is`, which is what makes
-# the union viable here: `Task` carries `id`, `Message` carries `messageId`,
-# and the two update events carry `taskId` with `contextId`. (`OAuthFlows`
-# is also a specification `oneof` but stays a record, precisely because its
-# arms are *not* distinguishable that way.)
+# A union works here because the four arms are distinguishable by `is`:
+# `a2a:Task` carries `id`, `a2a:Message` carries `messageId`, and the two
+# update events carry `taskId`. Match each arm explicitly — every type here is
+# an open record, so `else` does not narrow the union.
 #
-# The wire form is a wrapper keyed by the arm name — `{"task": {...}}` — so
-# decoding unwraps it with `oneofArm` before typing the payload. An arm no
-# recognized name matches is skipped rather than failing the stream, so a
-# newer specification revision adding an event type cannot break an existing
-# client mid-stream.
+# An event carrying no arm this client recognizes is skipped rather than
+# failing the stream, so a later specification revision adding an event type
+# cannot break an existing client mid-stream.
 public type StreamResponse Task|Message|TaskStatusUpdateEvent|TaskArtifactUpdateEvent;
 
 # Credentials the client presents to a push-notification webhook it registers.

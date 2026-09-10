@@ -18,24 +18,22 @@ import ballerina/http;
 import ballerina/lang.runtime;
 import ballerina/test;
 
-# Base URL for the scripted mock A2A server used by Client tests.
-#
-# + return - the base URL to run tests against
+// Base URL for the scripted mock A2A server used by Client tests.
+//
 public isolated function getServerBaseUrl() returns string {
     return "http://localhost:19199";
 }
 
-# Port the scripted mock gRPC A2AService (tests/grpcmock_service.bal) listens
-# on, distinct from the HTTP mock's 19199. Shared as a single constant with
-# tests/grpcmock_scripting.bal and tests/grpcmock_service.bal so the port
-# only needs to change in one place.
+// Port the scripted mock gRPC A2AService (tests/grpcmock_service.bal) listens
+// on, distinct from the HTTP mock's 19199. Shared as a single constant with
+// tests/grpcmock_scripting.bal and tests/grpcmock_service.bal so the port
+// only needs to change in one place.
 const int GRPC_MOCK_PORT = 19198;
 
-# Port of the scripted mock gRPC A2AService used by gRPC-binding Client
-# tests (see tests/grpcmock_service.bal), distinct from the HTTP mock's
-# 19199.
-#
-# + return - the port the gRPC mock listens on
+// Port of the scripted mock gRPC A2AService used by gRPC-binding Client
+// tests (see tests/grpcmock_service.bal), distinct from the HTTP mock's
+// 19199.
+//
 public isolated function getGrpcMockPort() returns int {
     return GRPC_MOCK_PORT;
 }
@@ -117,22 +115,18 @@ type MockRestScript record {|
 
 isolated MockRestScript restScript = {};
 
-# Scripts the next REST request to receive a plain JSON response.
-#
-# + body - the JSON body to respond with
-# + statusCode - the HTTP status code to respond with
-# + hasResponseBody - false for e.g. a DELETE's empty 204 response
+// Scripts the next REST request to receive a plain JSON response.
+//
 public isolated function setNextRestResponse(json body, int statusCode = 200, boolean hasResponseBody = true) {
     lock {
         restScript = {jsonBody: body.clone(), statusCode, hasResponseBody};
     }
 }
 
-# Scripts the next REST request to receive an SSE stream response, with
-# bare StreamResponse JSON event data (no JSON-RPC envelope) — the REST
-# binding's actual wire shape.
-#
-# + events - the canned SSE events to stream back
+// Scripts the next REST request to receive an SSE stream response, with
+// bare StreamResponse JSON event data (no JSON-RPC envelope) — the REST
+// binding's actual wire shape.
+//
 public isolated function setNextRestSseResponse(http:SseEvent[] events) {
     lock {
         restScript.sseEvents = events.clone();
@@ -141,13 +135,12 @@ public isolated function setNextRestSseResponse(http:SseEvent[] events) {
     }
 }
 
-# Scripts the next REST request to receive an SSE stream that plays the
-# given events and then ends with a genuine stream error, simulating a
-# dropped connection — distinct from setNextRestSseResponse, whose events
-# simply running out produces a normal, error-free stream end. Used to
-# exercise the reconnect-on-error path of automatic SSE reconnection.
-#
-# + events - the canned SSE events to stream back before the simulated drop
+// Scripts the next REST request to receive an SSE stream that plays the
+// given events and then ends with a genuine stream error, simulating a
+// dropped connection — distinct from setNextRestSseResponse, whose events
+// simply running out produces a normal, error-free stream end. Used to
+// exercise the reconnect-on-error path of automatic SSE reconnection.
+//
 public isolated function setNextRestSseResponseThenDrop(http:SseEvent[] events) {
     lock {
         restScript.sseEvents = events.clone();
@@ -156,14 +149,12 @@ public isolated function setNextRestSseResponseThenDrop(http:SseEvent[] events) 
     }
 }
 
-# Scripts the mock to reject exactly the next request of the given HTTP
-# method with the given status code (e.g. simulating a server that only
-# routes POST for an operation the proto annotates as GET), then clear
-# the rejection so a subsequent request — the client's retry with a
-# different method — succeeds normally against whatever else is scripted.
-#
-# + httpMethod - the method to reject once, e.g. "GET"
-# + statusCode - the status to reject it with, e.g. 405
+// Scripts the mock to reject exactly the next request of the given HTTP
+// method with the given status code (e.g. simulating a server that only
+// routes POST for an operation the proto annotates as GET), then clear
+// the rejection so a subsequent request — the client's retry with a
+// different method — succeeds normally against whatever else is scripted.
+//
 public isolated function setRestRejectMethod(string httpMethod, int statusCode) {
     lock {
         restScript.rejectMethod = httpMethod;
@@ -171,15 +162,13 @@ public isolated function setRestRejectMethod(string httpMethod, int statusCode) 
     }
 }
 
-# Scripts the mock to reject exactly the next REST request carrying the
-# given Content-Type with the given status code (e.g. simulating a real
-# server, like a2a-java-sdk-reference-rest, that rejects the spec-mandated
-# application/a2a+json with a 415), then clear the rejection so a
-# subsequent request — the client's retry with a different Content-Type —
-# succeeds normally against whatever else is scripted.
-#
-# + contentType - the exact Content-Type value to reject once, e.g. "application/a2a+json"
-# + statusCode - the status to reject it with, e.g. 415
+// Scripts the mock to reject exactly the next REST request carrying the
+// given Content-Type with the given status code (e.g. simulating a real
+// server, like a2a-java-sdk-reference-rest, that rejects the spec-mandated
+// application/a2a+json with a 415), then clear the rejection so a
+// subsequent request — the client's retry with a different Content-Type —
+// succeeds normally against whatever else is scripted.
+//
 public isolated function setRestRejectContentType(string contentType, int statusCode) {
     lock {
         restScript.rejectContentType = contentType;
@@ -187,102 +176,93 @@ public isolated function setRestRejectContentType(string contentType, int status
     }
 }
 
-# Returns the headers of the last REST request the mock received, so tests
-# can assert on outbound headers (e.g. Content-Type). Keys are lowercased —
-# see getLastRequestHeaders' doc comment for why.
-#
-# + return - the last received REST request's headers, keyed by lowercase header name
+// Returns the headers of the last REST request the mock received, so tests
+// can assert on outbound headers (e.g. Content-Type). Keys are lowercased —
+// see getLastRequestHeaders' doc comment for why.
+//
 public isolated function getLastRestHeaders() returns map<string> {
     lock {
         return restScript.lastHeaders.clone();
     }
 }
 
-# Returns the method, path, and query params of the last REST request the
-# mock received, so tests can assert on exactly what the Client sent.
-#
-# + return - a record with the last request's method, path, and query params
+// Returns the method, path, and query params of the last REST request the
+// mock received, so tests can assert on exactly what the Client sent.
+//
 public isolated function getLastRestRequest() returns record {| string method; string path; map<string> queryParams; |} {
     lock {
         return {method: restScript.lastMethod, path: restScript.lastPath, queryParams: restScript.lastQueryParams.clone()};
     }
 }
 
-# Returns the JSON body of the last REST request the mock received, so
-# tests can assert on what the Client actually sent on the wire (e.g. the
-# M3/M4 tenant/path-param body duplication for hasBody operations). `{}`
-# for a bodiless request (e.g. a GET or DELETE, which never carries a
-# request body to parse).
-#
-# + return - the last REST request's JSON body, or `{}` if it had none
+// Returns the JSON body of the last REST request the mock received, so
+// tests can assert on what the Client actually sent on the wire (e.g. the
+// M3/M4 tenant/path-param body duplication for hasBody operations). `{}`
+// for a bodiless request (e.g. a GET or DELETE, which never carries a
+// request body to parse).
+//
 public isolated function getLastRestBody() returns json {
     lock {
         return restScript.lastBody.clone();
     }
 }
 
-# Returns the JSON body of the last request the mock JSON-RPC endpoint
-# received, so tests can assert on what the Client actually sent on the
-# wire (e.g. tenant propagation).
-#
-# + return - the last received request body
+// Returns the JSON body of the last request the mock JSON-RPC endpoint
+// received, so tests can assert on what the Client actually sent on the
+// wire (e.g. tenant propagation).
+//
 public isolated function getLastRequestBody() returns json {
     lock {
         return lastRequestBody.clone();
     }
 }
 
-# Returns the headers of the last request the mock JSON-RPC endpoint
-# received, so tests can assert on outbound headers (e.g. A2A-Extensions).
-# Keys are lowercased, since the wire casing of header names varies with
-# HTTP protocol negotiation on this connection (see the capture site for
-# details) -- callers should look up headers by their lowercase name.
-#
-# + return - the last received request's headers, keyed by lowercase header name
+// Returns the headers of the last request the mock JSON-RPC endpoint
+// received, so tests can assert on outbound headers (e.g. A2A-Extensions).
+// Keys are lowercased, since the wire casing of header names varies with
+// HTTP protocol negotiation on this connection (see the capture site for
+// details) -- callers should look up headers by their lowercase name.
+//
 public isolated function getLastRequestHeaders() returns map<string> {
     lock {
         return lastRequestHeaders.clone();
     }
 }
 
-# Scripts the next JSON-RPC request to receive a plain JSON response.
-#
-# + body - the JSON body to respond with
-# + statusCode - the HTTP status code to respond with
+// Scripts the next JSON-RPC request to receive a plain JSON response.
+//
 public isolated function setNextJsonResponse(json body, int statusCode = 200) {
     lock {
         rpcScript = {jsonBody: body.clone(), statusCode, isSse: false, delaySeconds: 0};
     }
 }
 
-# Scripts the next JSON-RPC request to receive an SSE stream response.
-#
-# + events - the canned SSE events to stream back
+// Scripts the next JSON-RPC request to receive an SSE stream response.
+//
 public isolated function setNextSseResponse(http:SseEvent[] events) {
     lock {
         rpcScript = {sseEvents: events.clone(), isSse: true, delaySeconds: 0};
     }
 }
 
-# Scripts the next JSON-RPC request to receive an SSE stream that plays the
-# given events and then ends with a genuine stream error, simulating a
-# dropped connection — distinct from setNextSseResponse, whose events
-# simply running out produces a normal, error-free stream end (proven by
-# testSendMessageStreamPausesAtInputRequiredThenResumes). Used to exercise
-# the reconnect-on-error path of automatic SSE reconnection.
-#
-# + events - the canned SSE events to stream back before the simulated drop
+// Scripts the next JSON-RPC request to receive an SSE stream that plays the
+// given events and then ends with a genuine stream error, simulating a
+// dropped connection — distinct from setNextSseResponse, whose events
+// simply running out produces a normal, error-free stream end (proven by
+// testSendMessageStreamPausesAtInputRequiredThenResumes). Used to exercise
+// the reconnect-on-error path of automatic SSE reconnection.
+//
 public isolated function setNextSseResponseThenDrop(http:SseEvent[] events) {
     lock {
         rpcScript = {sseEvents: events.clone(), isSse: true, delaySeconds: 0, simulateDropError: true};
     }
 }
 
-# A synthetic SSE source that replays a fixed list of events, then yields a
-# stream error instead of ending cleanly — used by
-# setNextSseResponseThenDrop to simulate a dropped connection at the wire
-# level, since a plain array-backed stream (events.toStream()) has no way
-# to end with anything but a clean, error-free close.
+// A synthetic SSE source that replays a fixed list of events, then yields a
+// stream error instead of ending cleanly — used by
+// setNextSseResponseThenDrop to simulate a dropped connection at the wire
+// level, since a plain array-backed stream (events.toStream()) has no way
+// to end with anything but a clean, error-free close.
 isolated class DropAfterEventsGenerator {
     private final http:SseEvent[] & readonly events;
     private int idx = 0;
@@ -304,10 +284,9 @@ isolated class DropAfterEventsGenerator {
     }
 }
 
-# Delays the next JSON-RPC response by the given number of seconds, to
-# exercise http:ClientConfiguration.timeout passthrough.
-#
-# + seconds - how long the mock server should wait before responding
+// Delays the next JSON-RPC response by the given number of seconds, to
+// exercise http:ClientConfiguration.timeout passthrough.
+//
 public isolated function setNextDelay(decimal seconds) {
     lock {
         rpcScript.delaySeconds = seconds;
@@ -317,12 +296,10 @@ public isolated function setNextDelay(decimal seconds) {
     }
 }
 
-# Overrides the well-known endpoint's response for one test (e.g. a
-# malformed-card or non-200 scenario). Pass `()` to restore the default
-# static card.
-#
-# + body - the JSON body to respond with, or `()` to use the default card
-# + statusCode - the HTTP status code to respond with
+// Overrides the well-known endpoint's response for one test (e.g. a
+// malformed-card or non-200 scenario). Pass `()` to restore the default
+// static card.
+//
 public isolated function setWellKnownOverride(json? body, int statusCode = 200) {
     lock {
         if body is () {
@@ -336,75 +313,61 @@ public isolated function setWellKnownOverride(json? body, int statusCode = 200) 
     }
 }
 
-# Sets the ETag value for well-known endpoint responses, enabling conditional
-# request testing.
-#
-# + etagValue - the ETag value to include in responses (e.g., "\"v1\"")
+// Sets the ETag value for well-known endpoint responses, enabling conditional
+// request testing.
+//
 public isolated function setWellKnownETag(string etagValue) {
     lock {
         wellKnownScript.etag = etagValue;
     }
 }
 
-# Sets the HTTP status code for a conditional well-known response when an
-# If-None-Match header is present and matches the scripted ETag.
-#
-# + statusCode - the HTTP status code to respond with (typically 304)
+// Sets the HTTP status code for a conditional well-known response when an
+// If-None-Match header is present and matches the scripted ETag.
+//
 public isolated function setWellKnownConditionalOverride(int statusCode) {
     lock {
         wellKnownScript.conditionalStatus = statusCode;
     }
 }
 
-# A minimal, valid Task JSON body, for tests that don't care about the
-# task's contents and just need something that decodes successfully.
-#
-# + return - a minimal Task's JSON representation
+// A minimal, valid Task JSON body, for tests that don't care about the
+// task's contents and just need something that decodes successfully.
+//
 public isolated function defaultTaskJson() returns json {
     return {id: "task-1", status: {state: "TASK_STATE_COMPLETED"}};
 }
 
-# Builds a Task JSON body with the specified task ID and state, wrapped in a
-# JSON-RPC response envelope for use with setNextJsonResponse().
-#
-# + taskId - the task identifier to stamp on the task
-# + state - the TaskState string value (e.g. "TASK_STATE_FAILED")
-# + return - the JSON-RPC response body with the task
+// Builds a Task JSON body with the specified task ID and state, wrapped in a
+// JSON-RPC response envelope for use with setNextJsonResponse().
+//
 public isolated function taskJsonWithState(string taskId, string state) returns json {
     return {id: taskId, status: {state: state}};
 }
 
-# Builds a JSON-RPC-enveloped {"task": {...}} SSE data payload — the shape
-# a real sendStreamingMessage response opens with per specification section
-# 3.1.1 (the stream opens with a Task or a Message, then delivers zero or
-# more status/artifact update events).
-#
-# + taskId - the task identifier to stamp on the task
-# + state - the TaskState string value (e.g. "TASK_STATE_SUBMITTED")
-# + return - the SSE event's `data:` field content
+// Builds a JSON-RPC-enveloped {"task": {...}} SSE data payload — the shape
+// a real sendStreamingMessage response opens with per specification section
+// 3.1.1 (the stream opens with a Task or a Message, then delivers zero or
+// more status/artifact update events).
+//
 public isolated function taskJson(string taskId, string state = "TASK_STATE_SUBMITTED") returns string {
     return string `{"task":{"id":"${taskId}","status":{"state":"${state}"}}}`;
 }
 
-# Builds a bare {"message": {...}} SSE data payload — the
-# other valid shape sendStreamingMessage can open with per specification
-# section 3.1.1: a plain conversational reply with no task. Used to
-# exercise the no-op reconnect-wrapping path, since a bare Message carries
-# no taskId to resubscribe with.
-#
-# + messageId - the message identifier to stamp on the reply
-# + return - the SSE event's `data:` field content
+// Builds a bare {"message": {...}} SSE data payload — the
+// other valid shape sendStreamingMessage can open with per specification
+// section 3.1.1: a plain conversational reply with no task. Used to
+// exercise the no-op reconnect-wrapping path, since a bare Message carries
+// no taskId to resubscribe with.
+//
 public isolated function messageJson(string messageId) returns string {
     return string `{"message":{"messageId":"${messageId}","role":"ROLE_AGENT","parts":[{"text":"a direct reply"}]}}`;
 }
 
-# Builds a TaskStatusUpdateEvent SSE data payload, for tests scripting a
-# status-update SSE event without repeating the shape inline. The HTTP+JSON
-# binding sends a bare StreamResponse with no enclosing envelope.
-#
-# + taskId - the task identifier to stamp on the status update
-# + state - the TaskState string value (e.g. "TASK_STATE_WORKING")
-# + return - the SSE event's `data:` field content
+// Builds a TaskStatusUpdateEvent SSE data payload, for tests scripting a
+// status-update SSE event without repeating the shape inline. The HTTP+JSON
+// binding sends a bare StreamResponse with no enclosing envelope.
+//
 public isolated function statusUpdateJson(string taskId, string state) returns string {
     return string `{"statusUpdate":{"taskId":"${taskId}","contextId":"ctx-1","status":{"state":"${state}"}}}`;
 }
@@ -448,22 +411,20 @@ isolated function defaultMockAgentCard() returns json {
     return card.toJson();
 }
 
-# Sends a response via the given caller, discarding any error instead of
-# letting it propagate as the resource function's return value.
-#
-# Used for delayed responses (setNextDelay): when a test's client-side
-# timeout fires first, the client has already closed the connection by
-# the time this delayed respond() runs, so the write fails. Propagating
-# that failure via `check` would make the resource function return an
-# error, which the HTTP engine then tries to convert into its own error
-# response on the same (already-attempted) exchange — logging a spurious
-# "illegal return: response has already been sent" that reads like a
-# real failure in test output. The client-side timeout is what the test
-# actually asserts on; the server-side write failing afterward is
-# expected and not actionable, so it's swallowed here rather than logged.
-#
-# + caller - the caller to respond on
-# + res - the response to send
+// Sends a response via the given caller, discarding any error instead of
+// letting it propagate as the resource function's return value.
+//
+// Used for delayed responses (setNextDelay): when a test's client-side
+// timeout fires first, the client has already closed the connection by
+// the time this delayed respond() runs, so the write fails. Propagating
+// that failure via `check` would make the resource function return an
+// error, which the HTTP engine then tries to convert into its own error
+// response on the same (already-attempted) exchange — logging a spurious
+// "illegal return: response has already been sent" that reads like a
+// real failure in test output. The client-side timeout is what the test
+// actually asserts on; the server-side write failing afterward is
+// expected and not actionable, so it's swallowed here rather than logged.
+//
 isolated function respondIgnoringClientGoneAway(http:Caller caller, http:Response res) {
     error? result = caller->respond(res);
     if result is error {
@@ -512,13 +473,13 @@ service / on mockListener {
         check caller->respond(res);
     }
 
-    # A minimal OAuth2 client_credentials token endpoint (RFC 6749 §4.4.3
-    # shape), so tests exercising a real OAuth2ClientCredentialsGrantConfig
-    # (e.g. testGrpcClientConstructsWithOAuth2ClientCredentialsAuth) have
-    # somewhere genuine to fetch a token from — ballerina/oauth2's
-    # ClientOAuth2Provider fetches eagerly at construction, not lazily, so
-    # a fake/unreachable tokenUrl breaks client construction outright
-    # rather than only a later call.
+    // A minimal OAuth2 client_credentials token endpoint (RFC 6749 §4.4.3
+    // shape), so tests exercising a real OAuth2ClientCredentialsGrantConfig
+    // (e.g. testGrpcClientConstructsWithOAuth2ClientCredentialsAuth) have
+    // somewhere genuine to fetch a token from — ballerina/oauth2's
+    // ClientOAuth2Provider fetches eagerly at construction, not lazily, so
+    // a fake/unreachable tokenUrl breaks client construction outright
+    // rather than only a later call.
     resource function post oauth2\-token(http:Caller caller, http:Request req) returns error? {
         http:Response res = new;
         res.statusCode = 200;
@@ -691,14 +652,12 @@ service / on mockListener {
 
 // ---- Shared assertion helpers -----------------------------------------
 
-# Unwraps a stream.next() result, failing the test immediately if the
-# stream ended or returned an error where a value was expected. Same
-# shape as the helper in modules/transport/tests/transport_test.bal —
-# duplicated rather than imported, since test files aren't part of a
-# module's exported API and can't be shared across modules.
-#
-# + result - the raw return value of a StreamResponse stream's next()
-# + return - the decoded StreamResponse, or an error
+// Unwraps a stream.next() result, failing the test immediately if the
+// stream ended or returned an error where a value was expected. Same
+// shape as the helper in modules/transport/tests/transport_test.bal —
+// duplicated rather than imported, since test files aren't part of a
+// module's exported API and can't be shared across modules.
+//
 public isolated function expectValue(record {| StreamResponse value; |}|error? result) returns StreamResponse|error {
     if result is error {
         return result;
@@ -709,13 +668,10 @@ public isolated function expectValue(record {| StreamResponse value; |}|error? r
     return result.value;
 }
 
-# + task - the task to sanity-check
 public isolated function assertValidTask(Task task) {
     test:assertTrue(task.id.length() > 0, "Task.id should be non-empty");
 }
 
-# + artifact - the artifact to extract text from
-# + return - the first non-nil text part's content, if any
 public isolated function extractArtifactText(Artifact artifact) returns string? {
     foreach Part part in artifact.parts {
         string? text = part?.text;

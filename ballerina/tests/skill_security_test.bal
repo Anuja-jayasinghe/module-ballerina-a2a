@@ -23,13 +23,9 @@
 
 import ballerina/test;
 
-# Builds a card whose skills carry their own security requirements.
-#
-# + skills - the skills to declare
-# + cardRequirements - card-level securityRequirements, the inheritance
-#                      source for a skill declaring none
-# + schemes - securitySchemes to declare, keyed by scheme name
-# + return - a minimal card carrying exactly those declarations
+// Builds a card whose skills carry their own security requirements.
+//
+//                      source for a skill declaring none
 isolated function cardWithSkills(AgentSkill[] skills, SecurityRequirement[] cardRequirements = [],
         map<SecurityScheme> schemes = {}) returns AgentCard {
     return {
@@ -46,11 +42,8 @@ isolated function cardWithSkills(AgentSkill[] skills, SecurityRequirement[] card
     };
 }
 
-# Builds a skill with the given id and security requirements.
-#
-# + id - the skill's id
-# + requirements - the skill's own securityRequirements
-# + return - a minimal skill
+// Builds a skill with the given id and security requirements.
+//
 isolated function skillWithSecurity(string id, SecurityRequirement[] requirements = []) returns AgentSkill {
     return {id: id, name: id, description: "x", securityRequirements: requirements, tags: []};
 }

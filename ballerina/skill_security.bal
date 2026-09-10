@@ -42,27 +42,15 @@
 # satisfied together. Pass an entry to `resolveSecuritySchemes` to learn
 # what those scheme names concretely mean.
 #
-# ### Why an empty skill-level list means "inherit"
+# A skill declaring no requirements of its own inherits the card's, matching
+# OpenAPI's handling of an absent operation-level `security`. A skill meaning
+# "public, overriding the card" cannot be expressed — the wire format carries
+# no presence information to distinguish it from declaring nothing.
 #
-# A skill that declares no requirements of its own inherits the card's
-# `securityRequirements`. That rule exists because the alternative cannot
-# be represented: protobuf3 `repeated` fields carry no presence
-# information, so "declares nothing" and "declares an empty list" are
-# indistinguishable on the wire (a2a-python's own auth interceptor notes
-# the same constraint), and this library's `AgentSkill.securityRequirements`
-# defaults to `[]`, losing the distinction on the JSON side too. Treating
-# empty as inherit matches OpenAPI's handling of an absent operation-level
-# `security`, which is the model A2A borrows from.
-#
-# The one case this cannot express: a skill meaning "public, overriding the
-# card's requirement" has no way to say so. That is a limitation of the
-# specification's wire format, not of this function.
-#
-# + card - the agent's card, public or extended
-# + skillId - the `id` of the skill to look up
-# + return - the skill's own requirements, or the card-level requirements
-#            if the skill declares none; an `Error` if no skill on the card
-#            has this id
+# + card - The agent's card, public or extended
+# + skillId - The `id` of the skill to look up
+# + return - The skill's own requirements, or the card-level requirements if
+#            it declares none, or an `a2a:Error` if no skill has this id
 public isolated function skillSecurityRequirements(AgentCard card, string skillId)
         returns SecurityRequirement[]|Error {
     foreach AgentSkill skill in card.skills {
@@ -94,10 +82,10 @@ public isolated function skillSecurityRequirements(AgentCard card, string skillI
 # quietly dropped - silently ignoring it would leave a caller believing it
 # had satisfied a requirement it had not.
 #
-# + card - the agent's card, whose `securitySchemes` are the lookup source
-# + requirement - one entry from `skillSecurityRequirements` or from
+# + card - The agent's card, whose `securitySchemes` are the lookup source
+# + requirement - One entry from `skillSecurityRequirements` or from
 #                 `card.securityRequirements`
-# + return - each named scheme, keyed by its name; an `Error` if the
+# + return - Each named scheme, keyed by its name; an `Error` if the
 #            requirement names a scheme the card does not declare
 public isolated function resolveSecuritySchemes(AgentCard card, SecurityRequirement requirement)
         returns map<SecurityScheme>|Error {
@@ -116,50 +104,31 @@ public isolated function resolveSecuritySchemes(AgentCard card, SecurityRequirem
 
 # Whether the agent has paused this task to wait for authorization.
 #
-# This is the specification's own mechanism for an agent needing
-# permission part-way through a task - section 7.6, In-Task Authorization -
-# and it is how per-skill authorization actually surfaces at runtime, since
-# a client cannot declare up front which skill it is invoking. An agent
-# that needs a credential it does not have transitions the task to
-# `TASK_STATE_AUTH_REQUIRED` and waits.
+# In-Task Authorization (specification section 7.6) is how per-skill
+# authorization surfaces at runtime, since a client cannot declare up front
+# which skill it is invoking: an agent needing a credential it does not have
+# parks the task in `TASK_STATE_AUTH_REQUIRED` and waits.
 #
-# The state is not terminal: a streaming call stays open across the pause
-# (see `isTerminalEvent` in sse.bal), so a subscriber keeps receiving events
-# once the task resumes.
+# The state is not terminal, so a streaming call stays open across the pause.
+# Section 7.6.2 leaves the response to you — send a message to the same
+# `taskId`, satisfy the request out of band, or delegate onward. Use
+# `a2a:authorizationPrompt` to read what the agent asked for.
 #
-# ### Responding
-#
-# Section 7.6.2 leaves the response to the client, which may:
-#
-# - send a message to the same `taskId` to negotiate, correct, or reject
-#   the request - `authorizationPrompt` returns what the agent asked for;
-# - satisfy the request out of band, after which the agent may resume on
-#   its own with no follow-up message needed;
-# - delegate onward, if this client is itself an agent serving a task, by
-#   moving its own task into `TASK_STATE_AUTH_REQUIRED`.
-#
-# A client with no open stream risks missing the resume. Section 7.6.2
-# names three ways to avoid that: `subscribeToTask`, a push notification
-# config, or polling `getTask`.
-#
-# + task - the task to inspect
-# + return - true if the task is waiting on authorization
+# + task - The task to inspect
+# + return - Whether the task is waiting on authorization
 public isolated function isAuthorizationRequired(Task task) returns boolean {
     return task.status.state == TASK_STATE_AUTH_REQUIRED;
 }
 
 # The agent's explanation of the authorization it is waiting for.
 #
-# Section 7.6.1 requires an agent entering `TASK_STATE_AUTH_REQUIRED` to
-# attach a status message describing what it needs, unless that was already
-# agreed out of band or through an extension - so this is normally present,
-# but legitimately absent in those two cases.
+# Specification section 7.6.1 requires an agent entering
+# `TASK_STATE_AUTH_REQUIRED` to attach a status message describing what it
+# needs, unless that was agreed out of band or through an extension — so this
+# is normally present, and legitimately absent in those two cases.
 #
-# It is a full `Message`, not a string, so an agent can attach structured
-# content rather than only prose.
-#
-# + task - the task to inspect
-# + return - the attached prompt, or () if the task is not awaiting
+# + task - The task to inspect
+# + return - The attached prompt, or `()` if the task is not awaiting
 #            authorization or the agent attached no message
 public isolated function authorizationPrompt(Task task) returns Message? {
     if !isAuthorizationRequired(task) {

@@ -16,12 +16,12 @@
 
 import ballerina/test;
 
-# Regression test: Error's subtypes must be nominally distinct (declared
-# with `distinct`), not plain aliases for `error<ErrorDetail>`. Without
-# `distinct`, every subtype is structurally identical and `is` checks
-# between siblings are always true regardless of which error was actually
-# constructed — which would let every mapping test below pass for the
-# wrong reason.
+// Regression test: Error's subtypes must be nominally distinct (declared
+// with `distinct`), not plain aliases for `error<ErrorDetail>`. Without
+// `distinct`, every subtype is structurally identical and `is` checks
+// between siblings are always true regardless of which error was actually
+// constructed — which would let every mapping test below pass for the
+// wrong reason.
 @test:Config {}
 function testA2AErrorSubtypesAreMutuallyDistinguishable() {
     Error taskNotFound = toA2AErrorFromRest(404, {

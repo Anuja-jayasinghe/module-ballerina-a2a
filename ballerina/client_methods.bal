@@ -14,49 +14,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// The operation set every A2A client type implements, regardless of which
-// transport binding it speaks.
+// The operation set every A2A client type implements.
 
-# The client-side A2A operation set (specification section 9.4), declared
-# once here and mixed into every client type in this module via `*ClientMethods;`,
-# instead of repeating all eleven signatures four times.
+# The client-side A2A operation set (specification section 9.4), declared once
+# and mixed into each client type via `*ClientMethods;` rather than repeating
+# eleven signatures per type.
 #
-# `JsonRpcClient`, `RestClient`, and `GrpcClient` each implement it over
-# exactly one transport binding. `Client` implements it too, by resolving
-# an Agent Card, picking the binding the card prefers, and delegating.
+# Not public: Ballerina object types are structurally typed, so a caller
+# writing code across both client types declares their own local object type
+# covering the methods they use, and `a2a:Client` and `a2a:RestClient` satisfy
+# it with no dependency on this one.
 #
-# **Not public, deliberately.** Ballerina object types are structurally
-# typed: a caller who wants to write binding-agnostic code across two or
-# more of this library's client types does not need this library to
-# export a named interface for that — they can declare their own local
-# object type covering whichever methods they actually use, and any of
-# `Client`/`RestClient`/`JsonRpcClient`/`GrpcClient` satisfies it
-# automatically, with no dependency on this type. Confirmed directly: a
-# scratch package assigning a real `RestClient` to a locally-declared
-# type with a matching `getTask` signature compiles with no reference to
-# this type at all. Exporting it would only have saved a caller from
-# writing that one-time local declaration themselves — not enabled
-# anything otherwise impossible — and no real caller (internal test
-# aside) has needed it. Revisit only if that changes: adding `public`
-# back later is additive, not breaking; the reverse would not be.
-#
-# **Error contract: every method below returns a narrowed Error, never
-# a bare `error`.** The `+ return` doc on each names the specific
-# Error subtype(s) (errors.bal) a protocol-level failure produces (the
-# agent rejected the request, or a capability check short-circuited it
-# client-side) — but a caller that only checks for those named subtypes
-# still sees every other failure as an Error too. A raw transport or
-# decode error — a connection failure, a malformed response body, an
-# unexpected shape `cloneWithType` rejects — comes from
-# `ballerina/http`/`ballerina/grpc`/`ballerina/mime`, which return plain
-# `error`, not this library's own type; each binding's implementation
-# wraps that at the boundary via `wrapTransportError` (errors.bal) into
-# an InternalError before it ever reaches a caller, the same way
-# `fetchAgentCardBody`/`resolveAgentCard` (client.bal) already do. A
-# caller that needs to tell a protocol failure apart from a transport
-# failure still pattern-matches on the concrete type
-# (`result is a2a:TaskNotFoundError`, etc.) — only the fallback case
-# changed, from an untyped `error` to `a2a:InternalError`.
+# Every method returns a narrowed `a2a:Error`, never a bare `error`. The
+# `+ return` doc on each names the subtype a protocol failure produces;
+# transport and decode failures are wrapped into `a2a:InternalError` at the
+# binding boundary, so the fallback case is still matchable.
 type ClientMethods isolated client object {
 
     # Sends a message to the remote agent.
@@ -128,7 +100,7 @@ type ClientMethods isolated client object {
     # specification section 3.1.10.
     #
     # + request - The parent task id and the config's own id
-    # + return - nil on success, or an error
+    # + return - Nil on success, or an error
     isolated remote function deleteTaskPushNotificationConfig(DeleteTaskPushNotificationConfigRequest request)
         returns Error?;
 

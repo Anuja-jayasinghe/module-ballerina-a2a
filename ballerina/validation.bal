@@ -21,39 +21,26 @@
 // binding's wire. Kept out of the transport client for that reason, so the
 // bindings still to come share them rather than restating them.
 
-# Enforces non-emptiness on the two arrays the specification actually
-# requires it for.
+# Enforces non-emptiness on the two arrays the specification requires it for.
 #
-# Section 5.7 contains a blanket sentence -- "Arrays marked as required MUST
-# contain at least one element" -- which cannot be read literally. The
-# specification's own canonicalization example in section 8.4.1 publishes a
-# conformant AgentCard carrying `"skills": []` and annotates it "REQUIRED
-# field -> include", with a canonical output that keeps the empty array. A
-# rule the specification's own example violates is not the rule: REQUIRED
-# means the field must be *present*, which the type system already enforces.
+# Section 5.7's blanket "arrays marked as required MUST contain at least one
+# element" cannot be read literally: the specification's own example in
+# section 8.4.1 publishes a conformant AgentCard carrying `"skills": []`.
+# REQUIRED means present, which the type system already enforces.
 #
-# Non-emptiness is enforced only where the specification says so per field,
-# or where the reference implementation corroborates it:
+# So non-emptiness is checked only where a field says so — `Artifact.parts`,
+# the one such statement in the proto — or where a2a-java corroborates it,
+# which is `Message.parts`.
 #
-#   Artifact.parts  - the proto states "Must contain at least one part", the
-#                     only such statement in the whole file; a2a-java
-#                     enforces it (Artifact.java:52)
-#   Message.parts   - no proto statement, but it is the message's content
-#                     container and a2a-java enforces it (Message.java:70)
+# Checked in both directions. Section 5.7 asks implementations to reject
+# messages with missing required fields, not only responses, and checking
+# outbound turns a round trip into an immediate local error.
 #
-# a2a-java has no non-empty check on AgentCard or AgentSkill at all, which
-# matches the section 8.4.1 example.
-#
-# Validated in both directions: section 5.7 asks implementations to "reject
-# messages with missing required fields" -- messages, not only responses --
-# and checking outbound turns a network round trip and whatever error the
-# agent chooses into an immediate, local, precise one.
-#
-# + name - the field's dotted name, for the message
-# + length - the array's actual length
-# + inbound - true when validating what an agent sent us, false for what a
-#             caller is about to send
-# + return - an error when the array is empty, otherwise nil
+# + name - The field's dotted name, for the message
+# + length - The array's actual length
+# + inbound - True when validating what an agent sent, false for what a caller
+#             is about to send
+# + return - An error when the array is empty, otherwise nil
 isolated function requireNonEmpty(string name, int length, boolean inbound) returns Error? {
     if length > 0 {
         return ();
@@ -72,8 +59,8 @@ isolated function requireNonEmpty(string name, int length, boolean inbound) retu
 
 # Validates a Message a caller is about to send.
 #
-# + message - the message to check
-# + return - an error when it violates a specification requirement
+# + message - The message to check
+# + return - An error when it violates a specification requirement
 isolated function validateOutboundMessage(Message message) returns Error? {
     check requireNonEmpty("Message.parts", message.parts.length(), false);
     foreach Part part in message.parts {
@@ -89,8 +76,8 @@ isolated function validateOutboundMessage(Message message) returns Error? {
 
 # Validates a Task an agent sent us, and the artifacts and history it carries.
 #
-# + task - the decoded task
-# + return - an error when it violates a specification requirement
+# + task - The decoded task
+# + return - An error when it violates a specification requirement
 isolated function validateInboundTask(Task task) returns Error? {
     foreach Artifact artifact in task.artifacts ?: [] {
         check requireNonEmpty("Artifact.parts", artifact.parts.length(), true);

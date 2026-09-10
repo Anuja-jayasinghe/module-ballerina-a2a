@@ -31,11 +31,8 @@ import ballerina/test;
 // client construction, no network I/O. Each card below declares only what
 // the case under test needs.
 
-# Builds a card declaring the given schemes and card-level requirements.
-#
-# + schemes - securitySchemes to declare, keyed by scheme name
-# + requirements - securityRequirements, an OR across the list
-# + return - a minimal card carrying exactly those declarations
+// Builds a card declaring the given schemes and card-level requirements.
+//
 isolated function cardWithSecurity(map<SecurityScheme> schemes, SecurityRequirement[] requirements)
         returns AgentCard {
     return {

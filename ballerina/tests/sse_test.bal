@@ -32,14 +32,13 @@ service /events on sseTestListener {
     }
 }
 
-# Exercises readSseStream(http:Response) end to end over a real HTTP
-# connection — a short-lived listener serves a canned SSE response, a real
-# http:Client fetches it, and the resulting http:Response (including its
-# actual resp.getSseEventStream() call) is fed to readSseStream. Only
-# A2aStreamGenerator was covered by the synthetic-stream tests below;
-# readSseStream's own wiring had zero coverage before this test.
-#
-# + return - an error if any HTTP or stream operation fails
+// Exercises readSseStream(http:Response) end to end over a real HTTP
+// connection — a short-lived listener serves a canned SSE response, a real
+// http:Client fetches it, and the resulting http:Response (including its
+// actual resp.getSseEventStream() call) is fed to readSseStream. Only
+// A2aStreamGenerator was covered by the synthetic-stream tests below;
+// readSseStream's own wiring had zero coverage before this test.
+//
 @test:Config {}
 function testReadSseStreamOverRealHttpResponse() returns error? {
     http:Client testClient = check new ("http://localhost:19099");
@@ -106,13 +105,12 @@ function testA2aStreamGeneratorClosesOnTerminalStatus() returns error? {
     test:assertTrue(fourth is (), "stream should be closed after the terminal event, regardless of remaining source events");
 }
 
-# isTerminalEvent is a four-way OR, but only TASK_STATE_COMPLETED was ever
-# exercised as a stream terminator — dropping any of the other three arms
-# left the suite green. Each terminal state is checked here against a
-# generator whose next event must never be delivered, and each interrupted
-# state against one whose next event must be.
-#
-# + return - an error if any step other than the assertions themselves fails
+// isTerminalEvent is a four-way OR, but only TASK_STATE_COMPLETED was ever
+// exercised as a stream terminator — dropping any of the other three arms
+// left the suite green. Each terminal state is checked here against a
+// generator whose next event must never be delivered, and each interrupted
+// state against one whose next event must be.
+//
 @test:Config {}
 function testA2aStreamGeneratorClosesOnEveryTerminalStateAndOnlyThose() returns error? {
     string[] terminal = [
@@ -195,14 +193,14 @@ isolated function responseStream((StreamResponse|error)[] events) returns stream
     return new (new TestStreamResponseSource(events));
 }
 
-# A stand-in for the owning client, counting resubscribe calls.
-#
-# Hands back a stream that immediately errors — the case that actually
-# drives reconnection — but refuses to do so more than `allowed` times.
-# That cap is what makes the attempt-budget assertion terminate: without
-# it, a client that never consumes its budget resubscribes forever and the
-# test hangs instead of failing, which is exactly what happened when the
-# budget accounting was mutated.
+// A stand-in for the owning client, counting resubscribe calls.
+//
+// Hands back a stream that immediately errors — the case that actually
+// drives reconnection — but refuses to do so more than `allowed` times.
+// That cap is what makes the attempt-budget assertion terminate: without
+// it, a client that never consumes its budget resubscribes forever and the
+// test hangs instead of failing, which is exactly what happened when the
+// budget accounting was mutated.
 isolated class CountingReconnectable {
     private final int allowed;
     private int calls = 0;
@@ -237,14 +235,13 @@ isolated class CountingReconnectable {
     }
 }
 
-# The reconnect budget must be consumed once per attempt and shared across
-# the whole chain. The suite previously asserted this only through the mock
-# server, where a budget that never decremented produced an infinite
-# resubscribe loop — the suite hung rather than failing. Here the stub caps
-# resubscribes one above the budget, so the same bug fails an assertion in
-# bounded time.
-#
-# + return - an error if any step other than the assertions themselves fails
+// The reconnect budget must be consumed once per attempt and shared across
+// the whole chain. The suite previously asserted this only through the mock
+// server, where a budget that never decremented produced an infinite
+// resubscribe loop — the suite hung rather than failing. Here the stub caps
+// resubscribes one above the budget, so the same bug fails an assertion in
+// bounded time.
+//
 @test:Config {}
 function testReconnectBudgetIsConsumedOncePerAttemptAndSharedAcrossTheChain() returns error? {
     CountingReconnectable owner = new (3);
@@ -264,12 +261,11 @@ function testReconnectBudgetIsConsumedOncePerAttemptAndSharedAcrossTheChain() re
     test:assertTrue(after is (), "the generator must be done after surfacing the drop error");
 }
 
-# A zero budget must hand the stream straight back rather than wrapping it.
-# Observable because wrapping peeks the first event: on a stream that opens
-# with an error, a peeking implementation surfaces that error from
-# wrapReconnecting itself instead of from the caller's first next().
-#
-# + return - an error if any step other than the assertions themselves fails
+// A zero budget must hand the stream straight back rather than wrapping it.
+// Observable because wrapping peeks the first event: on a stream that opens
+// with an error, a peeking implementation surfaces that error from
+// wrapReconnecting itself instead of from the caller's first next().
+//
 @test:Config {}
 function testWrapReconnectingHandsBackRawStreamWhenBudgetIsZero() returns error? {
     CountingReconnectable owner = new (0);
