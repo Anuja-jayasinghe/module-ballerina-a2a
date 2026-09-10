@@ -18,6 +18,11 @@ build/
 Ballerina.lock
 velocity.log*
 
+# `bal build`/`bal test` output, written to both the package directory and
+# the repository root. Not covered by `build/` above.
+target/
+.ballerina/
+
 # Dependencies.toml of examples and load-tests
 examples/**/Dependencies.toml
 load-tests/**/Dependencies.toml
