@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// RestClient: the transport-specific client for the HTTP+JSON binding.
+// HttpClient: the transport-specific client for the HTTP+JSON binding.
 //
 // As with jsonrpc_client_test.bal, these exercise the class directly.
 // What is distinctive about this binding is the marshaling — an operation
@@ -26,9 +26,9 @@ import ballerina/test;
 @test:Config {}
 function testRestClientConstructsFromUrl() returns error? {
     setNextRestResponse({task: defaultTaskJson()});
-    RestClient c = check new (getServerBaseUrl());
+    HttpClient c = check new (getServerBaseUrl());
     Task|Message result = check c->sendMessage({message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]}});
-    test:assertTrue(result is Task, "a RestClient built from a URL should resolve the card and reach the mock");
+    test:assertTrue(result is Task, "a HttpClient built from a URL should resolve the card and reach the mock");
 }
 
 @test:Config {}
@@ -36,7 +36,7 @@ function testRestClientConnectionFailureWrapsAsA2AInternalError() {
     // Constructing from a bare URL resolves the AgentCard first (see
     // resolveAgentCard/fetchAgentCardBody, client.bal), so an unreachable
     // host fails right here rather than at a later remote call.
-    RestClient|error result = new ("http://localhost:1");
+    HttpClient|error result = new ("http://localhost:1");
     test:assertTrue(result is InternalError,
             "a real connection failure should surface as a typed InternalError, not a bare error");
 }
@@ -45,7 +45,7 @@ function testRestClientConnectionFailureWrapsAsA2AInternalError() {
 function testRestClientConstructsFromAgentCard() returns error? {
     AgentCard card = check resolveAgentCard(getServerBaseUrl());
     setNextRestResponse({task: defaultTaskJson()});
-    RestClient c = check new (card);
+    HttpClient c = check new (card);
     Task|Message result = check c->sendMessage({message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]}});
     test:assertTrue(result is Task);
 }
@@ -61,7 +61,7 @@ function testRestClientRejectsCardWithoutRestInterface() {
         defaultInputModes: ["text"],
         defaultOutputModes: ["text"]
     };
-    RestClient|error result = new (card);
+    HttpClient|error result = new (card);
     test:assertTrue(result is error,
             "a card declaring no HTTP+JSON interface must fail construction");
 }
@@ -80,7 +80,7 @@ function testRestClientRejectsV03Card() {
         defaultInputModes: ["text"],
         defaultOutputModes: ["text"]
     };
-    RestClient|error result = new (card);
+    HttpClient|error result = new (card);
     test:assertTrue(result is VersionNotSupportedError,
             "a card resolving to v0.3 must be rejected with a typed error, since this library implements v0.3 over JSON-RPC only");
 }
@@ -89,7 +89,7 @@ function testRestClientRejectsV03Card() {
 // method and a templated path, rather than a method name in a body.
 @test:Config {}
 function testRestClientMapsOperationsToMethodAndPath() returns error? {
-    RestClient c = check new (getServerBaseUrl());
+    HttpClient c = check new (getServerBaseUrl());
 
     setNextRestResponse(defaultTaskJson());
     Task _ = check c->getTask({id: "task-123"});
@@ -137,7 +137,7 @@ function testRestClientMapsOperationsToMethodAndPath() returns error? {
 // A tenant becomes a path prefix on this binding, not just a body field.
 @test:Config {}
 function testRestClientPrefixesPathWithTenant() returns error? {
-    RestClient c = check new (getServerBaseUrl(), tenant = "acme-corp");
+    HttpClient c = check new (getServerBaseUrl(), tenant = "acme-corp");
     setNextRestResponse(defaultTaskJson());
     Task _ = check c->getTask({id: "task-1"});
     test:assertEquals(getLastRestRequest().path, "/acme-corp/tasks/task-1");
@@ -148,7 +148,7 @@ function testRestClientPrefixesPathWithTenant() returns error? {
 // default, before any server has ever rejected it.
 @test:Config {}
 function testRestClientSendsSpecContentTypeByDefault() returns error? {
-    RestClient c = check new (getServerBaseUrl());
+    HttpClient c = check new (getServerBaseUrl());
     setNextRestResponse(defaultTaskJson());
     Task _ = check c->getTask({id: "task-1"});
     test:assertEquals(getLastRestHeaders()["content-type"], "application/a2a+json");
@@ -161,7 +161,7 @@ function testRestClientSendsSpecContentTypeByDefault() returns error? {
 // rather than surfacing the 415 to the caller.
 @test:Config {}
 function testRestClientNegotiatesLegacyContentTypeOn415() returns error? {
-    RestClient c = check new (getServerBaseUrl());
+    HttpClient c = check new (getServerBaseUrl());
     // setNextRestResponse replaces the whole mock script record, so it
     // must be called before setRestRejectContentType, not after -- same
     // ordering already required by setRestRejectMethod's own callers.
@@ -178,7 +178,7 @@ function testRestClientNegotiatesLegacyContentTypeOn415() returns error? {
 // pay a 415 round trip on every single request forever.
 @test:Config {}
 function testRestClientRemembersNegotiatedContentTypeAcrossCalls() returns error? {
-    RestClient c = check new (getServerBaseUrl());
+    HttpClient c = check new (getServerBaseUrl());
     setNextRestResponse(defaultTaskJson());
     setRestRejectContentType("application/a2a+json", 415);
     Task _ = check c->getTask({id: "task-1"});
@@ -198,7 +198,7 @@ function testRestClientRemembersNegotiatedContentTypeAcrossCalls() returns error
 // 400 — so the ErrorInfo reason field carries the discrimination.
 @test:Config {}
 function testRestClientMapsErrorInfoReasonToTypedError() returns error? {
-    RestClient c = check new (getServerBaseUrl());
+    HttpClient c = check new (getServerBaseUrl());
     setNextRestResponse({
         'error: {
             code: 404,
@@ -213,7 +213,7 @@ function testRestClientMapsErrorInfoReasonToTypedError() returns error? {
 
 @test:Config {}
 function testRestClientStreams() returns error? {
-    RestClient c = check new (getServerBaseUrl());
+    HttpClient c = check new (getServerBaseUrl());
     setNextRestSseResponse([
         {data: string `{"task":{"id":"task-s1","status":{"state":"TASK_STATE_SUBMITTED"}}}`},
         {data: string `{"statusUpdate":{"taskId":"task-s1","contextId":"ctx-1","status":{"state":"TASK_STATE_COMPLETED"}}}`}
@@ -230,7 +230,7 @@ function testRestClientStreams() returns error? {
 @test:Config {}
 function testRestClientSatisfiesClientMethods() returns error? {
     setNextRestResponse({task: defaultTaskJson()});
-    ClientMethods c = check new RestClient(getServerBaseUrl());
+    Client c = check new HttpClient(getServerBaseUrl());
     Task|Message result = check c->sendMessage({message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]}});
-    test:assertTrue(result is Task, "a RestClient must be usable through the ClientMethods shape");
+    test:assertTrue(result is Task, "a HttpClient must be usable through the Client shape");
 }

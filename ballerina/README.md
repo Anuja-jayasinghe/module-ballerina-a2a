@@ -15,17 +15,19 @@ The specification defines three transport bindings. This module implements **HTT
 
 ## 1. Connecting to an agent
 
-`Client` is the type to reach for. Give it an agent's base URL and it fetches the Agent Card from the well-known endpoint, confirms the agent serves HTTP+JSON, and connects.
+`HttpClient` is the type to reach for. Give it an agent's base URL and it fetches the Agent Card from the well-known endpoint, confirms the agent serves HTTP+JSON, and connects.
 
 ```ballerina
 import ballerina/a2a;
 
-final a2a:Client agent = check new ("https://agent.example.com");
+final a2a:HttpClient agent = check new ("https://agent.example.com");
 ```
 
 Construction is where a mismatch surfaces: an unreachable agent, a card that does not parse, or a card offering no binding this module speaks all fail here rather than on the first operation.
 
-A `Client` is cheap to construct and needs no teardown — there is deliberately no `close`. Prefer one long-lived client per agent over one per request.
+An `HttpClient` is cheap to construct and needs no teardown — there is deliberately no `close`. Prefer one long-lived client per agent over one per request.
+
+This release implements HTTP+JSON only. When JSON-RPC and gRPC bindings land, a transport-agnostic `Client` that reads the card and picks a binding will join `HttpClient`; client code written against the operations will carry over unchanged.
 
 ### 1.1 Connecting from an already-resolved card
 
@@ -33,15 +35,7 @@ When you have already fetched the card — to inspect its skills before deciding
 
 ```ballerina
 a2a:AgentCard card = check a2a:resolveAgentCard("https://agent.example.com");
-final a2a:Client agent = check new (card);
-```
-
-### 1.2 Choosing the binding yourself
-
-`RestClient` connects over HTTP+JSON without consulting the card's ordering. Reach for it when the agent is known to serve that binding and you would rather not pay for card-driven selection. It exposes the same eleven operations as `Client`.
-
-```ballerina
-final a2a:RestClient agent = check new ("https://agent.example.com");
+final a2a:HttpClient agent = check new (card);
 ```
 
 ## 2. Delegating work
@@ -143,7 +137,7 @@ stream<a2a:StreamResponse, error?> events = check agent->subscribeToTask({id: "t
 Pass `maxReconnectAttempts` to have a dropped connection resubscribe automatically:
 
 ```ballerina
-final a2a:Client agent = check new ("https://agent.example.com", maxReconnectAttempts = 3);
+final a2a:HttpClient agent = check new ("https://agent.example.com", maxReconnectAttempts = 3);
 ```
 
 Per specification section 3.1.6 a resubscription replays the task's current state, so no event is lost across a reconnect — only possibly repeated. Callers already have to tolerate duplicate and out-of-order status updates, so this adds no new burden.
@@ -182,7 +176,7 @@ Deletion is idempotent per specification section 3.1.10.
 OAuth2, JWT, mutual TLS, and HTTP basic or bearer are configured through `clientConfig`, which is a standard `http:ClientConfiguration`. Token exchange and refresh are handled by `ballerina/oauth2` and `ballerina/jwt` as usual:
 
 ```ballerina
-final a2a:Client agent = check new ("https://agent.example.com", {
+final a2a:HttpClient agent = check new ("https://agent.example.com", {
     auth: {
         tokenUrl: "https://auth.example.com/oauth2/token",
         clientId: "...",
@@ -201,7 +195,7 @@ final a2a:InMemoryCredentialStore store = new ({
     "apiKeyAuth": "sk-..."
 });
 
-final a2a:Client agent = check new ("https://agent.example.com", credentials = store);
+final a2a:HttpClient agent = check new ("https://agent.example.com", credentials = store);
 ```
 
 Implement `CredentialProvider` yourself to source credentials from wherever they actually live — a vault, a config file, a per-session store. Returning `()` is normal and not an error: the request is sent without that credential and the agent decides how to respond.

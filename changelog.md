@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 
 - Initial release of the A2A client, implementing the eleven client operations of A2A protocol v1.0 (specification section 9.4) over the HTTP+JSON binding.
-- `Client`, which resolves an agent's card and connects over the binding it declares, and `RestClient` for an agent already known to serve HTTP+JSON.
+- `HttpClient`, which resolves an agent's card, confirms it serves HTTP+JSON, and connects over that binding.
 - Agent Card discovery and parsing: `resolveAgentCard` and `fetchAgentCardBody`.
 - Server-Sent Events streaming for `sendStreamingMessage` and `subscribeToTask`, with opt-in automatic reconnection.
 - Credential resolution by security-scheme name via `CredentialProvider` and `InMemoryCredentialStore`.

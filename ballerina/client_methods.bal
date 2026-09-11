@@ -14,22 +14,23 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// The operation set every A2A client type implements.
+// The A2A client contract, shared across transport bindings.
 
 # The client-side A2A operation set (specification section 9.4), declared once
-# and mixed into each client type via `*ClientMethods;` rather than repeating
-# eleven signatures per type.
+# as the shared client contract rather than repeating eleven signatures per
+# client type. The HTTP+JSON client `a2a:HttpClient` includes it via `*Client;`;
+# when JSON-RPC and gRPC land, the transport-agnostic client is published under
+# this name.
 #
-# Not public: Ballerina object types are structurally typed, so a caller
-# writing code across both client types declares their own local object type
-# covering the methods they use, and `a2a:Client` and `a2a:RestClient` satisfy
-# it with no dependency on this one.
+# Not public yet: Ballerina object types are structurally typed, so a caller
+# writes against `a2a:HttpClient` directly, or declares their own local object
+# type covering the methods they use, with no dependency on this one.
 #
 # Every method returns a narrowed `a2a:Error`, never a bare `error`. The
 # `+ return` doc on each names the subtype a protocol failure produces;
 # transport and decode failures are wrapped into `a2a:InternalError` at the
 # binding boundary, so the fallback case is still matchable.
-type ClientMethods isolated client object {
+type Client isolated client object {
 
     # Sends a message to the remote agent.
     #

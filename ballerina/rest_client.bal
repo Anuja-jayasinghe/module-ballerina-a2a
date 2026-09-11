@@ -255,24 +255,30 @@ isolated function buildQueryString(map<string> queryParams) returns string|Error
     return "?" + string:'join("&", ...queryParts);
 }
 
-# An A2A client that speaks the REST (HTTP+JSON) binding.
+# An A2A protocol client for a remote agent, over the HTTP+JSON binding.
 #
-# Construct this directly when the agent is known to serve HTTP+JSON, or
-# when that binding is wanted regardless of what the Agent Card lists
-# first. To let the card decide instead, use `Client`.
+# Give it the agent's base URL, or an `a2a:AgentCard` already resolved via
+# `a2a:resolveAgentCard`. It resolves the card, requires it to declare an
+# HTTP+JSON interface, and speaks A2A v1.0 to it — so a card declaring only
+# JSON-RPC or gRPC, or a 0.x protocol version, is rejected at construction
+# rather than at the first call.
 #
 # ```ballerina
-# a2a:RestClient agent = check new ("https://agent.example.com");
+# a2a:HttpClient agent = check new ("https://agent.example.com");
 # a2a:Task|a2a:Message reply = check agent->sendMessage({message: msg});
 # ```
 #
-# The paths below are A2A v1.0's, so a card declaring a 0.x protocol version
-# is rejected at construction rather than at the first call.
+# A client is cheap to construct and needs no teardown — there is deliberately
+# no `close`, because an `http:Client` routes through a process-wide pool that
+# evicts idle connections on its own. Still, prefer one long-lived client per
+# agent: construction is wasted work per call. Setting `poolConfig` in
+# `clientConfig` opts out of the shared pool into a private one that cannot be
+# released, so reuse is required there rather than merely preferred.
 #
 # Each method's `+ return` names the `a2a:Error` subtype a protocol failure
 # produces; a transport or decode failure comes back as `a2a:InternalError`.
-public isolated client class RestClient {
-    *ClientMethods;
+public isolated client class HttpClient {
+    *Client;
 
     private final http:Client httpClient;
     private final map<string> & readonly defaultHeaders;
