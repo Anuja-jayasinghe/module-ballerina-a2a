@@ -67,6 +67,19 @@ isolated function isLegacyCard(map<json> cardMap) returns boolean {
         || cardMap.hasKey("url");
 }
 
+# The AgentCard fields carried in a v1.0-specific wire dialect that
+# `cloneWithType(AgentCard)` cannot read directly. Lifting them off the raw
+# body through this record gives typed field access instead of `hasKey` and
+# string-key lookups; each is then parsed by its dialect-aware helper and set
+# back on the card. Open (`json...`), so it carries the whole body and every
+# other field falls through untouched.
+type DialectCardFields record {|
+    json securitySchemes?;
+    json securityRequirements?;
+    json signatures?;
+    json...;
+|};
+
 isolated function parseAgentCardBodyRaw(json body) returns AgentCard|error {
     map<json>|error cardMapResult = body.ensureType();
     if cardMapResult is error {
@@ -85,14 +98,12 @@ isolated function parseAgentCardBodyRaw(json body) returns AgentCard|error {
         return error VersionNotSupportedError(msg, message = msg);
     }
 
-    boolean hasSecuritySchemes = cardMap.hasKey("securitySchemes");
-    json securitySchemesJson = hasSecuritySchemes ? cardMap.remove("securitySchemes") : {};
-
-    boolean hasSecurityRequirements = cardMap.hasKey("securityRequirements");
-    json securityRequirementsJson = hasSecurityRequirements ? cardMap.remove("securityRequirements") : [];
-
-    boolean hasSignatures = cardMap.hasKey("signatures");
-    json signaturesJson = hasSignatures ? cardMap.remove("signatures") : [];
+    // Read the dialect-carrying fields by typed name, then drop them from the
+    // map so the strict clone below never sees the wire dialect.
+    DialectCardFields dialect = check cardMap.cloneWithType();
+    foreach string fieldName in ["securitySchemes", "securityRequirements", "signatures"] {
+        _ = cardMap.removeIfHasKey(fieldName);
+    }
 
     // Skill-level securityRequirements needs the same tolerant treatment,
     // but every other AgentSkill field should still be strictly validated
@@ -123,14 +134,17 @@ isolated function parseAgentCardBodyRaw(json body) returns AgentCard|error {
     }
     AgentCard card = cardResult;
 
-    if hasSecuritySchemes {
-        card.securitySchemes = check parseSecuritySchemes(securitySchemesJson);
+    json? schemes = dialect?.securitySchemes;
+    if schemes is map<json> {
+        card.securitySchemes = check parseSecuritySchemes(schemes);
     }
-    if hasSecurityRequirements {
-        card.securityRequirements = check parseSecurityRequirements(securityRequirementsJson);
+    json? requirements = dialect?.securityRequirements;
+    if requirements is json[] {
+        card.securityRequirements = check parseSecurityRequirements(requirements);
     }
-    if hasSignatures {
-        card.signatures = check parseAgentCardSignatures(signaturesJson);
+    json? signatures = dialect?.signatures;
+    if signatures is json[] {
+        card.signatures = check parseAgentCardSignatures(signatures);
     }
     foreach int i in 0 ..< card.skills.length() {
         if i < perSkillSecurityRequirements.length() {
