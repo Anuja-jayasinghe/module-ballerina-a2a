@@ -113,11 +113,11 @@ isolated function unwrapV10SecurityScheme(map<json> entry) returns SecuritySchem
     if apiKey is map<json> {
         json? location = apiKey["location"];
         if location !is string {
-            return ();
+            return;
         }
         string normalized = location.toLowerAscii();
         if normalized != "query" && normalized != "header" && normalized != "cookie" {
-            return ();
+            return;
         }
         _ = apiKey.remove("location");
         apiKey["in"] = normalized;
@@ -152,7 +152,7 @@ isolated function unwrapV10SecurityScheme(map<json> entry) returns SecuritySchem
         return scheme is MutualTlsSecurityScheme ? scheme : ();
     }
 
-    return ();
+    return;
 }
 
 # Parses each entry of a raw securitySchemes JSON object independently,
@@ -225,13 +225,13 @@ isolated function parseSecuritySchemes(json raw) returns map<SecurityScheme>|err
 isolated function unwrapV10SecurityRequirement(map<json> entry) returns SecurityRequirement? {
     map<json>|error schemes = entry["schemes"].ensureType();
     if schemes is error {
-        return ();
+        return;
     }
     SecurityRequirement flattened = {};
     foreach [string, json] [schemeName, scopesJson] in schemes.entries() {
         map<json>|error stringList = scopesJson.ensureType();
         if stringList is error {
-            return ();
+            return;
         }
         json? listJson = stringList["list"];
         if listJson is () {
@@ -242,7 +242,7 @@ isolated function unwrapV10SecurityRequirement(map<json> entry) returns Security
         }
         string[]|error scopes = listJson.cloneWithType();
         if scopes is error {
-            return ();
+            return;
         }
         flattened[schemeName] = scopes;
     }

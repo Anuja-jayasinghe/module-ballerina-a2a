@@ -56,7 +56,7 @@ class A2aStreamGenerator {
     # + return - The next event, `()` at end of stream, or an error
     public isolated function next() returns record {| StreamResponse value; |}|Error? {
         if self.closed {
-            return ();
+            return;
         }
 
         while true {
@@ -64,7 +64,7 @@ class A2aStreamGenerator {
 
             if chunk is () {
                 self.closed = true;
-                return ();
+                return;
             }
             if chunk is error {
                 self.closed = true;
@@ -201,7 +201,7 @@ class ReconnectingStreamGenerator {
     # + return - The next event, `()` at end of stream, or an error
     public isolated function next() returns record {| StreamResponse value; |}|Error? {
         if self.done {
-            return ();
+            return;
         }
         record {| StreamResponse value; |}? buffered = self.bufferedFirst;
         if buffered is record {| StreamResponse value; |} {
@@ -361,7 +361,7 @@ isolated function oneofArm(json envelope, string[] arms) returns [string, json]?
                 string `oneof envelope set more than one arm: ${string:'join(", ", ...present)}`);
     }
     if present.length() == 0 {
-        return ();
+        return;
     }
     return [present[0], asMap.get(present[0])];
 }
@@ -377,7 +377,7 @@ isolated function decodeStreamResponseEnvelope(json envelope) returns StreamResp
     [string, json]? arm = check oneofArm(
             envelope, ["task", "message", "statusUpdate", "artifactUpdate"]);
     if arm is () {
-        return ();
+        return;
     }
     [string, json] [name, payload] = arm;
     anydata|error decoded;

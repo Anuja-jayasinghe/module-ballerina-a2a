@@ -68,7 +68,7 @@ class TestSseSource {
 
     public isolated function next() returns record {| http:SseEvent value; |}|error? {
         if self.idx >= self.events.length() {
-            return ();
+            return;
         }
         http:SseEvent|error event = self.events[self.idx];
         self.idx += 1;
@@ -178,7 +178,7 @@ class TestStreamResponseSource {
 
     public isolated function next() returns record {| StreamResponse value; |}|Error? {
         if self.idx >= self.events.length() {
-            return ();
+            return;
         }
         StreamResponse|Error event = self.events[self.idx];
         self.idx += 1;

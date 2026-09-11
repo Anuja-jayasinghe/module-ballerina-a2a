@@ -145,11 +145,11 @@ isolated function credentialHeadersFor(AgentCard card, SecurityRequirement requi
     foreach string schemeName in requirement.keys() {
         SecurityScheme? scheme = card.securitySchemes[schemeName];
         if scheme is () {
-            return ();
+            return;
         }
         string? credential = provider.getCredential(schemeName);
         if credential is () {
-            return ();
+            return;
         }
         string headerName;
         string headerValue;
@@ -158,7 +158,7 @@ isolated function credentialHeadersFor(AgentCard card, SecurityRequirement requi
                 // Query- and cookie-borne API keys would have to reshape
                 // the URL or set a cookie jar, neither of which belongs in
                 // a header map.
-                return ();
+                return;
             }
             headerName = scheme.name;
             headerValue = credential;
@@ -176,17 +176,17 @@ isolated function credentialHeadersFor(AgentCard card, SecurityRequirement requi
                 headerName = "Authorization";
                 headerValue = string `Basic ${credential.toBytes().toBase64()}`;
             } else {
-                return ();
+                return;
             }
         } else {
-            return ();
+            return;
         }
         string normalized = headerName.toLowerAscii();
         if RESERVED_CREDENTIAL_HEADERS.indexOf(normalized) is int {
-            return ();
+            return;
         }
         if occupied.indexOf(normalized) is int {
-            return ();
+            return;
         }
         occupied.push(normalized);
         headers[headerName] = headerValue;

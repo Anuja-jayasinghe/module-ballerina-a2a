@@ -43,7 +43,7 @@
 # + return - An error when the array is empty, otherwise nil
 isolated function requireNonEmpty(string name, int length, boolean inbound) returns Error? {
     if length > 0 {
-        return ();
+        return;
     }
     string message = string `${name} is a required array and must contain at least one element `
         + string `(specification section 5.7)`;

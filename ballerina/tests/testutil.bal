@@ -661,5 +661,5 @@ public isolated function extractArtifactText(Artifact artifact) returns string? 
             return text;
         }
     }
-    return ();
+    return;
 }

@@ -199,23 +199,23 @@ isolated function toA2AErrorFromRest(int statusCode, json? body) returns Error {
 # + return - The matching ErrorInfo entry as a map, or () if none is found
 isolated function extractRestErrorDetail(json? body) returns map<json>? {
     if body is () {
-        return ();
+        return;
     }
     map<json>|error bodyMap = body.ensureType();
     if bodyMap is error {
-        return ();
+        return;
     }
     json? errObj = bodyMap["error"];
     if errObj is () {
-        return ();
+        return;
     }
     map<json>|error errMap = errObj.ensureType();
     if errMap is error {
-        return ();
+        return;
     }
     json? detailsJson = errMap["details"];
     if !(detailsJson is json[]) {
-        return ();
+        return;
     }
     foreach json detail in detailsJson {
         map<json>|error detailMap = detail.ensureType();
@@ -226,13 +226,13 @@ isolated function extractRestErrorDetail(json? body) returns map<json>? {
             }
         }
     }
-    return ();
+    return;
 }
 
 isolated function extractRestErrorReason(json? body) returns string? {
     map<json>? detailMap = extractRestErrorDetail(body);
     if detailMap is () {
-        return ();
+        return;
     }
     json? reasonVal = detailMap["reason"];
     return reasonVal is string ? reasonVal : ();
@@ -240,19 +240,19 @@ isolated function extractRestErrorReason(json? body) returns string? {
 
 isolated function extractRestErrorMessage(json? body) returns string? {
     if body is () {
-        return ();
+        return;
     }
     map<json>|error bodyMap = body.ensureType();
     if bodyMap is error {
-        return ();
+        return;
     }
     json? errObj = bodyMap["error"];
     if errObj is () {
-        return ();
+        return;
     }
     map<json>|error errMap = errObj.ensureType();
     if errMap is error {
-        return ();
+        return;
     }
     json? msg = errMap["message"];
     return msg is string ? msg : ();

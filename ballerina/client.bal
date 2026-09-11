@@ -303,7 +303,7 @@ isolated function requireV1Interface(AgentCard card, TransportBinding preferredB
             + string `${version}; this library implements v1.0`;
         return error VersionNotSupportedError(msg, message = msg);
     }
-    return ();
+    return;
 }
 
 # An A2A protocol client for a remote agent.
