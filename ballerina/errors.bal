@@ -153,7 +153,8 @@ isolated function toA2AErrorFromRest(int statusCode, json? body) returns Error {
                 return error InvalidAgentResponseError(message, message = message, code = -32006, data = data);
             }
             "EXTENDED_AGENT_CARD_NOT_CONFIGURED" => {
-                return error ExtendedAgentCardNotConfiguredError(message, message = message, code = -32007, data = data);
+                return error ExtendedAgentCardNotConfiguredError(
+                        message, message = message, code = -32007, data = data);
             }
             "EXTENSION_SUPPORT_REQUIRED" => {
                 return error ExtensionSupportRequiredError(message, message = message, code = -32008, data = data);
@@ -273,7 +274,8 @@ isolated function extractRestErrorMetadata(json? body) returns json? {
 # + operation - The operation name, for the error text (e.g. "subscribeToTask")
 # + return - A typed, client-side UnsupportedOperationError
 isolated function streamingUnsupportedError(string operation) returns UnsupportedOperationError {
-    string message = string `${operation}: AgentCard.capabilities.streaming is false - rejected client-side, no request sent`;
+    string message = string `${operation}: AgentCard.capabilities.streaming is false `
+        + "- rejected client-side, no request sent";
     return error UnsupportedOperationError(message, message = message, code = -32004);
 }
 
@@ -301,6 +303,7 @@ isolated function extendedCardUnsupportedError() returns UnsupportedOperationErr
 # + operation - The operation name, for the error text
 # + return - A typed, client-side PushNotificationNotSupportedError
 isolated function pushNotificationsUnsupportedError(string operation) returns PushNotificationNotSupportedError {
-    string message = string `${operation}: AgentCard.capabilities.pushNotifications is false - rejected client-side, no request sent`;
+    string message = string `${operation}: AgentCard.capabilities.pushNotifications is false `
+        + "- rejected client-side, no request sent";
     return error PushNotificationNotSupportedError(message, message = message, code = -32003);
 }

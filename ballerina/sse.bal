@@ -166,7 +166,8 @@ isolated function singleEventStream(Task|Message result) returns stream<StreamRe
 # An object type rather than a concrete class, so any transport client can
 # hand itself to the generator.
 type StreamReconnectable isolated object {
-    isolated function openTaskSubscriptionStream(string taskId, string? tenant) returns stream<StreamResponse, Error?>|Error;
+    isolated function openTaskSubscriptionStream(string taskId, string? tenant)
+            returns stream<StreamResponse, Error?>|Error;
 };
 
 class ReconnectingStreamGenerator {
@@ -189,7 +190,9 @@ class ReconnectingStreamGenerator {
     // own first result, so the caller never observes that a peek happened.
     private record {| StreamResponse value; |}? bufferedFirst;
 
-    isolated function init(stream<StreamResponse, Error?> initial, StreamReconnectable a2aClient, string taskId, int maxAttempts, record {| StreamResponse value; |}? bufferedFirst = (), string? tenant = ()) {
+    isolated function init(stream<StreamResponse, Error?> initial, StreamReconnectable a2aClient,
+            string taskId, int maxAttempts, record {| StreamResponse value; |}? bufferedFirst = (),
+            string? tenant = ()) {
         self.current = initial;
         self.a2aClient = a2aClient;
         self.taskId = taskId;

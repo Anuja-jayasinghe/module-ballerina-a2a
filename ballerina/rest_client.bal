@@ -183,7 +183,8 @@ isolated function decodeListTasksResponse(json result) returns ListTasksResponse
 isolated function decodeTaskPushNotificationConfig(json result) returns TaskPushNotificationConfig|Error {
     TaskPushNotificationConfig|error decoded = result.cloneWithType(TaskPushNotificationConfig);
     if decoded is error {
-        return invalidAgentResponse(string `TaskPushNotificationConfig response did not match the expected shape: ${decoded.message()}`);
+        return invalidAgentResponse(string `TaskPushNotificationConfig response did not `
+                + string `match the expected shape: ${decoded.message()}`);
     }
     return decoded;
 }
@@ -399,7 +400,8 @@ public isolated client class RestClient {
     # + body - The request body, or () for a bodiless request
     # + headers - The exact headers to send
     # + return - The raw HTTP response, or a transport-level error
-    private isolated function rawRestCall(string httpMethod, string path, json? body, map<string> headers) returns http:Response|Error {
+    private isolated function rawRestCall(string httpMethod, string path, json? body,
+            map<string> headers) returns http:Response|Error {
         http:Response|error result;
         if httpMethod == "GET" {
             result = self.httpClient->get(path, headers);
@@ -503,7 +505,8 @@ public isolated client class RestClient {
     # + taskId - The task to subscribe to
     # + tenant - Optional per-call tenant override
     # + return - A stream of StreamResponse values, or an error
-    isolated function openTaskSubscriptionStream(string taskId, string? tenant = ()) returns stream<StreamResponse, Error?>|Error {
+    isolated function openTaskSubscriptionStream(string taskId, string? tenant = ())
+            returns stream<StreamResponse, Error?>|Error {
         string encodedId = check urlEncodeOrWrap(taskId);
         string path = check prefixTenant(string `/tasks/${encodedId}:subscribe`, tenant ?: self.tenant);
         map<string> extraHeaders = {"Accept": "text/event-stream"};
@@ -781,7 +784,8 @@ public isolated client class RestClient {
             return pushNotificationsUnsupportedError("listTaskPushNotificationConfigs");
         }
         string encodedTaskId = check urlEncodeOrWrap(taskId);
-        string path = check prefixTenant(string `/tasks/${encodedTaskId}/pushNotificationConfigs`, tenant ?: self.tenant);
+        string path = check prefixTenant(
+                string `/tasks/${encodedTaskId}/pushNotificationConfigs`, tenant ?: self.tenant);
         map<string> queryParams = {};
         if pageSize is int {
             queryParams["pageSize"] = pageSize.toString();
