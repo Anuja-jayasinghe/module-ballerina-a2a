@@ -17,10 +17,10 @@
 // Stream decoding for the A2A client's SSE transport.
 //
 // A2aStreamGenerator is the raw decoder for the HTTP+JSON binding's SSE
-// wire shape; ReconnectingStreamGenerator and SingleEventStreamGenerator
-// wrap it with policy (reconnect-on-drop, single-event fallback) that has
-// nothing to say about how the underlying values arrived, and so stay
-// binding-agnostic for the transports still to come.
+// wire shape; ReconnectingStreamGenerator wraps it with policy
+// (reconnect-on-drop) that has nothing to say about how the underlying values
+// arrived, and so stays binding-agnostic for the transports still to come.
+// The single-event fallback is just `[result].toStream()` in singleEventStream.
 
 import ballerina/http;
 
@@ -153,31 +153,10 @@ class A2aStreamGenerator {
 # + result - The unary sendMessage reply to wrap
 # + return - A stream yielding exactly that one event, then closing
 isolated function singleEventStream(Task|Message result) returns stream<StreamResponse, Error?> {
-    // Task and Message are both arms of the StreamResponse union, so the
-    // value needs no wrapping -- it already is a StreamResponse.
-    return new (new SingleEventStreamGenerator(result));
-}
-
-# Yields one pre-built StreamResponse, then ends the stream cleanly. See
-# singleEventStream.
-class SingleEventStreamGenerator {
-    private record {| StreamResponse value; |}? pending;
-
-    isolated function init(StreamResponse value) {
-        self.pending = {value};
-    }
-
-    # + return - The next event, `()` at end of stream, or an error
-    public isolated function next() returns record {| StreamResponse value; |}|Error? {
-        record {| StreamResponse value; |}? p = self.pending;
-        self.pending = ();
-        return p;
-    }
-
-    # + return - An error if the underlying stream could not be closed
-    public isolated function close() returns error? {
-        self.pending = ();
-    }
+    // Task and Message are both arms of the StreamResponse union, so the value
+    // needs no wrapping -- it already is a StreamResponse, and a one-element
+    // array streams as exactly that single event, then closes.
+    return [result].toStream();
 }
 
 # The single capability `ReconnectingStreamGenerator` needs from the client
