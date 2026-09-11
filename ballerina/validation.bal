@@ -71,7 +71,6 @@ isolated function validateOutboundMessage(Message message) returns Error? {
             return error InternalError(m, message = m);
         }
     }
-    return ();
 }
 
 # Validates a Task an agent sent us, and the artifacts and history it carries.
@@ -85,5 +84,4 @@ isolated function validateInboundTask(Task task) returns Error? {
     foreach Message historyMessage in task.history ?: [] {
         check requireNonEmpty("Message.parts", historyMessage.parts.length(), true);
     }
-    return ();
 }
