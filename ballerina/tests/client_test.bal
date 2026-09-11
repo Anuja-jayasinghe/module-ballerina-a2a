@@ -2117,3 +2117,33 @@ function testV10CardSupportedInterfacesAreNeverRewritten() returns error? {
 
 
 // ---- specification 8.6.2: Agent Card caching --------------------------
+
+// Regression: parseAgentCardBody must not mutate the body it is given.
+// `ensureType` casts without cloning, so the field removals inside the parser
+// used to strip signatures/securitySchemes/securityRequirements out of the
+// caller's own JSON -- which fetchAgentCardBody hands out specifically so it
+// can be kept for signature verification.
+@test:Config {}
+function testParseAgentCardBodyDoesNotMutateItsInput() returns error? {
+    json body = {
+        "name": "n",
+        "description": "d",
+        "version": "1.0.0",
+        "capabilities": {},
+        "supportedInterfaces": [
+            {"url": "http://localhost:19199", "protocolBinding": "HTTP+JSON", "protocolVersion": "1.0"}
+        ],
+        "skills": [{"id": "s", "name": "S", "description": "d", "tags": []}],
+        "defaultInputModes": ["text"],
+        "defaultOutputModes": ["text"],
+        "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}},
+        "securityRequirements": [{"bearerAuth": []}],
+        "signatures": [{"protected": "eyJhbGciOiJSUzI1NiJ9", "signature": "sig"}]
+    };
+    json before = body.clone();
+
+    AgentCard _ = check parseAgentCardBody(body);
+
+    test:assertEquals(body, before,
+            "parseAgentCardBody must leave the caller's raw body untouched; it is kept for signature verification");
+}

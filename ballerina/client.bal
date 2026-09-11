@@ -72,7 +72,12 @@ isolated function parseAgentCardBodyRaw(json body) returns AgentCard|error {
     if cardMapResult is error {
         return invalidAgentResponse(string `AgentCard body is not a JSON object: ${cardMapResult.message()}`);
     }
-    map<json> cardMap = cardMapResult;
+    // Cloned, not aliased. `ensureType` casts without copying, and the field
+    // removals below would otherwise strip `signatures`, `securitySchemes`,
+    // and `securityRequirements` out of the caller's own `body` -- which
+    // `fetchAgentCardBody` hands out precisely so it can be kept for
+    // signature verification.
+    map<json> cardMap = cardMapResult.clone();
 
     if isLegacyCard(cardMap) {
         string msg = "AgentCard declares transports the pre-v1.0 way (preferredTransport/"
