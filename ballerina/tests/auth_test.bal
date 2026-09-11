@@ -34,20 +34,18 @@ import ballerina/test;
 // Builds a card declaring the given schemes and card-level requirements.
 //
 isolated function cardWithSecurity(map<SecurityScheme> schemes, SecurityRequirement[] requirements)
-        returns AgentCard {
-    return {
-        name: "secured",
-        description: "x",
-        version: "1.0.0",
-        capabilities: {},
-        supportedInterfaces: [{url: "https://agent.example.com", protocolBinding: "JSONRPC", protocolVersion: "1.0"}],
-        skills: [],
-        securitySchemes: schemes,
-        securityRequirements: requirements,
-        defaultInputModes: ["text"],
-        defaultOutputModes: ["text"]
-    };
-}
+        returns AgentCard => {
+    name: "secured",
+    description: "x",
+    version: "1.0.0",
+    capabilities: {},
+    supportedInterfaces: [{url: "https://agent.example.com", protocolBinding: "JSONRPC", protocolVersion: "1.0"}],
+    skills: [],
+    securitySchemes: schemes,
+    securityRequirements: requirements,
+    defaultInputModes: ["text"],
+    defaultOutputModes: ["text"]
+};
 
 @test:Config {}
 function testResolveCredentialHeadersBuildsBearerHeader() {
