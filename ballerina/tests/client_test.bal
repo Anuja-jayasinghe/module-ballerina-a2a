@@ -2147,3 +2147,23 @@ function testParseAgentCardBodyDoesNotMutateItsInput() returns error? {
     test:assertEquals(body, before,
             "parseAgentCardBody must leave the caller's raw body untouched; it is kept for signature verification");
 }
+
+// Regression: requireV1Interface tested only for a "0." prefix, so a card
+// declaring "2.0" was accepted and would have been spoken to with v1.0 paths
+// and an A2A-Version: 1.0 header.
+isolated function cardDeclaringVersion(string version) returns AgentCard => {
+    name: "n", description: "d", version: "1.0.0", capabilities: {},
+    supportedInterfaces: [
+        {url: "http://localhost:19199", protocolBinding: "HTTP+JSON", protocolVersion: version}
+    ],
+    skills: [], defaultInputModes: ["text"], defaultOutputModes: ["text"]
+};
+
+@test:Config {}
+function testInterfaceProtocolVersionIsBoundedToTheOneLine() {
+    test:assertTrue(requireV1Interface(cardDeclaringVersion("1.0"), HTTP_JSON) is (), "1.0 is what this client implements");
+    test:assertTrue(requireV1Interface(cardDeclaringVersion("1.1"), HTTP_JSON) is (), "a later 1.x revision stays additive");
+    test:assertTrue(requireV1Interface(cardDeclaringVersion("0.3"), HTTP_JSON) is VersionNotSupportedError, "0.x must be rejected");
+    test:assertTrue(requireV1Interface(cardDeclaringVersion("2.0"), HTTP_JSON) is VersionNotSupportedError,
+            "2.0 must be rejected rather than spoken to with v1.0 paths");
+}

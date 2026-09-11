@@ -27,7 +27,7 @@ function testA2AErrorSubtypesAreMutuallyDistinguishable() {
     Error taskNotFound = toA2AErrorFromRest(404, {
         "error": {
             "message": "Task not found",
-            "details": [{"reason": "TASK_NOT_FOUND"}]
+            "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "TASK_NOT_FOUND"}]
         }
     });
 
@@ -88,8 +88,15 @@ function testToA2AErrorFromRestMapsAllNineReasons() returns error? {
 
 @test:Config {}
 function testToA2AErrorFromRestFallsBackToStatusWhenNoErrorInfo() returns error? {
+    // A reason-less 404 is not evidence that a *task* is missing -- the same
+    // status comes back when a push-notification config is. Without an
+    // ErrorInfo.reason there is nothing to type it with, so it stays
+    // InternalError carrying the status.
     Error notFound = toA2AErrorFromRest(404, ());
-    test:assertTrue(notFound is TaskNotFoundError, "a bare 404 with no ErrorInfo reason should still map to TaskNotFoundError");
+    test:assertFalse(notFound is TaskNotFoundError,
+            "a reason-less 404 must not claim the task is missing; it could be any resource on the path");
+    test:assertTrue(notFound is InternalError);
+    test:assertEquals(notFound.detail().code, 404);
     Error serverErr = toA2AErrorFromRest(503, ());
     test:assertTrue(serverErr is InternalError);
     test:assertEquals(serverErr.detail().code, -32603);

@@ -186,3 +186,49 @@ function testInMemoryCredentialStoreReplacesCredentialAfterConstruction() {
     test:assertEquals(resolveCredentialHeaders(card, store), {"Authorization": "Bearer tok_new"},
             "a replaced credential must be picked up on the next resolution");
 }
+
+// Regression: two schemes in one AND requirement that resolve to the same
+// header name used to overwrite each other silently, and the requirement was
+// still reported satisfied -- one credential sent, both claimed.
+@test:Config {}
+function testCollidingHeaderNamesFailTheRequirement() {
+    AgentCard card = {
+        name: "n", description: "d", version: "1.0.0", capabilities: {},
+        supportedInterfaces: [
+            {url: "http://localhost:19199", protocolBinding: "HTTP+JSON", protocolVersion: "1.0"}
+        ],
+        skills: [], defaultInputModes: ["text"], defaultOutputModes: ["text"],
+        securitySchemes: {
+            "bearerAuth": {'type: "http", scheme: "bearer"},
+            "headerKey": {'type: "apiKey", 'in: "header", name: "Authorization"}
+        },
+        securityRequirements: [{"bearerAuth": [], "headerKey": []}]
+    };
+    InMemoryCredentialStore store = new ({"bearerAuth": "tok", "headerKey": "key"});
+
+    map<string> headers = resolveCredentialHeaders(card, store);
+    test:assertEquals(headers.length(), 0,
+            "two schemes resolving to Authorization cannot both be satisfied, so the requirement must fail rather than send one and claim both");
+}
+
+// The same, with casing that differs -- header names are case-insensitive.
+@test:Config {}
+function testCollidingHeaderNamesAreCaseInsensitive() {
+    AgentCard card = {
+        name: "n", description: "d", version: "1.0.0", capabilities: {},
+        supportedInterfaces: [
+            {url: "http://localhost:19199", protocolBinding: "HTTP+JSON", protocolVersion: "1.0"}
+        ],
+        skills: [], defaultInputModes: ["text"], defaultOutputModes: ["text"],
+        securitySchemes: {
+            "keyOne": {'type: "apiKey", 'in: "header", name: "X-Api-Key"},
+            "keyTwo": {'type: "apiKey", 'in: "header", name: "x-api-key"}
+        },
+        securityRequirements: [{"keyOne": [], "keyTwo": []}]
+    };
+    InMemoryCredentialStore store = new ({"keyOne": "a", "keyTwo": "b"});
+
+    map<string> headers = resolveCredentialHeaders(card, store);
+    test:assertEquals(headers.length(), 0,
+            "X-Api-Key and x-api-key are the same header, so this requirement cannot be satisfied");
+}

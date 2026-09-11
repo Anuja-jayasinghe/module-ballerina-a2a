@@ -137,6 +137,11 @@ final readonly & string[] RESERVED_CREDENTIAL_HEADERS = ["a2a-version", "content
 isolated function credentialHeadersFor(AgentCard card, SecurityRequirement requirement,
         CredentialProvider provider) returns map<string>? {
     map<string> headers = {};
+    // Header names are case-insensitive, and two schemes in one AND
+    // requirement can land on the same one -- HTTP bearer and an apiKey named
+    // "Authorization", say. Overwriting would send one credential and report
+    // both satisfied, so a collision fails the requirement instead.
+    string[] occupied = [];
     foreach string schemeName in requirement.keys() {
         SecurityScheme? scheme = card.securitySchemes[schemeName];
         if scheme is () {
@@ -176,9 +181,14 @@ isolated function credentialHeadersFor(AgentCard card, SecurityRequirement requi
         } else {
             return ();
         }
-        if RESERVED_CREDENTIAL_HEADERS.indexOf(headerName.toLowerAscii()) is int {
+        string normalized = headerName.toLowerAscii();
+        if RESERVED_CREDENTIAL_HEADERS.indexOf(normalized) is int {
             return ();
         }
+        if occupied.indexOf(normalized) is int {
+            return ();
+        }
+        occupied.push(normalized);
         headers[headerName] = headerValue;
     }
     return headers;

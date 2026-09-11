@@ -293,9 +293,14 @@ isolated function primaryUrl(AgentCard card, TransportBinding preferredBinding) 
 isolated function requireV1Interface(AgentCard card, TransportBinding preferredBinding) returns Error? {
     AgentInterface iface = check selectInterface(card, preferredBinding);
     string? version = iface?.protocolVersion;
-    if version is string && version.startsWith("0.") {
+    // Accept the 1.x line, reject everything else. Testing only for a "0."
+    // prefix let "2.0" through, and this client sends v1.0 paths and an
+    // `A2A-Version: 1.0` header -- it would speak the wrong protocol
+    // confidently. A later 1.x revision stays additive by definition, so it
+    // is the one direction worth admitting.
+    if version is string && !version.startsWith("1.") {
         string msg = string `AgentCard's ${preferredBinding} interface declares A2A protocol version `
-            + string `${version}; this library implements v1.0 only`;
+            + string `${version}; this library implements v1.0`;
         return error VersionNotSupportedError(msg, message = msg);
     }
     return ();

@@ -358,3 +358,52 @@ function testSseMalformedJsonIsTyped() returns error? {
     test:assertTrue(first is InvalidAgentResponseError,
             "a malformed SSE payload must surface as InvalidAgentResponseError");
 }
+
+// A reconnectable that refuses the first `failFirst` reopen attempts, then
+// succeeds -- the shape that distinguishes "spent the budget" from "gave up
+// after the first failed reopen".
+isolated class FlakyReconnectable {
+    private final int failFirst;
+    private int calls = 0;
+
+    isolated function init(int failFirst) {
+        self.failFirst = failFirst;
+    }
+
+    isolated function openTaskSubscriptionStream(string taskId, string? tenant)
+            returns stream<StreamResponse, Error?>|Error {
+        lock {
+            self.calls += 1;
+            if self.calls <= self.failFirst {
+                return error InternalError("agent unreachable");
+            }
+        }
+        return responseStream([
+            <StreamResponse>{taskId: "task-1", contextId: "ctx-1", status: {state: TASK_STATE_COMPLETED}}
+        ]);
+    }
+
+    isolated function callCount() returns int {
+        lock {
+            return self.calls;
+        }
+    }
+}
+
+// Regression: a reopen that itself fails is an attempt, not the end of them.
+// With maxAttempts = 2 and a first reopen that errors, the generator used to
+// return the original drop error after a single reopen call, so the second
+// attempt the caller asked for never happened.
+@test:Config {}
+function testReconnectSpendsTheWholeBudgetAcrossFailedReopens() returns error? {
+    FlakyReconnectable owner = new (1);
+    stream<StreamResponse, Error?> initial = responseStream([error InternalError("dropped")]);
+    stream<StreamResponse, Error?> s =
+        new (new ReconnectingStreamGenerator(initial, owner, "task-1", 2));
+
+    StreamResponse recovered = check expectValue(s.next());
+    test:assertTrue(recovered is TaskStatusUpdateEvent,
+            "the second reopen should have succeeded and delivered its event");
+    test:assertEquals(owner.callCount(), 2,
+            "maxAttempts = 2 means two reopen attempts, even when the first one fails");
+}

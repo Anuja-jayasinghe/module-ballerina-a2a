@@ -177,9 +177,12 @@ isolated function toA2AErrorFromRest(int statusCode, json? body) returns Error {
     }
 
     // No usable ErrorInfo reason — fall back on status code alone.
-    if statusCode == 404 {
-        return error TaskNotFoundError(message, message = message, code = -32001, data = data);
-    }
+    // No 404 shortcut. This point is only reached when the response carried
+    // no ErrorInfo.reason, and a 404 from, say, a push-notification-config
+    // path means the config is missing, not the task -- typing that as
+    // TaskNotFoundError would send a caller down the wrong recovery. Both
+    // reference servers do send the reason, so a conformant agent never
+    // relies on this fallback.
     if statusCode >= 500 {
         return error InternalError(message, message = message, code = -32603, data = data);
     }
