@@ -370,8 +370,8 @@ public isolated client class RestClient {
             legacy = self.useLegacyContentType;
         }
         map<string> headers = {
-            "A2A-Version": "1.0",
-            "Content-Type": legacy ? "application/json" : "application/a2a+json"
+            [A2A_VERSION_HEADER]: A2A_VERSION,
+            [CONTENT_TYPE_HEADER]: legacy ? CONTENT_TYPE_JSON : CONTENT_TYPE_A2A_JSON
         };
         // Card-resolved credentials first, so an explicit `headers` entry
         // still wins — a caller who wrote a header literally meant it.
@@ -433,9 +433,9 @@ public isolated client class RestClient {
             headers[k] = v;
         }
         http:Response resp = check self.rawRestCall(httpMethod, path, body, headers);
-        if resp.statusCode == 415 && headers["Content-Type"] != "application/json" {
+        if resp.statusCode == 415 && headers[CONTENT_TYPE_HEADER] != CONTENT_TYPE_JSON {
             map<string> legacyHeaders = headers.clone();
-            legacyHeaders["Content-Type"] = "application/json";
+            legacyHeaders[CONTENT_TYPE_HEADER] = CONTENT_TYPE_JSON;
             http:Response retryResp = check self.rawRestCall(httpMethod, path, body, legacyHeaders);
             if retryResp.statusCode != 415 {
                 lock {

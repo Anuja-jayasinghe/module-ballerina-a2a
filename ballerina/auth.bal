@@ -165,7 +165,7 @@ isolated function credentialHeadersFor(AgentCard card, SecurityRequirement requi
         } else if scheme is HttpAuthSecurityScheme {
             string kind = scheme.scheme.toLowerAscii();
             if kind == "bearer" {
-                headerName = "Authorization";
+                headerName = AUTHORIZATION_HEADER;
                 headerValue = string `Bearer ${credential}`;
             } else if kind == "basic" {
                 // The whole `username:password` string is encoded as-is.
@@ -173,7 +173,7 @@ isolated function credentialHeadersFor(AgentCard card, SecurityRequirement requi
                 // sank the previous implementation - a password may
                 // contain ":", a username may not, so a naive split
                 // corrupts the credential - cannot arise.
-                headerName = "Authorization";
+                headerName = AUTHORIZATION_HEADER;
                 headerValue = string `Basic ${credential.toBytes().toBase64()}`;
             } else {
                 return;

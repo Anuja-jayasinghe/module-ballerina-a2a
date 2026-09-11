@@ -181,7 +181,7 @@ public isolated function fetchAgentCardBody(
     if discoveryClient is error {
         return wrapTransportError(discoveryClient);
     }
-    map<string> reqHeaders = {"A2A-Version": "1.0"};
+    map<string> reqHeaders = {[A2A_VERSION_HEADER]: A2A_VERSION};
     foreach [string, string] [k, v] in headers.entries() {
         reqHeaders[k] = v;
     }
