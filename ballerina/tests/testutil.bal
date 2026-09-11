@@ -87,7 +87,7 @@ type MockRestScript record {|
     // succeeds normally. () means no rejection scripted.
     string? rejectMethod = ();
     int rejectStatusCode = 0;
-    // Content-type negotiation support (rest_client.bal's
+    // Content-type negotiation support (http_client.bal's
     // performRestCallWithNegotiation): when set, the mock rejects exactly
     // one request carrying this Content-Type with this status, then
     // clears itself so the retry (a different Content-Type) succeeds

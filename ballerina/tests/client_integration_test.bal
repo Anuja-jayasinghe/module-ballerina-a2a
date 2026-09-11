@@ -173,7 +173,7 @@ function testClientFromCardDoesNotRefetchIt() returns error? {
 }
 
 // Confirms HttpClient satisfies the shared internal Client contract — not a
-// caller-facing capability (Client isn't public; see client_methods.bal).
+// caller-facing capability (Client isn't public; see client.bal).
 // When JSON-RPC and gRPC land, their clients must satisfy it too.
 @test:Config {}
 function testHttpClientSatisfiesClientContract() returns error? {

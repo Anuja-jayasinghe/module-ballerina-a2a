@@ -189,7 +189,7 @@ public type AgentCard record {|
     // still sending them round-trips through the rest field, but nothing in
     // this library reads them. Use `primaryUrl(card, binding)` for the
     // endpoint. A card that declares its transports only the pre-v1.0 way is
-    // rejected by `isLegacyCard` (client.bal) with VersionNotSupportedError.
+    // rejected by `isLegacyCard` (discovery.bal) with VersionNotSupportedError.
     json...;
 |};
 

@@ -14,310 +14,102 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Agent Card resolution and interface selection: the free functions that
-// fetch and parse a card, and pick the interface to construct a client
-// against.
-//
-// The client itself, and the transport marshaling, live with the binding
-// that owns them: rest_client.bal.
+// The A2A client contract, shared across transport bindings.
 
-import ballerina/http;
-
-# Parses a raw AgentCard JSON body into a typed `a2a:AgentCard`.
+# The client-side A2A operation set (specification section 9.4), declared once
+# as the shared client contract rather than repeating eleven signatures per
+# client type. The HTTP+JSON client `a2a:HttpClient` includes it via `*Client;`;
+# when JSON-RPC and gRPC land, the transport-agnostic client is published under
+# this name.
 #
-# `securitySchemes`, `securityRequirements`, `signatures`, and each skill's
-# `securityRequirements` are parsed tolerantly, so one malformed entry in any
-# of them does not fail the whole card.
+# Not public yet: Ballerina object types are structurally typed, so a caller
+# writes against `a2a:HttpClient` directly, or declares their own local object
+# type covering the methods they use, with no dependency on this one.
 #
-# Module-private: a caller reaches a parsed card through
-# `a2a:resolveAgentCard`. It parses in place and so may mutate `body`; the
-# internal callers pass a freshly fetched body they discard immediately after.
-#
-# + body - The raw JSON AgentCard body, straight off the wire
-# + return - The parsed card, or an `a2a:VersionNotSupportedError` for a
-#            pre-v1.0 card, an `a2a:InvalidAgentResponseError` if `body` is
-#            not a JSON object or does not match the AgentCard shape, or an
-#            `a2a:InternalError` wrapping anything the tolerant parsers
-#            reject
-isolated function parseAgentCardBody(json body) returns AgentCard|Error {
-    AgentCard|error result = parseAgentCardBodyRaw(body);
-    if result is error {
-        return wrapTransportError(result);
-    }
-    return result;
-}
+# Every method returns a narrowed `a2a:Error`, never a bare `error`. The
+# `+ return` doc on each names the subtype a protocol failure produces;
+# transport and decode failures are wrapped into `a2a:InternalError` at the
+# binding boundary, so the fallback case is still matchable.
+type Client isolated client object {
 
-# Whether a raw card map is a pre-v1.0 (A2A v0.3) card.
-#
-# v0.3 declared transports with `preferredTransport` plus
-# `additionalInterfaces`, or with a bare top-level `url`; v1.0 replaced all
-# three with the required `supportedInterfaces`. Detected explicitly so such
-# a card fails by version rather than as a missing-field shape mismatch,
-# which would say nothing about why.
-#
-# + cardMap - The raw card map
-# + return - Whether this card predates v1.0
-isolated function isLegacyCard(map<json> cardMap) returns boolean {
-    json? existing = cardMap["supportedInterfaces"];
-    if existing is json[] && existing.length() > 0 {
-        return false;
-    }
-    return cardMap.hasKey("preferredTransport")
-        || cardMap.hasKey("additionalInterfaces")
-        || cardMap.hasKey("url");
-}
+    # Sends a message to the remote agent.
+    #
+    # + request - The message and its send options
+    # + return - A Task or a Message on success, or an error on failure
+    isolated remote function sendMessage(SendMessageRequest request) returns Task|Message|Error;
 
-# The AgentCard fields carried in a v1.0-specific wire dialect that
-# `cloneWithType(AgentCard)` cannot read directly. Lifting them off the raw
-# body through this record gives typed field access instead of `hasKey` and
-# string-key lookups; each is then parsed by its dialect-aware helper and set
-# back on the card. Open (`json...`), so it carries the whole body and every
-# other field falls through untouched.
-type DialectCardFields record {|
-    # Raw `securitySchemes`, parsed by `parseSecuritySchemes`
-    json securitySchemes?;
-    # Raw `securityRequirements`, parsed by `parseSecurityRequirements`
-    json securityRequirements?;
-    # Raw `signatures`, parsed by `parseAgentCardSignatures`
-    json signatures?;
-    json...;
-|};
+    # Sends a message and receives updates as they happen.
+    #
+    # + request - The message and its send options
+    # + return - A stream of StreamResponse values, or an error
+    isolated remote function sendStreamingMessage(SendMessageRequest request)
+        returns stream<StreamResponse, Error?>|Error;
 
-isolated function parseAgentCardBodyRaw(json body) returns AgentCard|error {
-    map<json>|error cardMapResult = body.ensureType();
-    if cardMapResult is error {
-        return invalidAgentResponse(string `AgentCard body is not a JSON object: ${cardMapResult.message()}`);
-    }
-    // Aliased, not cloned. `ensureType` casts without copying, so `cardMap`
-    // shares storage with `body`, and the field removals below mutate it. That
-    // is safe here: this function is module-private and its callers
-    // (`resolveAgentCard`, `getExtendedAgentCard`) discard `body` the moment it
-    // returns, so nothing can observe the mutation.
-    map<json> cardMap = cardMapResult;
+    # Retrieves the current state of a task.
+    #
+    # + request - The task identifier, and optionally how much history to include
+    # + return - The current Task, or an error if unknown
+    isolated remote function getTask(GetTaskRequest request) returns Task|Error;
 
-    if isLegacyCard(cardMap) {
-        string msg = "AgentCard declares transports the pre-v1.0 way (preferredTransport/"
-            + "additionalInterfaces, or a bare top-level url); this library implements A2A v1.0 only";
-        return error VersionNotSupportedError(msg, message = msg);
-    }
+    # Requests cancellation of an in-progress task.
+    #
+    # + request - The task identifier, and any additional context for the agent
+    # + return - The updated Task, or an error
+    isolated remote function cancelTask(CancelTaskRequest request) returns Task|Error;
 
-    // Read the dialect-carrying fields by typed name, then drop them from the
-    // map so the strict clone below never sees the wire dialect.
-    DialectCardFields dialect = check cardMap.cloneWithType();
-    foreach string fieldName in ["securitySchemes", "securityRequirements", "signatures"] {
-        _ = cardMap.removeIfHasKey(fieldName);
-    }
+    # Opens a stream on an existing task.
+    #
+    # + request - The task identifier
+    # + return - A stream of StreamResponse values, or an error
+    isolated remote function subscribeToTask(SubscribeToTaskRequest request)
+        returns stream<StreamResponse, Error?>|Error;
 
-    // Skill-level securityRequirements needs the same tolerant treatment,
-    // but every other AgentSkill field should still be strictly validated
-    // by the main clone below -- so only that one sub-field is pulled out
-    // of each skill first, not the whole skill.
-    json? skillsField = cardMap["skills"];
-    SecurityRequirement[][] perSkillSecurityRequirements = [];
-    if skillsField is json[] {
-        json[] strippedSkills = [];
-        foreach json skillJson in skillsField {
-            if skillJson is map<json> {
-                map<json> skillMap = skillJson.clone();
-                json skillSecurityRequirementsJson = skillMap.hasKey("securityRequirements")
-                    ? skillMap.remove("securityRequirements") : [];
-                perSkillSecurityRequirements.push(check parseSecurityRequirements(skillSecurityRequirementsJson));
-                strippedSkills.push(skillMap);
-            } else {
-                perSkillSecurityRequirements.push([]);
-                strippedSkills.push(skillJson);
-            }
-        }
-        cardMap["skills"] = strippedSkills;
-    }
+    # Lists tasks matching an optional filter, with cursor-based pagination.
+    #
+    # + request - Optional filter and pagination parameters; every field is
+    #             optional, so this defaults to listing with the server's
+    #             own defaults
+    # + return - A page of matching tasks, or an error
+    isolated remote function listTasks(ListTasksRequest request = {}) returns ListTasksResponse|Error;
 
-    AgentCard|error cardResult = cardMap.cloneWithType(AgentCard);
-    if cardResult is error {
-        return invalidAgentResponse(string `AgentCard did not match the expected shape: ${cardResult.message()}`);
-    }
-    AgentCard card = cardResult;
+    # Registers a webhook to receive updates for a task.
+    #
+    # Takes the configuration itself rather than a request wrapper: the
+    # specification's CreateTaskPushNotificationConfig RPC is the one
+    # operation with no dedicated request message.
+    #
+    # + request - The webhook configuration; its taskId identifies the task
+    # + return - The created config as the server persisted it, or an error
+    isolated remote function createTaskPushNotificationConfig(TaskPushNotificationConfig request)
+        returns TaskPushNotificationConfig|Error;
 
-    json? schemes = dialect?.securitySchemes;
-    if schemes is map<json> {
-        card.securitySchemes = check parseSecuritySchemes(schemes);
-    }
-    json? requirements = dialect?.securityRequirements;
-    if requirements is json[] {
-        card.securityRequirements = check parseSecurityRequirements(requirements);
-    }
-    json? signatures = dialect?.signatures;
-    if signatures is json[] {
-        card.signatures = check parseAgentCardSignatures(signatures);
-    }
-    foreach int i in 0 ..< card.skills.length() {
-        if i < perSkillSecurityRequirements.length() {
-            card.skills[i].securityRequirements = perSkillSecurityRequirements[i];
-        }
-    }
+    # Retrieves a previously registered push-notification webhook config.
+    #
+    # + request - The parent task id and the config's own id
+    # + return - The config, or an error
+    isolated remote function getTaskPushNotificationConfig(GetTaskPushNotificationConfigRequest request)
+        returns TaskPushNotificationConfig|Error;
 
-    return card;
-}
+    # Lists all push-notification webhook configs registered for a task.
+    #
+    # + request - The parent task id, and optional pagination parameters
+    # + return - A page of matching configs, or an error
+    isolated remote function listTaskPushNotificationConfigs(ListTaskPushNotificationConfigsRequest request)
+        returns ListTaskPushNotificationConfigsResponse|Error;
 
-# Removes a single trailing slash from a base URL.
-#
-# An AgentInterface URL may legitimately end in `/`, and `http:Client` joins
-# such a base with a path starting in `/.well-known/...` into a double slash,
-# which 404s against every well-known endpoint tested.
-#
-# + url - A base URL, possibly with a trailing slash
-# + return - The same URL with any single trailing slash removed
-isolated function stripTrailingSlash(string url) returns string {
-    if url.endsWith("/") {
-        return url.substring(0, url.length() - 1);
-    }
-    return url;
-}
+    # Deletes a push-notification webhook config. Idempotent per
+    # specification section 3.1.10.
+    #
+    # + request - The parent task id and the config's own id
+    # + return - Nil on success, or an error
+    isolated remote function deleteTaskPushNotificationConfig(DeleteTaskPushNotificationConfigRequest request)
+        returns Error?;
 
-# Fetches a remote agent's Agent Card as raw, unparsed JSON from its
-# well-known endpoint.
-#
-# The canonical discovery path is `/.well-known/agent-card.json` relative to
-# the agent's base URL (specification section 8.2). That endpoint is public and
-# unauthenticated by design (section 14.3), so `headers` is for proxy or
-# tracing use rather than credentials.
-#
-# Module-private: `a2a:resolveAgentCard` is the public entry point. This returns
-# the body exactly as received, which is what the parse step then types.
-#
-# + agentBaseUrl - Root URL of the agent with no path component
-# + clientConfig - Optional HTTP configuration for auth, TLS, or proxy
-# + headers - Optional default headers
-# + return - The raw JSON AgentCard body exactly as received, or an
-#            `a2a:InternalError` for a connection failure or malformed JSON
-isolated function fetchAgentCardBody(
-        string agentBaseUrl,
-        http:ClientConfiguration clientConfig = {},
-        map<string> headers = {}) returns json|Error {
-    http:Client|error discoveryClient = new (stripTrailingSlash(agentBaseUrl), clientConfig);
-    if discoveryClient is error {
-        return wrapTransportError(discoveryClient);
-    }
-    map<string> reqHeaders = {[A2A_VERSION_HEADER]: A2A_VERSION};
-    foreach [string, string] [k, v] in headers.entries() {
-        reqHeaders[k] = v;
-    }
-    http:Response|error resp = discoveryClient->get(
-        "/.well-known/agent-card.json", reqHeaders
-    );
-    if resp is error {
-        return wrapTransportError(resp);
-    }
-    if resp.statusCode != 200 {
-        return error InternalError(
-            string `Agent Card fetch failed with HTTP ${resp.statusCode}`,
-            code = resp.statusCode
-        );
-    }
-    json|error payload = resp.getJsonPayload();
-    if payload is error {
-        return wrapTransportError(payload);
-    }
-    return payload;
-}
-
-# Fetches and parses a remote agent's Agent Card from its well-known
-# endpoint.
-#
-# ```ballerina
-# a2a:AgentCard card = check a2a:resolveAgentCard("https://agent.example.com");
-# ```
-#
-# + agentBaseUrl - Root URL of the agent with no path component
-# + clientConfig - Optional HTTP configuration for auth, TLS, or proxy
-# + headers - Optional default headers
-# + return - The parsed card, or an `a2a:InternalError` for a connection
-#            failure or malformed JSON
-public isolated function resolveAgentCard(
-        string agentBaseUrl,
-        http:ClientConfiguration clientConfig = {},
-        map<string> headers = {}) returns AgentCard|Error {
-    json body = check fetchAgentCardBody(agentBaseUrl, clientConfig, headers);
-    return parseAgentCardBody(body);
-}
-
-# The A2A transport bindings this library knows how to name.
-#
-# Not public: a caller selects a binding by choosing a client type, never by
-# naming one. Only HTTP+JSON is implemented in this release; the other two
-# are recognised so that a card declaring them can be read and reported on
-# rather than mistaken for malformed.
-type TransportBinding "JSONRPC"|"HTTP+JSON"|"GRPC";
-
-// Named, not public -- same reasoning as TransportBinding itself: these
-// exist so call sites don't repeat the bare string literals, not to give
-// callers a way to name a binding themselves.
-const TransportBinding JSONRPC = "JSONRPC";
-const TransportBinding HTTP_JSON = "HTTP+JSON";
-const TransportBinding GRPC = "GRPC";
-
-# Resolves the whole matched AgentInterface for a binding, not just its url
-# — callers need the interface's own tenant and protocolVersion, which must
-# come from the same entry the url did, not be independently re-derived (a
-# card can list several interfaces with different tenant/version values).
-#
-# Among several entries declaring the same binding, the earliest wins.
-# Specification section 8.3.2 orders `supportedInterfaces` by the server's own
-# preference, so the order is the server's decision, not this library's.
-#
-# + card - The agent card to read the endpoint from
-# + preferredBinding - Which transport binding to look for
-# + return - The earliest supportedInterfaces entry declaring the matching
-#            protocolBinding, or an InternalError if none exists — a
-#            card/binding mismatch, not a wire-protocol error
-isolated function selectInterface(
-        AgentCard card,
-        TransportBinding preferredBinding) returns AgentInterface|Error {
-    foreach AgentInterface iface in card.supportedInterfaces {
-        if iface.protocolBinding == preferredBinding {
-            return iface;
-        }
-    }
-    string msg = string `AgentCard has no ${preferredBinding} entry in supportedInterfaces`;
-    return error InternalError(msg, message = msg);
-}
-
-# Resolves the URL to construct a client against.
-#
-# + card - The agent card to read the endpoint from
-# + preferredBinding - Which transport binding to resolve a URL for
-# + return - The matching supportedInterfaces entry's url, or an
-#            InternalError if the card declares no such entry
-isolated function primaryUrl(AgentCard card, TransportBinding preferredBinding) returns string|Error {
-    AgentInterface iface = check selectInterface(card, preferredBinding);
-    return iface.url;
-}
-
-# Rejects a card whose interface for the given binding declares a pre-v1.0
-# protocol version.
-#
-# The card's shape alone does not settle this: a card can carry a
-# v1.0-shaped `supportedInterfaces` array whose entries declare
-# `protocolVersion: "0.3"`. Left unchecked, this library would speak v1.0
-# to a v0.3 agent and fail at the first call with whatever that agent made
-# of the request. Checking at construction turns that into an immediate,
-# named error instead.
-#
-# + card - The resolved Agent Card
-# + preferredBinding - The binding whose interface to read the version from
-# + return - A VersionNotSupportedError when that interface declares a 0.x
-#            protocol version, otherwise nil
-isolated function requireV1Interface(AgentCard card, TransportBinding preferredBinding) returns Error? {
-    AgentInterface iface = check selectInterface(card, preferredBinding);
-    string? version = iface?.protocolVersion;
-    // Accept the 1.x line, reject everything else. Testing only for a "0."
-    // prefix let "2.0" through, and this client sends v1.0 paths and an
-    // `A2A-Version: 1.0` header -- it would speak the wrong protocol
-    // confidently. A later 1.x revision stays additive by definition, so it
-    // is the one direction worth admitting.
-    if version is string && !version.startsWith("1.") {
-        string msg = string `AgentCard's ${preferredBinding} interface declares A2A protocol version `
-            + string `${version}; this library implements v1.0`;
-        return error VersionNotSupportedError(msg, message = msg);
-    }
-    return;
-}
+    # Retrieves the agent's extended AgentCard.
+    #
+    # + request - Optional routing parameters; every field is optional, so
+    #             this defaults to an empty request
+    # + return - The extended AgentCard, or an error
+    isolated remote function getExtendedAgentCard(GetExtendedAgentCardRequest request = {})
+        returns AgentCard|Error;
+};

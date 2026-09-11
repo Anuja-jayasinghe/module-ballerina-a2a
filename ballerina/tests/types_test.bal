@@ -73,7 +73,7 @@ function testPartDataVariantRoundTrip() returns error? {
 function testEncodeRawBytesForWireConvertsIntArrayToBase64() returns error? {
     Part original = {raw: "hello world".toBytes(), mediaType: "application/octet-stream"};
     // The walker is structure-aware: it only descends into a "parts"
-    // array, matching how client.bal always invokes it (on a whole
+    // array, matching how discovery.bal always invokes it (on a whole
     // Message/Task/etc. tree, never on a bare Part), so wrap the Part the
     // same way a real Message would.
     Message container = {messageId: "msg-1", role: ROLE_USER, parts: [original]};

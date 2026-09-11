@@ -1340,7 +1340,7 @@ function testSendMessageStreamGivesUpAfterExhaustingReconnectAttempts() returns 
 // agent) that fails every single reconnect attempt, not just once,
 // reconnection never actually exhausted and recursed effectively without
 // bound (confirmed to hang indefinitely before the fix, extracting the raw
-// openTaskSubscriptionStream helper in client.bal). This scripts a target
+// openTaskSubscriptionStream helper in http_client.bal). This scripts a target
 // that keeps failing every reconnect attempt (not just the first) with
 // maxReconnectAttempts = 2, so a persistently-unreachable agent must still
 // give up after exactly 2 reconnect attempts, quickly, not hang.
