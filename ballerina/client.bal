@@ -29,9 +29,9 @@ import ballerina/http;
 # `securityRequirements` are parsed tolerantly, so one malformed entry in any
 # of them does not fail the whole card.
 #
-# Pair it with `a2a:fetchAgentCardBody` when the raw body is needed first —
-# to verify the card's signature, say — to get the typed card without a
-# second round trip.
+# Module-private: a caller reaches a parsed card through
+# `a2a:resolveAgentCard`. It parses in place and so may mutate `body`; the
+# internal callers pass a freshly fetched body they discard immediately after.
 #
 # + body - The raw JSON AgentCard body, straight off the wire
 # + return - The parsed card, or an `a2a:VersionNotSupportedError` for a
@@ -39,7 +39,7 @@ import ballerina/http;
 #            not a JSON object or does not match the AgentCard shape, or an
 #            `a2a:InternalError` wrapping anything the tolerant parsers
 #            reject
-public isolated function parseAgentCardBody(json body) returns AgentCard|Error {
+isolated function parseAgentCardBody(json body) returns AgentCard|Error {
     AgentCard|error result = parseAgentCardBodyRaw(body);
     if result is error {
         return wrapTransportError(result);
@@ -72,12 +72,12 @@ isolated function parseAgentCardBodyRaw(json body) returns AgentCard|error {
     if cardMapResult is error {
         return invalidAgentResponse(string `AgentCard body is not a JSON object: ${cardMapResult.message()}`);
     }
-    // Cloned, not aliased. `ensureType` casts without copying, and the field
-    // removals below would otherwise strip `signatures`, `securitySchemes`,
-    // and `securityRequirements` out of the caller's own `body` -- which
-    // `fetchAgentCardBody` hands out precisely so it can be kept for
-    // signature verification.
-    map<json> cardMap = cardMapResult.clone();
+    // Aliased, not cloned. `ensureType` casts without copying, so `cardMap`
+    // shares storage with `body`, and the field removals below mutate it. That
+    // is safe here: this function is module-private and its callers
+    // (`resolveAgentCard`, `getExtendedAgentCard`) discard `body` the moment it
+    // returns, so nothing can observe the mutation.
+    map<json> cardMap = cardMapResult;
 
     if isLegacyCard(cardMap) {
         string msg = "AgentCard declares transports the pre-v1.0 way (preferredTransport/"
