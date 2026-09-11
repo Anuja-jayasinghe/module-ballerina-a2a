@@ -255,6 +255,31 @@ isolated function buildQueryString(map<string> queryParams) returns string|Error
     return "?" + string:'join("&", ...queryParts);
 }
 
+# Configuration for an `a2a:HttpClient`, passed as included record fields:
+# `check new ("https://agent.example.com", tenant = "acme", maxReconnectAttempts = 3)`.
+public type ClientConfiguration record {|
+    # Full `http:ClientConfiguration` — auth, TLS, retry, circuit breaker,
+    # proxy, timeouts, and connection pooling. Also used for the card fetch
+    # when the client is constructed from a URL.
+    http:ClientConfiguration clientConfig = {};
+    # Default headers merged into every outbound request.
+    map<string> headers = {};
+    # Optional multi-tenant routing identifier; the card's HTTP+JSON interface
+    # supplies one automatically when it declares it, and an explicit value wins.
+    string? tenant = ();
+    # Optional A2A extension URIs to request.
+    string[] requestedExtensions = [];
+    # Opt-in automatic SSE reconnection: how many times a dropped stream is
+    # resubscribed. 0 (the default) disables reconnection.
+    int maxReconnectAttempts = 0;
+    # Optional provider consulted per request for the credentials the card's
+    # `securityRequirements` call for, keyed by security-scheme name. Covers the
+    # schemes that reduce to a single string (API key in a header, HTTP
+    # bearer/basic); OAuth2, OpenID Connect, and mutual TLS belong on
+    # `clientConfig.auth`, which handles their token exchange properly.
+    CredentialProvider? credentials = ();
+|};
+
 # An A2A protocol client for a remote agent, over the HTTP+JSON binding.
 #
 # Give it the agent's base URL, or an `a2a:AgentCard` already resolved via
@@ -300,38 +325,23 @@ public isolated client class HttpClient {
     # the retry.
     private boolean useLegacyContentType = false;
 
-    # Creates a REST client pointed at a remote A2A agent.
+    # Creates an HTTP+JSON client pointed at a remote A2A agent.
     #
     # + agent - The agent's base URL, or an AgentCard already resolved via
-    #           resolveAgentCard
-    # + clientConfig - Full http:ClientConfiguration. Also used for the
-    #                  card fetch when agent is a URL
-    # + headers - Default headers merged into every outbound request
-    # + tenant - Optional multi-tenant routing identifier; the card's
-    #            HTTP+JSON interface supplies one automatically when it
-    #            declares it, and an explicit value wins
-    # + requestedExtensions - Optional A2A extension URIs to request
-    # + maxReconnectAttempts - Opt-in automatic SSE reconnection
-    # + credentials - Optional provider consulted per request for the
-    #                 credentials the card's securityRequirements call for
+    #           `a2a:resolveAgentCard`
+    # + config - Client configuration; see `a2a:ClientConfiguration` for the
+    #            individual fields, passed as named arguments
     # + return - A typed Error: from resolveAgentCard, from URL
     #            derivation when the card declares no HTTP+JSON
     #            interface, a VersionNotSupportedError if the card
     #            resolves to A2A v0.3, or an InternalError if the
     #            http:Client cannot be created
-    public isolated function init(
-            AgentCard|string agent,
-            http:ClientConfiguration clientConfig = {},
-            map<string> headers = {},
-            string? tenant = (),
-            string[] requestedExtensions = [],
-            int maxReconnectAttempts = 0,
-            CredentialProvider? credentials = ()) returns Error? {
+    public isolated function init(AgentCard|string agent, *ClientConfiguration config) returns Error? {
         AgentCard card = agent is string
-            ? check resolveAgentCard(agent, clientConfig, headers)
+            ? check resolveAgentCard(agent, config.clientConfig, config.headers)
             : agent;
         string serviceUrl = check primaryUrl(card, HTTP_JSON);
-        string? effectiveTenant = tenant;
+        string? effectiveTenant = config.tenant;
         if effectiveTenant is () {
             AgentInterface|error iface = selectInterface(card, HTTP_JSON);
             if iface is AgentInterface {
@@ -343,18 +353,18 @@ public isolated client class HttpClient {
         // aren't pure data), so a mapping-constructor spread is used
         // instead of .clone() to shallow-copy it — otherwise this could
         // mutate the caller's own clientConfig in place.
-        http:ClientConfiguration effectiveClientConfig = {...clientConfig};
+        http:ClientConfiguration effectiveClientConfig = {...config.clientConfig};
         http:Client|error newHttpClient = new (serviceUrl, effectiveClientConfig);
         if newHttpClient is error {
             return wrapTransportError(newHttpClient);
         }
         self.httpClient = newHttpClient;
-        self.defaultHeaders = headers.clone().cloneReadOnly();
-        self.credentials = credentials;
+        self.defaultHeaders = config.headers.clone().cloneReadOnly();
+        self.credentials = config.credentials;
         self.authCard = card.cloneReadOnly();
         self.tenant = effectiveTenant;
-        self.requestedExtensions = requestedExtensions.cloneReadOnly();
-        self.maxReconnectAttempts = maxReconnectAttempts;
+        self.requestedExtensions = config.requestedExtensions.cloneReadOnly();
+        self.maxReconnectAttempts = config.maxReconnectAttempts;
         self.agentCard = card.clone();
     }
 

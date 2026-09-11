@@ -176,7 +176,7 @@ Deletion is idempotent per specification section 3.1.10.
 OAuth2, JWT, mutual TLS, and HTTP basic or bearer are configured through `clientConfig`, which is a standard `http:ClientConfiguration`. Token exchange and refresh are handled by `ballerina/oauth2` and `ballerina/jwt` as usual:
 
 ```ballerina
-final a2a:HttpClient agent = check new ("https://agent.example.com", {
+final a2a:HttpClient agent = check new ("https://agent.example.com", clientConfig = {
     auth: {
         tokenUrl: "https://auth.example.com/oauth2/token",
         clientId: "...",

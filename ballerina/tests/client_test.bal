@@ -801,7 +801,7 @@ function testClientConfigTimeoutPassthrough() returns error? {
     // Resolving separately (on the default config) keeps the tight timeout
     // scoped to the call being measured.
     AgentCard card = check resolveAgentCard(getServerBaseUrl());
-    HttpClient c = check new (card, {timeout: 0.1});
+    HttpClient c = check new (card, clientConfig = {timeout: 0.1});
 
     // setNextJsonResponse resets delaySeconds to 0, so the delay has to be
     // scripted after it, not before. The original order set the delay first

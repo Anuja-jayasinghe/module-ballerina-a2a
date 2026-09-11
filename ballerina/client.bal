@@ -74,8 +74,11 @@ isolated function isLegacyCard(map<json> cardMap) returns boolean {
 # back on the card. Open (`json...`), so it carries the whole body and every
 # other field falls through untouched.
 type DialectCardFields record {|
+    # Raw `securitySchemes`, parsed by `parseSecuritySchemes`
     json securitySchemes?;
+    # Raw `securityRequirements`, parsed by `parseSecurityRequirements`
     json securityRequirements?;
+    # Raw `signatures`, parsed by `parseAgentCardSignatures`
     json signatures?;
     json...;
 |};
