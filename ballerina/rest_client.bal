@@ -483,7 +483,7 @@ public isolated client class RestClient {
     # + resp - The HTTP response to an SSE request
     # + return - A stream of StreamResponse values, or a typed Error for a
     #            non-streaming error response (via toA2AErrorFromRest)
-    private isolated function finishSseResponse(http:Response resp) returns stream<StreamResponse, error?>|Error {
+    private isolated function finishSseResponse(http:Response resp) returns stream<StreamResponse, Error?>|Error {
         if !resp.getContentType().startsWith("text/event-stream") {
             json|error errBody = resp.getJsonPayload();
             return toA2AErrorFromRest(resp.statusCode, errBody is json ? errBody : ());
@@ -500,7 +500,7 @@ public isolated client class RestClient {
     # + taskId - The task to subscribe to
     # + tenant - Optional per-call tenant override
     # + return - A stream of StreamResponse values, or an error
-    isolated function openTaskSubscriptionStream(string taskId, string? tenant = ()) returns stream<StreamResponse, error?>|Error {
+    isolated function openTaskSubscriptionStream(string taskId, string? tenant = ()) returns stream<StreamResponse, Error?>|Error {
         string encodedId = check urlEncodeOrWrap(taskId);
         string path = check prefixTenant(string `/tasks/${encodedId}:subscribe`, tenant ?: self.tenant);
         map<string> extraHeaders = {"Accept": "text/event-stream"};
@@ -564,7 +564,7 @@ public isolated client class RestClient {
     # + request - The message to send and its send options
     # + return - A stream of StreamResponse values, or a typed Error
     isolated remote function sendStreamingMessage(SendMessageRequest request)
-            returns stream<StreamResponse, error?>|Error {
+            returns stream<StreamResponse, Error?>|Error {
         Message message = request.message;
         SendMessageConfiguration? config = request?.configuration;
         string? tenant = request?.tenant;
@@ -585,7 +585,7 @@ public isolated client class RestClient {
         string path = check prefixTenant("/message:stream", effectiveTenant);
         map<string> extraHeaders = {"Accept": "text/event-stream"};
         http:Response resp = check self.performRestCallWithNegotiation("POST", path, body, extraHeaders);
-        stream<StreamResponse, error?> rawStream = check self.finishSseResponse(resp);
+        stream<StreamResponse, Error?> rawStream = check self.finishSseResponse(resp);
         return wrapReconnecting(rawStream, self, self.maxReconnectAttempts, effectiveTenant);
     }
 
@@ -637,7 +637,7 @@ public isolated client class RestClient {
     # + request - The task to subscribe to
     # + return - A stream of StreamResponse values, or a typed Error
     isolated remote function subscribeToTask(SubscribeToTaskRequest request)
-            returns stream<StreamResponse, error?>|Error {
+            returns stream<StreamResponse, Error?>|Error {
         string taskId = request.id;
         string? tenant = request?.tenant;
         boolean denied;
@@ -650,11 +650,11 @@ public isolated client class RestClient {
             // issue #11.
             return streamingUnsupportedError("subscribeToTask");
         }
-        stream<StreamResponse, error?> rawStream = check self.openTaskSubscriptionStream(taskId, tenant);
+        stream<StreamResponse, Error?> rawStream = check self.openTaskSubscriptionStream(taskId, tenant);
         if self.maxReconnectAttempts <= 0 {
             return rawStream;
         }
-        stream<StreamResponse, error?> wrapped =
+        stream<StreamResponse, Error?> wrapped =
             new (new ReconnectingStreamGenerator(rawStream, self, taskId, self.maxReconnectAttempts, tenant = tenant));
         return wrapped;
     }

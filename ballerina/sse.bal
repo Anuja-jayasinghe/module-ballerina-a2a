@@ -31,13 +31,13 @@ import ballerina/http;
 # + resp - The HTTP response opened with `Accept: text/event-stream`
 # + return - A stream of decoded StreamResponse values
 isolated function readSseStream(http:Response resp)
-        returns stream<StreamResponse, error?>|Error {
+        returns stream<StreamResponse, Error?>|Error {
     stream<http:SseEvent, error?>|error sseStream = resp.getSseEventStream();
     if sseStream is error {
         return wrapTransportError(sseStream);
     }
     A2aStreamGenerator generator = new (sseStream);
-    stream<StreamResponse, error?> result = new (generator);
+    stream<StreamResponse, Error?> result = new (generator);
     return result;
 }
 
@@ -54,7 +54,7 @@ class A2aStreamGenerator {
     }
 
     # + return - The next event, `()` at end of stream, or an error
-    public isolated function next() returns record {| StreamResponse value; |}|error? {
+    public isolated function next() returns record {| StreamResponse value; |}|Error? {
         if self.closed {
             return ();
         }
@@ -68,7 +68,7 @@ class A2aStreamGenerator {
             }
             if chunk is error {
                 self.closed = true;
-                return chunk;
+                return wrapTransportError(chunk);
             }
 
             string? data = chunk.value.data;
@@ -86,7 +86,7 @@ class A2aStreamGenerator {
                 return toA2AErrorFromRest(200, errBody is json ? errBody : ());
             }
 
-            StreamResponse?|error result = self.decodeEvent(data);
+            StreamResponse?|Error result = self.decodeEvent(data);
             if result is error {
                 self.closed = true;
                 return result;
@@ -116,11 +116,22 @@ class A2aStreamGenerator {
     #
     # + data - One raw SSE `data:` payload
     # + return - The decoded event, `()` to skip it, or an error
-    private isolated function decodeEvent(string data) returns StreamResponse?|error {
+    private isolated function decodeEvent(string data) returns StreamResponse?|Error {
         // HTTP+JSON events carry a bare StreamResponse, with no enclosing
         // envelope.
-        json envelope = check data.fromJsonString();
-        return decodeStreamResponseEnvelope(check decodeRawBytesFromWire(envelope));
+        json|error envelope = data.fromJsonString();
+        if envelope is error {
+            return invalidAgentResponse(
+                    string `SSE event payload is not valid JSON: ${envelope.message()}`);
+        }
+        json|error rewired = decodeRawBytesFromWire(envelope);
+        if rewired is error {
+            // decodeRawBytesFromWire already types the Part-variant failures;
+            // anything else (a malformed base64 Part.raw) is still the agent's.
+            return rewired is Error ? rewired
+                : invalidAgentResponse(string `SSE event could not be decoded: ${rewired.message()}`);
+        }
+        return decodeStreamResponseEnvelope(rewired);
     }
 
     # + return - An error if the underlying stream could not be closed
@@ -141,7 +152,7 @@ class A2aStreamGenerator {
 #
 # + result - The unary sendMessage reply to wrap
 # + return - A stream yielding exactly that one event, then closing
-isolated function singleEventStream(Task|Message result) returns stream<StreamResponse, error?> {
+isolated function singleEventStream(Task|Message result) returns stream<StreamResponse, Error?> {
     // Task and Message are both arms of the StreamResponse union, so the
     // value needs no wrapping -- it already is a StreamResponse.
     return new (new SingleEventStreamGenerator(result));
@@ -157,7 +168,7 @@ class SingleEventStreamGenerator {
     }
 
     # + return - The next event, `()` at end of stream, or an error
-    public isolated function next() returns record {| StreamResponse value; |}|error? {
+    public isolated function next() returns record {| StreamResponse value; |}|Error? {
         record {| StreamResponse value; |}? p = self.pending;
         self.pending = ();
         return p;
@@ -176,11 +187,11 @@ class SingleEventStreamGenerator {
 # An object type rather than a concrete class, so any transport client can
 # hand itself to the generator.
 type StreamReconnectable isolated object {
-    isolated function openTaskSubscriptionStream(string taskId, string? tenant) returns stream<StreamResponse, error?>|error;
+    isolated function openTaskSubscriptionStream(string taskId, string? tenant) returns stream<StreamResponse, Error?>|Error;
 };
 
 class ReconnectingStreamGenerator {
-    private stream<StreamResponse, error?> current;
+    private stream<StreamResponse, Error?> current;
     private final StreamReconnectable a2aClient;
     private final string taskId;
     // The per-call tenant override (if any) from the originating
@@ -199,7 +210,7 @@ class ReconnectingStreamGenerator {
     // own first result, so the caller never observes that a peek happened.
     private record {| StreamResponse value; |}? bufferedFirst;
 
-    isolated function init(stream<StreamResponse, error?> initial, StreamReconnectable a2aClient, string taskId, int maxAttempts, record {| StreamResponse value; |}? bufferedFirst = (), string? tenant = ()) {
+    isolated function init(stream<StreamResponse, Error?> initial, StreamReconnectable a2aClient, string taskId, int maxAttempts, record {| StreamResponse value; |}? bufferedFirst = (), string? tenant = ()) {
         self.current = initial;
         self.a2aClient = a2aClient;
         self.taskId = taskId;
@@ -209,7 +220,7 @@ class ReconnectingStreamGenerator {
     }
 
     # + return - The next event, `()` at end of stream, or an error
-    public isolated function next() returns record {| StreamResponse value; |}|error? {
+    public isolated function next() returns record {| StreamResponse value; |}|Error? {
         if self.done {
             return ();
         }
@@ -218,7 +229,9 @@ class ReconnectingStreamGenerator {
             self.bufferedFirst = ();
             return buffered;
         }
-        record {| StreamResponse value; |}|error? result = self.current.next();
+        record {| StreamResponse value; |}|error? raw = self.current.next();
+        record {| StreamResponse value; |}|Error? result =
+            raw is error ? wrapTransportError(raw) : raw;
         if result is error && self.attemptsUsed < self.maxAttempts {
             self.attemptsUsed += 1;
             // Deliberately calls the raw, unwrapped openTaskSubscriptionStream
@@ -231,8 +244,8 @@ class ReconnectingStreamGenerator {
             // bound instead of ever giving up. See
             // openTaskSubscriptionStream's doc comment for the full
             // rationale.
-            stream<StreamResponse, error?>|error reconnected = self.a2aClient.openTaskSubscriptionStream(self.taskId, self.tenant);
-            if reconnected is stream<StreamResponse, error?> {
+            stream<StreamResponse, Error?>|Error reconnected = self.a2aClient.openTaskSubscriptionStream(self.taskId, self.tenant);
+            if reconnected is stream<StreamResponse, Error?> {
                 // Best-effort close of the errored/dropped stream before
                 // swapping in the reconnected one; a failure here doesn't
                 // change anything about the reconnect itself, so it's
@@ -291,10 +304,10 @@ class ReconnectingStreamGenerator {
 # + return - The stream to hand the caller, or an error if the first event
 #            was itself an error
 isolated function wrapReconnecting(
-        stream<StreamResponse, error?> rawStream,
+        stream<StreamResponse, Error?> rawStream,
         StreamReconnectable owner,
         int maxReconnectAttempts,
-        string? tenant) returns stream<StreamResponse, error?>|Error {
+        string? tenant) returns stream<StreamResponse, Error?>|Error {
     if maxReconnectAttempts <= 0 {
         return rawStream;
     }
@@ -303,13 +316,13 @@ isolated function wrapReconnecting(
         return wrapTransportError(peeked);
     }
     if peeked is () {
-        stream<StreamResponse, error?> wrapped =
+        stream<StreamResponse, Error?> wrapped =
             new (new ReconnectingStreamGenerator(rawStream, owner, "", 0, tenant = tenant));
         return wrapped;
     }
     StreamResponse first = peeked.value;
     if first is Task {
-        stream<StreamResponse, error?> wrapped =
+        stream<StreamResponse, Error?> wrapped =
             new (new ReconnectingStreamGenerator(rawStream, owner, first.id, maxReconnectAttempts, peeked, tenant));
         return wrapped;
     }
@@ -317,11 +330,11 @@ isolated function wrapReconnecting(
     // a Task (e.g. resubscribing to an already-created task), and that
     // update still carries a taskId worth reconnecting against.
     if first is TaskStatusUpdateEvent {
-        stream<StreamResponse, error?> wrapped =
+        stream<StreamResponse, Error?> wrapped =
             new (new ReconnectingStreamGenerator(rawStream, owner, first.taskId, maxReconnectAttempts, peeked, tenant));
         return wrapped;
     }
-    stream<StreamResponse, error?> wrapped =
+    stream<StreamResponse, Error?> wrapped =
         new (new ReconnectingStreamGenerator(rawStream, owner, "", 0, peeked, tenant));
     return wrapped;
 }

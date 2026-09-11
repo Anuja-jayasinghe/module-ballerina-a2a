@@ -42,7 +42,7 @@ type ClientMethods isolated client object {
     # + request - The message and its send options
     # + return - A stream of StreamResponse values, or an error
     isolated remote function sendStreamingMessage(SendMessageRequest request)
-        returns stream<StreamResponse, error?>|Error;
+        returns stream<StreamResponse, Error?>|Error;
 
     # Retrieves the current state of a task.
     #
@@ -61,7 +61,7 @@ type ClientMethods isolated client object {
     # + request - The task identifier
     # + return - A stream of StreamResponse values, or an error
     isolated remote function subscribeToTask(SubscribeToTaskRequest request)
-        returns stream<StreamResponse, error?>|Error;
+        returns stream<StreamResponse, Error?>|Error;
 
     # Lists tasks matching an optional filter, with cursor-based pagination.
     #

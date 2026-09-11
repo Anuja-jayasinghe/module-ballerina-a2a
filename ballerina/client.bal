@@ -382,7 +382,7 @@ public isolated client class Client {
     # + request - The message and its send options
     # + return - A stream of StreamResponse values, or a typed Error
     isolated remote function sendStreamingMessage(SendMessageRequest request)
-            returns stream<StreamResponse, error?>|Error {
+            returns stream<StreamResponse, Error?>|Error {
         return self.delegate->sendStreamingMessage(request);
     }
 
@@ -409,7 +409,7 @@ public isolated client class Client {
     # + request - The task identifier
     # + return - A stream of StreamResponse values, or a typed Error
     isolated remote function subscribeToTask(SubscribeToTaskRequest request)
-            returns stream<StreamResponse, error?>|Error {
+            returns stream<StreamResponse, Error?>|Error {
         return self.delegate->subscribeToTask(request);
     }
 

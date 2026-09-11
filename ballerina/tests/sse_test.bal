@@ -44,7 +44,7 @@ function testReadSseStreamOverRealHttpResponse() returns error? {
     http:Client testClient = check new ("http://localhost:19099");
     http:Response resp = check testClient->get("/events");
 
-    stream<StreamResponse, error?> result = check readSseStream(resp);
+    stream<StreamResponse, Error?> result = check readSseStream(resp);
 
     StreamResponse first = check expectValue(result.next());
     test:assertEquals((<TaskStatusUpdateEvent>first).status.state, TASK_STATE_WORKING);
@@ -101,7 +101,7 @@ function testA2aStreamGeneratorClosesOnTerminalStatus() returns error? {
     StreamResponse third = check expectValue(generator.next());
     test:assertEquals((<TaskStatusUpdateEvent>third).status.state, TASK_STATE_COMPLETED);
 
-    record {| StreamResponse value; |}|error? fourth = generator.next();
+    record {| StreamResponse value; |}|Error? fourth = generator.next();
     test:assertTrue(fourth is (), "stream should be closed after the terminal event, regardless of remaining source events");
 }
 
@@ -169,27 +169,27 @@ function testA2aStreamGeneratorDoesNotCloseOnInputRequired() returns error? {
 // TestSseSource — needed to hand wrapReconnecting/ReconnectingStreamGenerator
 // a stream whose behaviour a test controls exactly.
 class TestStreamResponseSource {
-    private (StreamResponse|error)[] events;
+    private (StreamResponse|Error)[] events;
     private int idx = 0;
 
-    isolated function init((StreamResponse|error)[] events) {
+    isolated function init((StreamResponse|Error)[] events) {
         self.events = events;
     }
 
-    public isolated function next() returns record {| StreamResponse value; |}|error? {
+    public isolated function next() returns record {| StreamResponse value; |}|Error? {
         if self.idx >= self.events.length() {
             return ();
         }
-        StreamResponse|error event = self.events[self.idx];
+        StreamResponse|Error event = self.events[self.idx];
         self.idx += 1;
-        if event is error {
+        if event is Error {
             return event;
         }
         return {value: event};
     }
 }
 
-isolated function responseStream((StreamResponse|error)[] events) returns stream<StreamResponse, error?> {
+isolated function responseStream((StreamResponse|Error)[] events) returns stream<StreamResponse, Error?> {
     return new (new TestStreamResponseSource(events));
 }
 
@@ -211,12 +211,12 @@ isolated class CountingReconnectable {
     }
 
     isolated function openTaskSubscriptionStream(string taskId, string? tenant)
-            returns stream<StreamResponse, error?>|error {
+            returns stream<StreamResponse, Error?>|Error {
         lock {
             self.calls += 1;
             if self.calls > self.allowed {
                 self.exceeded = true;
-                return error("resubscribe cap reached");
+                return error InternalError("resubscribe cap reached");
             }
         }
         return responseStream([error("dropped again")]);
@@ -245,8 +245,8 @@ isolated class CountingReconnectable {
 @test:Config {}
 function testReconnectBudgetIsConsumedOncePerAttemptAndSharedAcrossTheChain() returns error? {
     CountingReconnectable owner = new (3);
-    stream<StreamResponse, error?> initial = responseStream([error("first drop")]);
-    stream<StreamResponse, error?> s =
+    stream<StreamResponse, Error?> initial = responseStream([error InternalError("first drop")]);
+    stream<StreamResponse, Error?> s =
         new (new ReconnectingStreamGenerator(initial, owner, "task-1", 2));
 
     record {| StreamResponse value; |}|error? result = s.next();
@@ -269,13 +269,13 @@ function testReconnectBudgetIsConsumedOncePerAttemptAndSharedAcrossTheChain() re
 @test:Config {}
 function testWrapReconnectingHandsBackRawStreamWhenBudgetIsZero() returns error? {
     CountingReconnectable owner = new (0);
-    stream<StreamResponse, error?> raw = responseStream([error("opens with an error")]);
+    stream<StreamResponse, Error?> raw = responseStream([error InternalError("opens with an error")]);
 
-    stream<StreamResponse, error?>|error wrapped = wrapReconnecting(raw, owner, 0, ());
+    stream<StreamResponse, Error?>|Error wrapped = wrapReconnecting(raw, owner, 0, ());
 
-    test:assertTrue(wrapped is stream<StreamResponse, error?>,
+    test:assertTrue(wrapped is stream<StreamResponse, Error?>,
             "a zero budget must return the raw stream untouched — peeking it would surface the first event's error at call time instead of at next(), changing when a default-configured caller sees a failure");
-    if wrapped is stream<StreamResponse, error?> {
+    if wrapped is stream<StreamResponse, Error?> {
         record {| StreamResponse value; |}|error? first = wrapped.next();
         test:assertTrue(first is error, "the error must still arrive, just at next() rather than at construction");
     }
@@ -298,7 +298,7 @@ function testA2aStreamGeneratorPropagatesUnderlyingStreamErrorBeforeTerminal() r
     A2aStreamGenerator generator = newGenerator([
         {data: string `{"statusUpdate":{"taskId":"task-1","contextId":"ctx-1","status":{"state":"TASK_STATE_WORKING"}}}`},
         {data: string `{"artifactUpdate":{"taskId":"task-1","contextId":"ctx-1","artifact":{"artifactId":"art-1","parts":[{"text":"partial"}]}}}`},
-        error("connection reset by peer")
+        error InternalError("connection reset by peer")
     ]);
 
     StreamResponse first = check expectValue(generator.next());
@@ -307,14 +307,16 @@ function testA2aStreamGeneratorPropagatesUnderlyingStreamErrorBeforeTerminal() r
     StreamResponse second = check expectValue(generator.next());
     test:assertTrue(second is TaskArtifactUpdateEvent, "artifact event should be delivered");
 
-    record {| StreamResponse value; |}|error? third = generator.next();
-    test:assertTrue(third is error, "an underlying stream error before a terminal status should propagate to the caller, not be swallowed");
-    if third is error {
-        test:assertEquals(third.message(), "connection reset by peer");
+    record {| StreamResponse value; |}|Error? third = generator.next();
+    test:assertTrue(third is Error,
+            "an underlying stream error before a terminal status should propagate to the caller as a typed Error, not be swallowed and not escape untyped");
+    if third is Error {
+        test:assertTrue(third.message().includes("connection reset by peer"),
+                string `the original failure must survive the wrap; got "${third.message()}"`);
     }
 
     // The generator should have closed itself after surfacing the error.
-    record {| StreamResponse value; |}|error? fourth = generator.next();
+    record {| StreamResponse value; |}|Error? fourth = generator.next();
     test:assertTrue(fourth is (), "generator should be closed after propagating an underlying stream error");
 }
 
@@ -330,4 +332,29 @@ function testA2aStreamGeneratorPropagatesMalformedJsonAsError() returns error? {
     // The generator should close after surfacing the error.
     record {| StreamResponse value; |}|error? next = generator.next();
     test:assertTrue(next is (), "generator should be closed after a decode error");
+}
+
+// Regression: a malformed base64 Part.raw arriving over SSE must surface as a
+// typed InvalidAgentResponseError. It used to escape as a bare error from
+// array:fromBase64, because only the REST callers converted that failure.
+@test:Config {}
+function testSseMalformedBase64PartRawIsTyped() returns error? {
+    A2aStreamGenerator generator = newGenerator([
+        {data: string `{"task":{"id":"t1","contextId":"c1","status":{"state":"TASK_STATE_WORKING"},` +
+               string `"artifacts":[{"artifactId":"a1","parts":[{"raw":"!!!not base64!!!"}]}]}}`}
+    ]);
+
+    record {| StreamResponse value; |}|Error? first = generator.next();
+    test:assertTrue(first is InvalidAgentResponseError,
+            "a malformed base64 Part.raw is the agent's fault and must be typed, not escape as a bare error");
+}
+
+// Regression: an SSE payload that is not valid JSON must also be typed.
+@test:Config {}
+function testSseMalformedJsonIsTyped() returns error? {
+    A2aStreamGenerator generator = newGenerator([{data: "{ this is not json"}]);
+
+    record {| StreamResponse value; |}|Error? first = generator.next();
+    test:assertTrue(first is InvalidAgentResponseError,
+            "a malformed SSE payload must surface as InvalidAgentResponseError");
 }
