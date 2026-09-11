@@ -181,16 +181,15 @@ isolated function stripTrailingSlash(string url) returns string {
 # unauthenticated by design (section 14.3), so `headers` is for proxy or
 # tracing use rather than credentials.
 #
-# Reach for this only when the raw body itself is needed — verifying the card's
-# `signatures` is the usual reason, since section 8.4.3's canonicalization must
-# run on the response exactly as received. Otherwise use `a2a:resolveAgentCard`.
+# Module-private: `a2a:resolveAgentCard` is the public entry point. This returns
+# the body exactly as received, which is what the parse step then types.
 #
 # + agentBaseUrl - Root URL of the agent with no path component
 # + clientConfig - Optional HTTP configuration for auth, TLS, or proxy
 # + headers - Optional default headers
 # + return - The raw JSON AgentCard body exactly as received, or an
 #            `a2a:InternalError` for a connection failure or malformed JSON
-public isolated function fetchAgentCardBody(
+isolated function fetchAgentCardBody(
         string agentBaseUrl,
         http:ClientConfiguration clientConfig = {},
         map<string> headers = {}) returns json|Error {

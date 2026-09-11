@@ -179,9 +179,9 @@ public type AgentCard record {|
     # JWS signatures over this card, per specification section 8.4.
     #
     # Parsed but not verified by this library. Section 8.4.3's procedure needs
-    # a public key only the caller can supply, and canonicalizing the raw body
-    # rather than this record — a record carries defaults the signer never
-    # sent. Fetch the body with `a2a:fetchAgentCardBody` to verify it yourself.
+    # a public key only the caller can supply, and must canonicalize the raw
+    # body rather than this record — a record carries defaults the signer never
+    # sent. Raw-body signature verification is out of scope for this release.
     AgentCardSignature[] signatures?;
     // v1.0 removed the top-level `protocolVersion` and `url` fields: a card
     // now declares both per interface, in supportedInterfaces. They are

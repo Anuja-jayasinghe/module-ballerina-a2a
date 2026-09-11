@@ -232,12 +232,7 @@ foreach a2a:AgentSkill skill in card.skills {
 }
 ```
 
-A card may carry `signatures` (specification section 8.4). They are parsed onto the card but not verified: section 8.4.3's procedure needs a public key only you can supply, and it must run over the raw body rather than a parsed record, since a record carries defaults the signer never sent. Use `a2a:fetchAgentCardBody` to obtain that exact body for your own verification:
-
-```ballerina
-json raw = check a2a:fetchAgentCardBody("https://agent.example.com");
-// verify `raw` against your own trust store
-```
+A card may carry `signatures` (specification section 8.4). They are parsed onto the card but not verified: section 8.4.3's procedure needs a public key only you can supply. Verifying a signature also has to run over the raw body rather than a parsed record, since a record carries defaults the signer never sent; raw-body signature verification is out of scope for this release.
 
 ### 5.1 The extended Agent Card
 
