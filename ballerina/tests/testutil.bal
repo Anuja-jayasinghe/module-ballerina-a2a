@@ -24,20 +24,6 @@ public isolated function getServerBaseUrl() returns string {
     return "http://localhost:19199";
 }
 
-// Port the scripted mock gRPC A2AService (tests/grpcmock_service.bal) listens
-// on, distinct from the HTTP mock's 19199. Shared as a single constant with
-// tests/grpcmock_scripting.bal and tests/grpcmock_service.bal so the port
-// only needs to change in one place.
-const int GRPC_MOCK_PORT = 19198;
-
-// Port of the scripted mock gRPC A2AService used by gRPC-binding Client
-// tests (see tests/grpcmock_service.bal), distinct from the HTTP mock's
-// 19199.
-//
-public isolated function getGrpcMockPort() returns int {
-    return GRPC_MOCK_PORT;
-}
-
 // ---- Scriptable mock A2A server -------------------------------------
 //
 // One listener, two resources: a static (optionally overridable) Agent
@@ -652,12 +638,8 @@ service / on mockListener {
 
 // ---- Shared assertion helpers -----------------------------------------
 
-// Unwraps a stream.next() result, failing the test immediately if the
-// stream ended or returned an error where a value was expected. Same
-// shape as the helper in modules/transport/tests/transport_test.bal —
-// duplicated rather than imported, since test files aren't part of a
-// module's exported API and can't be shared across modules.
-//
+// Unwraps a stream.next() result, failing the test immediately if the stream
+// ended or returned an error where a value was expected.
 public isolated function expectValue(record {| StreamResponse value; |}|error? result) returns StreamResponse|error {
     if result is error {
         return result;
