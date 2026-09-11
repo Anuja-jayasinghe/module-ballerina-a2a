@@ -297,21 +297,18 @@ isolated function parseSecurityRequirements(json raw) returns SecurityRequiremen
     return result;
 }
 
-# Parses a raw JSON array into a list of AgentCardSignature values,
-# silently dropping any entry that doesn't match the AgentCardSignature
-# shape, rather than failing the whole AgentCard parse over one
-# malformed signature.
+# Parses the AgentCard's raw `signatures` array into typed
+# `AgentCardSignature` values.
+#
+# A signature is a fixed shape with no wire dialects (unlike security
+# schemes/requirements), so this is a direct structural conversion — a
+# malformed entry fails the parse rather than being dropped. `cloneWithType`,
+# not `ensureType`: the latter only casts, so it cannot turn a `json[]` into a
+# typed `AgentCardSignature[]`.
 #
 # + raw - The raw JSON value of the AgentCard's `signatures` field
-# + return - A list containing only the entries that parsed successfully
+# + return - The parsed signatures, or an error if any entry does not match
+#            the `AgentCardSignature` shape
 isolated function parseAgentCardSignatures(json raw) returns AgentCardSignature[]|error {
-    json[] rawArray = check raw.ensureType();
-    AgentCardSignature[] result = [];
-    foreach json entry in rawArray {
-        AgentCardSignature|error sig = entry.cloneWithType(AgentCardSignature);
-        if sig is AgentCardSignature {
-            result.push(sig);
-        }
-    }
-    return result;
+    return raw.cloneWithType();
 }

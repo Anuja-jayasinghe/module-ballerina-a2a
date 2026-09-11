@@ -1155,16 +1155,28 @@ function testParseSecurityRequirementsOnEmptyArray() returns error? {
 }
 
 @test:Config {}
-function testParseAgentCardSignaturesKeepsValidEntriesDropsMalformed() returns error? {
+function testParseAgentCardSignaturesParsesValidEntries() returns error? {
     json raw = [
-        {"protected": "eyJhbGciOiJSUzI1NiJ9", "signature": "dGhpcyBpcyBhIHNpZ25hdHVyZQ"},
-        {"header": {"alg": "RS256"}}
+        {"protected": "eyJhbGciOiJSUzI1NiJ9", "signature": "dGhpcyBpcyBhIHNpZ25hdHVyZQ"}
     ];
 
     AgentCardSignature[] result = check parseAgentCardSignatures(raw);
 
     test:assertEquals(result.length(), 1);
     test:assertEquals(result[0].protected, "eyJhbGciOiJSUzI1NiJ9");
+}
+
+@test:Config {}
+function testParseAgentCardSignaturesFailsOnMalformedEntry() {
+    json raw = [
+        {"protected": "eyJhbGciOiJSUzI1NiJ9", "signature": "dGhpcyBpcyBhIHNpZ25hdHVyZQ"},
+        {"header": {"alg": "RS256"}}
+    ];
+
+    AgentCardSignature[]|error result = parseAgentCardSignatures(raw);
+
+    test:assertTrue(result is error,
+            "a malformed signature entry must fail the parse, not be dropped");
 }
 
 @test:Config {}

@@ -1070,10 +1070,10 @@ function testResolveAgentCardDropsUnrecognizedSecuritySchemeEntry() returns erro
 }
 
 @test:Config {}
-function testResolveAgentCardDropsMalformedSignatureAndSecurityRequirementEntries() returns error? {
+function testResolveAgentCardDropsMalformedSecurityRequirementEntries() returns error? {
     setWellKnownOverride({
         name: "Agent With Some Malformed Security Data",
-        description: "Has one good and one bad entry in signatures, securityRequirements, and a skill's securityRequirements",
+        description: "Has one good and one bad entry in securityRequirements and a skill's securityRequirements",
         version: "1.0.0",
         capabilities: {},
         securityRequirements: [
@@ -1081,8 +1081,7 @@ function testResolveAgentCardDropsMalformedSignatureAndSecurityRequirementEntrie
             {"apiKey": "not-an-array"}
         ],
         signatures: [
-            {"protected": "eyJhbGciOiJSUzI1NiJ9", "signature": "dGhpcyBpcyBhIHNpZ25hdHVyZQ"},
-            {"header": {"alg": "RS256"}}
+            {"protected": "eyJhbGciOiJSUzI1NiJ9", "signature": "dGhpcyBpcyBhIHNpZ25hdHVyZQ"}
         ],
         skills: [
             {
@@ -1109,6 +1108,31 @@ function testResolveAgentCardDropsMalformedSignatureAndSecurityRequirementEntrie
     test:assertEquals((card.signatures ?: [])[0].protected, "eyJhbGciOiJSUzI1NiJ9");
     test:assertEquals((card.skills[0].securityRequirements ?: []).length(), 1);
     test:assertEquals((card.skills[0].securityRequirements ?: [])[0], {"oauth": ["write"]});
+}
+
+@test:Config {}
+function testResolveAgentCardFailsOnMalformedSignature() returns error? {
+    // Unlike securityRequirements, a signature is a fixed shape and is parsed
+    // fail-fast: one malformed entry fails the whole card resolution.
+    setWellKnownOverride({
+        name: "Agent With A Malformed Signature",
+        description: "One good and one malformed signature entry",
+        version: "1.0.0",
+        capabilities: {},
+        signatures: [
+            {"protected": "eyJhbGciOiJSUzI1NiJ9", "signature": "dGhpcyBpcyBhIHNpZ25hdHVyZQ"},
+            {"header": {"alg": "RS256"}}
+        ],
+        skills: [],
+        defaultInputModes: ["text"],
+        defaultOutputModes: ["text"]
+    , supportedInterfaces: [{url: "http://localhost:19199", protocolBinding: "HTTP+JSON", protocolVersion: "1.0"}]});
+
+    AgentCard|error result = resolveAgentCard(getServerBaseUrl());
+    setWellKnownOverride(());
+
+    test:assertTrue(result is error,
+            "a malformed signature entry must fail card resolution, not be silently dropped");
 }
 
 @test:Config {}
