@@ -352,8 +352,9 @@ public type SendMessageConfiguration record {|
 
 # The request payload for `sendMessage` and `sendStreamingMessage`.
 #
-# Specification section 10.3 — `SendMessageRequest`. Both operations take
-# this same request; only their responses differ.
+# Specification section 3.1.1 — [SendMessageRequest](https://a2a-protocol.org/latest/specification/#311-send-message).
+# Both operations take this same request; only their responses differ
+# (`sendStreamingMessage` is section 3.1.2).
 public type SendMessageRequest record {|
     # The message to send to the agent
     Message message;
@@ -370,7 +371,7 @@ public type SendMessageRequest record {|
 
 # The request payload for `getTask`.
 #
-# Specification section 10.3 — `GetTaskRequest`.
+# Specification section 3.1.3 — [GetTaskRequest](https://a2a-protocol.org/latest/specification/#313-get-task).
 public type GetTaskRequest record {|
     # The resource ID of the task to retrieve
     string id;
@@ -384,8 +385,9 @@ public type GetTaskRequest record {|
 
 # The request payload for `listTasks`.
 #
-# Specification section 10.3 — `ListTasksRequest`. Every field is optional,
-# so `c->listTasks()` lists with the server's own defaults.
+# Specification section 3.1.4 — [ListTasksRequest](https://a2a-protocol.org/latest/specification/#314-list-tasks).
+# Every field is optional, so `c->listTasks()` lists with the server's own
+# defaults.
 public type ListTasksRequest record {|
     # Opaque routing identifier
     string tenant?;
@@ -408,7 +410,7 @@ public type ListTasksRequest record {|
 
 # The request payload for `cancelTask`.
 #
-# Specification section 10.3 — `CancelTaskRequest`.
+# Specification section 3.1.5 — [CancelTaskRequest](https://a2a-protocol.org/latest/specification/#315-cancel-task).
 public type CancelTaskRequest record {|
     # The resource ID of the task to cancel
     string id;
@@ -421,7 +423,7 @@ public type CancelTaskRequest record {|
 
 # The request payload for `subscribeToTask`.
 #
-# Specification section 10.3 — `SubscribeToTaskRequest`.
+# Specification section 3.1.6 — [SubscribeToTaskRequest](https://a2a-protocol.org/latest/specification/#316-subscribe-to-task).
 public type SubscribeToTaskRequest record {|
     # The resource ID of the task to subscribe to
     string id;
@@ -432,9 +434,9 @@ public type SubscribeToTaskRequest record {|
 
 # The request payload for `getTaskPushNotificationConfig`.
 #
-# Specification section 10.3 — `GetTaskPushNotificationConfigRequest`. Both
-# identifiers are required and mean different things: `taskId` is the parent
-# task, `id` the configuration itself.
+# Specification section 3.1.8 — [GetTaskPushNotificationConfigRequest](https://a2a-protocol.org/latest/specification/#318-get-push-notification-config).
+# Both identifiers are required and mean different things: `taskId` is the
+# parent task, `id` the configuration itself.
 public type GetTaskPushNotificationConfigRequest record {|
     # The parent task resource ID
     string taskId;
@@ -447,7 +449,7 @@ public type GetTaskPushNotificationConfigRequest record {|
 
 # The request payload for `listTaskPushNotificationConfigs`.
 #
-# Specification section 10.3 — `ListTaskPushNotificationConfigsRequest`.
+# Specification section 3.1.9 — [ListTaskPushNotificationConfigsRequest](https://a2a-protocol.org/latest/specification/#319-list-push-notification-configs).
 public type ListTaskPushNotificationConfigsRequest record {|
     # The parent task resource ID
     string taskId;
@@ -462,7 +464,7 @@ public type ListTaskPushNotificationConfigsRequest record {|
 
 # The request payload for `deleteTaskPushNotificationConfig`.
 #
-# Specification section 10.3 — `DeleteTaskPushNotificationConfigRequest`.
+# Specification section 3.1.10 — [DeleteTaskPushNotificationConfigRequest](https://a2a-protocol.org/latest/specification/#3110-delete-push-notification-config).
 public type DeleteTaskPushNotificationConfigRequest record {|
     # The parent task resource ID
     string taskId;
@@ -475,8 +477,9 @@ public type DeleteTaskPushNotificationConfigRequest record {|
 
 # The request payload for `getExtendedAgentCard`.
 #
-# Specification section 10.3 — `GetExtendedAgentCardRequest`. Its only field
-# is optional, so `c->getExtendedAgentCard()` works with no argument.
+# Specification section 3.1.11 — [GetExtendedAgentCardRequest](https://a2a-protocol.org/latest/specification/#3111-get-extended-agent-card).
+# Its only field is optional, so `c->getExtendedAgentCard()` works with no
+# argument.
 public type GetExtendedAgentCardRequest record {|
     # Opaque routing identifier
     string tenant?;
