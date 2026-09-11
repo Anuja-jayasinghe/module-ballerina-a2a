@@ -1307,3 +1307,44 @@ function testEmptyListTasksPageIsAccepted() returns error? {
     test:assertEquals(decoded.tasks.length(), 0);
     test:assertEquals(decoded.totalSize, 0);
 }
+
+// Regression: SecurityScheme is a specification oneof, so an entry setting two
+// recognised arms is not a scheme this client can name. It used to resolve to
+// whichever arm V10_SECURITY_SCHEME_ARM_KEYS listed first.
+@test:Config {}
+function testTwoArmSecuritySchemeIsRejected() returns error? {
+    map<SecurityScheme> parsed = check parseSecuritySchemes({
+        "ambiguous": {
+            "apiKeySecurityScheme": {"location": "header", "name": "X-API-Key"},
+            "httpAuthSecurityScheme": {"scheme": "bearer"}
+        }
+    });
+    test:assertFalse(parsed.hasKey("ambiguous"),
+            "an entry setting two oneof arms must be dropped, not resolved to the first-listed arm");
+}
+
+// Regression: an entry with no recognised arm and no `type` used to clone into
+// MutualTlsSecurityScheme, which requires no fields and defaults its own
+// `type` -- so any unknown wrapper was read as mutual TLS.
+@test:Config {}
+function testUnknownSecuritySchemeWrapperIsNotReadAsMutualTls() returns error? {
+    map<SecurityScheme> parsed = check parseSecuritySchemes({
+        "future": {"someFutureSecurityScheme": {"whatever": true}}
+    });
+    test:assertFalse(parsed.hasKey("future"),
+            "an unrecognised wrapper must be dropped, not silently typed as mutual TLS");
+}
+
+// The conformant shapes still parse.
+@test:Config {}
+function testSingleArmAndTypeDiscriminatedSchemesStillParse() returns error? {
+    map<SecurityScheme> parsed = check parseSecuritySchemes({
+        "byArm": {"httpAuthSecurityScheme": {"scheme": "bearer"}},
+        "byType": {"type": "http", "scheme": "bearer"},
+        "realMtls": {"mtlsSecurityScheme": {}}
+    });
+    test:assertTrue(parsed.hasKey("byArm"), "a single-arm entry must still parse");
+    test:assertTrue(parsed.hasKey("byType"), "a type-discriminated entry must still parse");
+    test:assertTrue(parsed["realMtls"] is MutualTlsSecurityScheme,
+            "a genuine mtls arm must still resolve to MutualTlsSecurityScheme");
+}

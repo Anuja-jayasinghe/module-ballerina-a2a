@@ -425,5 +425,10 @@ isolated function decodeStreamResponseEnvelope(json envelope) returns StreamResp
         return invalidAgentResponse(
                 string `stream event "${name}" did not match the expected shape: ${decoded.message()}`);
     }
+    // A Task arriving as a stream event gets the same semantic validation as
+    // one returned from getTask or listTasks.
+    if decoded is Task {
+        check validateInboundTask(decoded);
+    }
     return <StreamResponse>decoded;
 }

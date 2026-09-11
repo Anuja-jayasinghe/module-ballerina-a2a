@@ -38,22 +38,24 @@ final readonly & string[] V10_SECURITY_SCHEME_ARM_KEYS = [
     "mtls_security_scheme"
 ];
 
-# Whether a raw securitySchemes entry is in the v1.0 oneof-wrapper form.
+# Counts how many v1.0 oneof arm keys an entry sets.
 #
-# Checked separately from unwrapping so that an entry which *declares* an arm
-# but carries a malformed payload is dropped outright rather than falling
-# through to the v0.3 clone below — where `MutualTlsSecurityScheme` (no
-# required fields, defaulted `type`) would match it and silently mislabel it.
+# SecurityScheme is a specification `oneof`, so a conformant entry sets
+# exactly one. Counting rather than answering "any?" is what stops an entry
+# with two recognised arms being silently resolved to whichever the arm list
+# happens to name first -- the same rule `countSetPartVariantsJson` applies to
+# `Part`.
 #
-# + entry - The raw securitySchemes entry
-# + return - True if any of the ten recognized wrapper keys is present
-isolated function hasV10SecuritySchemeArm(map<json> entry) returns boolean {
+# + entry - A raw securitySchemes entry
+# + return - How many recognised arm keys are present
+isolated function countV10SecuritySchemeArms(map<json> entry) returns int {
+    int count = 0;
     foreach string armKey in V10_SECURITY_SCHEME_ARM_KEYS {
         if entry.hasKey(armKey) {
-            return true;
+            count += 1;
         }
     }
-    return false;
+    return count;
 }
 
 # Returns one v1.0 oneof arm's payload as a mutable copy, looked up under
@@ -171,13 +173,31 @@ isolated function parseSecuritySchemes(json raw) returns map<SecurityScheme>|err
     map<json> rawMap = check raw.ensureType();
     map<SecurityScheme> result = {};
     foreach [string, json] [name, schemeJson] in rawMap.entries() {
-        if schemeJson is map<json> && hasV10SecuritySchemeArm(schemeJson) {
+        if schemeJson !is map<json> {
+            continue;
+        }
+        int arms = countV10SecuritySchemeArms(schemeJson);
+        if arms > 1 {
+            // A oneof with two arms set is not a scheme this client can name.
+            // Dropping it is the tolerant-parse contract: one bad entry must
+            // not sink the whole card.
+            continue;
+        }
+        if arms == 1 {
             SecurityScheme? unwrapped = unwrapV10SecurityScheme(schemeJson);
             if unwrapped is SecurityScheme {
                 result[name] = unwrapped;
             }
             // A declared-but-malformed arm is dropped here, never retried
-            // against the union below — see hasV10SecuritySchemeArm.
+            // against the union below.
+            continue;
+        }
+        // No arm at all. Only a `type` discriminator can identify the scheme
+        // from here; without one, `cloneWithType` would match
+        // MutualTlsSecurityScheme, which requires no fields and defaults its
+        // own `type` -- so any unrecognised wrapper would be read as mutual
+        // TLS.
+        if schemeJson["type"] !is string {
             continue;
         }
         SecurityScheme|error scheme = schemeJson.cloneWithType(SecurityScheme);

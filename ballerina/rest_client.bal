@@ -124,9 +124,12 @@ isolated function decodeSendMessageResult(json result) returns Task|Message|Erro
     [string, json] [name, payload] = arm;
     if name == "task" {
         Task|error task = payload.cloneWithType(Task);
-        return task is error
-            ? invalidAgentResponse(string `sendMessage response did not match the expected shape: ${task.message()}`)
-            : task;
+        if task is error {
+            return invalidAgentResponse(
+                    string `sendMessage response did not match the expected shape: ${task.message()}`);
+        }
+        check validateInboundTask(task);
+        return task;
     }
     Message|error message = payload.cloneWithType(Message);
     return message is error
