@@ -23,7 +23,7 @@
 
 import ballerina/test;
 
-// resolveCredentialHeaders / credentialHeadersFor (auth.bal): turning a
+// resolveCredentialHeaders / resolveRequirementHeaders (auth.bal): turning a
 // card's declared securityRequirements plus a CredentialProvider into the
 // headers a request actually carries.
 //

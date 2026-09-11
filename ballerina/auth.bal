@@ -134,7 +134,7 @@ final readonly & string[] RESERVED_CREDENTIAL_HEADERS = ["a2a-version", "content
 # + provider - Supplies credentials by scheme name
 # + return - The headers satisfying the whole requirement, or () if it
 #            cannot be satisfied
-isolated function credentialHeadersFor(AgentCard card, SecurityRequirement requirement,
+isolated function resolveRequirementHeaders(AgentCard card, SecurityRequirement requirement,
         CredentialProvider provider) returns map<string>? {
     map<string> headers = {};
     // Header names are case-insensitive, and two schemes in one AND
@@ -164,17 +164,17 @@ isolated function credentialHeadersFor(AgentCard card, SecurityRequirement requi
             headerValue = credential;
         } else if scheme is HttpAuthSecurityScheme {
             string kind = scheme.scheme.toLowerAscii();
-            if kind == "bearer" {
+            if kind == HTTP_AUTH_BEARER {
                 headerName = AUTHORIZATION_HEADER;
-                headerValue = string `Bearer ${credential}`;
-            } else if kind == "basic" {
+                headerValue = BEARER_PREFIX + credential;
+            } else if kind == HTTP_AUTH_BASIC {
                 // The whole `username:password` string is encoded as-is.
                 // Nothing here parses it, so the RFC 7617 subtlety that
                 // sank the previous implementation - a password may
                 // contain ":", a username may not, so a naive split
                 // corrupts the credential - cannot arise.
                 headerName = AUTHORIZATION_HEADER;
-                headerValue = string `Basic ${credential.toBytes().toBase64()}`;
+                headerValue = BASIC_PREFIX + credential.toBytes().toBase64();
             } else {
                 return;
             }
@@ -217,7 +217,7 @@ isolated function resolveCredentialHeaders(AgentCard card, CredentialProvider? p
         return {};
     }
     foreach SecurityRequirement requirement in card.securityRequirements ?: [] {
-        map<string>? headers = credentialHeadersFor(card, requirement, provider);
+        map<string>? headers = resolveRequirementHeaders(card, requirement, provider);
         if headers is map<string> {
             return headers;
         }
