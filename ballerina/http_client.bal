@@ -35,6 +35,24 @@
 import ballerina/http;
 import ballerina/url;
 
+# The protocol-version header every A2A request carries (specification
+# section 3.6.2). Also read by discovery.bal's card-fetch request.
+const A2A_VERSION_HEADER = "A2A-Version";
+
+# The A2A protocol version this library speaks. Also read by discovery.bal's
+# card-fetch request.
+const A2A_VERSION = "1.0";
+
+# The content-type header name.
+const CONTENT_TYPE_HEADER = "Content-Type";
+
+# The A2A v1.0 JSON media type.
+const CONTENT_TYPE_A2A_JSON = "application/a2a+json";
+
+# The plain JSON media type, used for the v0.3 content-type fallback and for
+# error bodies.
+const CONTENT_TYPE_JSON = "application/json";
+
 # Whether the held Agent Card rules out streaming, per issue #11.
 #
 # "Denied" rather than "allowed" is the load-bearing framing: this answers

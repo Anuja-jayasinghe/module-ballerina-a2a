@@ -118,6 +118,19 @@ public isolated class InMemoryCredentialStore {
 # request. Compared case-insensitively, since HTTP header names are.
 final readonly & string[] RESERVED_CREDENTIAL_HEADERS = ["a2a-version", "content-type", "a2a-extensions"];
 
+# The HTTP `Authorization` header, the destination for a resolved HTTP
+# bearer or basic credential.
+const AUTHORIZATION_HEADER = "Authorization";
+
+# The HTTP authentication scheme names, compared case-insensitively against a
+# card's `HttpAuthSecurityScheme.scheme`.
+const HTTP_AUTH_BEARER = "bearer";
+const HTTP_AUTH_BASIC = "basic";
+
+# The `Authorization` value prefixes for the bearer and basic schemes.
+const BEARER_PREFIX = "Bearer ";
+const BASIC_PREFIX = "Basic ";
+
 # Turns one security requirement into request headers, if it can be
 # satisfied in full.
 #
