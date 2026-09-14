@@ -304,17 +304,18 @@ isolated function primaryUrl(AgentCard card, TransportBinding preferredBinding) 
 #
 # + card - The resolved Agent Card
 # + preferredBinding - The binding whose interface to read the version from
-# + return - A VersionNotSupportedError when that interface declares a 0.x
-#            protocol version, otherwise nil
+# + return - A VersionNotSupportedError when that interface declares any
+#            protocol version other than exactly 1.0, otherwise nil
 isolated function requireV1Interface(AgentCard card, TransportBinding preferredBinding) returns Error? {
     AgentInterface iface = check selectInterface(card, preferredBinding);
     string? version = iface?.protocolVersion;
-    // Accept the 1.x line, reject everything else. Testing only for a "0."
-    // prefix let "2.0" through, and this client sends v1.0 paths and an
-    // `A2A-Version: 1.0` header -- it would speak the wrong protocol
-    // confidently. A later 1.x revision stays additive by definition, so it
-    // is the one direction worth admitting.
-    if version is string && !version.startsWith("1.") {
+    // Accept only the exact version this client implements. Specification
+    // section 3.6.2 requires processing to match Major.Minor exactly and
+    // gives no guarantee that a later 1.x minor stays wire-compatible with
+    // 1.0 -- so "1.1" is exactly as unsafe to speak v1.0 paths to as "2.0"
+    // or "0.3" is. Testing only for a "0." or non-"1." prefix let both
+    // "1.1" and "2.0" through.
+    if version is string && version != "1.0" {
         string msg = string `AgentCard's ${preferredBinding} interface declares A2A protocol version `
             + string `${version}; this library implements v1.0`;
         return error VersionNotSupportedError(msg, message = msg);

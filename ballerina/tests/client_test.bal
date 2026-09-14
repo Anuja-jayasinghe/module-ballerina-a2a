@@ -2140,9 +2140,13 @@ function testV10CardSupportedInterfacesAreNeverRewritten() returns error? {
 }
 
 
-// Regression: requireV1Interface tested only for a "0." prefix, so a card
-// declaring "2.0" was accepted and would have been spoken to with v1.0 paths
-// and an A2A-Version: 1.0 header.
+// Regression: requireV1Interface originally tested only for a "0." prefix, so
+// a card declaring "2.0" was accepted and would have been spoken to with
+// v1.0 paths and an A2A-Version: 1.0 header. A later revision loosened this
+// to "starts with 1." (accepting "1.1"), which specification section 3.6.2
+// does not license -- it requires Major.Minor to match exactly, with no
+// promise that a later 1.x minor stays wire-compatible with 1.0. Only the
+// exact version this client implements may pass.
 isolated function cardDeclaringVersion(string version) returns AgentCard => {
     name: "n", description: "d", version: "1.0.0", capabilities: {},
     supportedInterfaces: [
@@ -2154,8 +2158,11 @@ isolated function cardDeclaringVersion(string version) returns AgentCard => {
 @test:Config {}
 function testInterfaceProtocolVersionIsBoundedToTheOneLine() {
     test:assertTrue(requireV1Interface(cardDeclaringVersion("1.0"), HTTP_JSON) is (), "1.0 is what this client implements");
-    test:assertTrue(requireV1Interface(cardDeclaringVersion("1.1"), HTTP_JSON) is (), "a later 1.x revision stays additive");
+    test:assertTrue(requireV1Interface(cardDeclaringVersion("1.1"), HTTP_JSON) is VersionNotSupportedError,
+            "a later 1.x minor is not guaranteed wire-compatible per specification 3.6.2 -- only the exact version implemented may pass");
     test:assertTrue(requireV1Interface(cardDeclaringVersion("0.3"), HTTP_JSON) is VersionNotSupportedError, "0.x must be rejected");
     test:assertTrue(requireV1Interface(cardDeclaringVersion("2.0"), HTTP_JSON) is VersionNotSupportedError,
             "2.0 must be rejected rather than spoken to with v1.0 paths");
+    test:assertTrue(requireV1Interface(cardDeclaringVersion("1.0.1"), HTTP_JSON) is VersionNotSupportedError,
+            "a malformed/extended version string must be rejected, not loosely prefix-matched");
 }
