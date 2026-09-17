@@ -147,12 +147,24 @@ release {
     }
 }
 
-task build {
-    dependsOn(':a2a-ballerina:build')
+if (tasks.names.contains('build')) {
+    tasks.named('build') {
+        dependsOn(':a2a-ballerina:build')
+    }
+} else {
+    tasks.register('build') {
+        dependsOn(':a2a-ballerina:build')
+    }
 }
 
-task test {
-    dependsOn(':a2a-ballerina:test')
+if (tasks.names.contains('test')) {
+    tasks.named('test') {
+        dependsOn(':a2a-ballerina:test')
+    }
+} else {
+    tasks.register('test') {
+        dependsOn(':a2a-ballerina:test')
+    }
 }
 
 // Turns a Gradle version into the plain version a Ballerina.toml carries:
