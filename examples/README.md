@@ -3,7 +3,7 @@
 ## Overview
 
 Runnable examples demonstrating `ballerina/a2a`'s client this module
-ships the HTTP+JSON binding at protocol v1.0, client-side only.
+ships the HTTP+JSON binding at protocol v1.0, client side only.
 
 ### Call an Agent
 

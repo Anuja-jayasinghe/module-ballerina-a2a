@@ -43,7 +43,7 @@ bal run
 ```
 Connected to "Dice Agent": An agent that can roll arbitrary dice and answer if numbers are prime
 Task <id>: TASK_STATE_COMPLETED
-Result: You rolled an 11-sided die and got 7!
+Result: You rolled an 11 sided die and got 7!
 ```
 
 `dice_agent_rest` is backed by a live model call, so the exact roll and
@@ -59,6 +59,6 @@ bal run -- agentUrl=http://localhost:9999
 
 - **Agent discovery**: `resolveAgentCard` fetches and parses the target's
   card.
-- **`HttpClient`**: Constructed directly from the already-resolved card.
+- **`HttpClient`**: Constructed directly from the already resolved card.
 - **Reply handling**: `sendMessage` returns either a `Message` or a `Task`;
   both are matched explicitly.
