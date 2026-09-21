@@ -1,6 +1,6 @@
 ## Overview
 
-This module provides a Ballerina client for the [Agent2Agent (A2A) protocol](https://a2a-protocol.org/latest/specification/) v1.0, an open protocol for communication between independent AI agents.
+This module provides a Ballerina client and server for the [Agent2Agent (A2A) protocol](https://a2a-protocol.org/latest/specification/) v1.0, an open protocol for communication between independent AI agents.
 
 A2A lets an agent discover what another agent can do, delegate work to it, and follow that work as it progresses. An agent publishes an Agent Card describing its skills, transports, and authentication requirements; a client reads that card and talks to the agent over the transport it declares.
 
@@ -10,8 +10,9 @@ It includes capabilities for:
 2. **Delegating work** – Send a message and receive either a direct reply or a long-running task to follow.
 3. **Following progress** – Stream updates as they happen, or register a webhook and be called back.
 4. **Authenticating** – Satisfy the security schemes an agent declares, per skill where they differ.
+5. **Serving an agent** – Implement one method and publish it as an A2A agent, with the task lifecycle, streaming, and discovery handled for you.
 
-The specification defines three transport bindings. This module implements **HTTP+JSON**; a card declaring only JSON-RPC or gRPC is rejected when the client is constructed, rather than at the first call.
+The specification defines three transport bindings. This module implements **HTTP+JSON**, for both the client and the server; a card declaring only JSON-RPC or gRPC is rejected when the client is constructed, rather than at the first call.
 
 ## 1. Connecting to an agent
 
@@ -261,3 +262,75 @@ if result is a2a:TaskNotFoundError {
 The nine are `TaskNotFoundError`, `TaskNotCancelableError`, `UnsupportedOperationError`, `ContentTypeNotSupportedError`, `InvalidAgentResponseError`, `VersionNotSupportedError`, `PushNotificationNotSupportedError`, `ExtendedAgentCardNotConfiguredError`, and `ExtensionSupportRequiredError`.
 
 Anything the protocol does not name — a dropped connection, a malformed body, a response that does not match its declared shape, or a precondition this client checks before sending — surfaces as `InternalError`. No operation returns a bare, unmatchable `error`.
+
+## 7. Serving an Agent
+
+```ballerina
+import ballerina/a2a;
+import ballerina/io;
+
+listener a2a:Listener agent = new (9090, agentCard = {
+    name: "Weather Agent",
+    description: "Answers weather questions",
+    version: "1.0.0",
+    skills: [{id: "forecast", name: "Forecast", description: "Multi-day forecasts", tags: ["weather"]}],
+    defaultInputModes: ["text"],
+    defaultOutputModes: ["text"],
+    capabilities: {},
+    supportedInterfaces: []
+});
+
+isolated service class WeatherAgent {
+    *a2a:Service;
+
+    isolated remote function onMessage(a2a:RequestContext context, a2a:TaskUpdater updater)
+            returns a2a:Message|a2a:Error? {
+        check updater->working();
+        check updater->addArtifact([{text: "Sunny, 22°C"}]);
+        check updater->complete();
+        return ();
+    }
+}
+
+function init() returns error? {
+    check agent.attach(new WeatherAgent());
+    io:println("Weather Agent listening on :9090");
+}
+```
+
+Declare the listener at module level: a listener declared inside `main` does not keep the program alive. `capabilities` and `supportedInterfaces` on the card are placeholders; the listener replaces both with what it actually serves, so the published card can never advertise something the server does not do.
+
+One method, `onMessage`, is the entire agent. The listener runs the rest of the protocol around it: `getTask`, `cancelTask` and `listTasks` over the task `onMessage` created; `sendStreamingMessage` and `subscribeToTask` as Server-Sent Events; the push-notification configuration operations; the well-known discovery endpoint; and version and capability gating. Errors are serialized exactly as the client half of this module decodes them, so this module's `HttpClient` can be pointed at its own `Listener`. Only HTTP+JSON at protocol version 1.0 is served in this release.
+
+### 7.1 Driving a task
+
+`a2a:TaskUpdater` moves a long-running task through its states from inside `onMessage`:
+
+```ballerina
+check updater->working();
+check updater->addArtifact([{text: "partial result"}]);
+check updater->requireInput(promptMessage);
+check updater->complete();
+```
+
+`requireInput` pauses the task; a later message to the same task runs `onMessage` again. Every call is persisted through the attached `a2a:TaskStore`. `onMessage` runs to completion within the request that started it, so a stream returned by `sendStreamingMessage` or `subscribeToTask` replays what `onMessage` already did rather than following a task still in progress. `requireAuth` is the same shape as `requireInput`, for a task that needs the caller to authorize.
+
+### 7.2 Task storage
+
+```ballerina
+listener a2a:Listener agent = new (9090, agentCard = card, taskStore = new MyDatabaseTaskStore());
+```
+
+`a2a:InMemoryTaskStore` is the default, and its tasks do not survive a restart. Implement `a2a:TaskStore` (`put`, `get`, `list`, `remove`) to back an agent with real storage. `list` must sort by status timestamp, newest first, and omit `artifacts` unless asked.
+
+### 7.3 The extended Agent Card
+
+```ballerina
+listener a2a:Listener agent = new (9090, agentCard = publicCard, extendedAgentCard = richerCard);
+```
+
+Left unset, `capabilities.extendedAgentCard` is `false` and a request for it fails with `ExtendedAgentCardNotConfiguredError`. Configuring one flips the capability on and serves the card from `GET /extendedAgentCard`.
+
+### 7.4 Push notifications: registered, not yet delivered
+
+The four configuration operations work: an agent can register, read, list and remove a task's webhook configuration. This release never calls a webhook, so `capabilities.pushNotifications` stays `false`, and this module's own `HttpClient` refuses those four calls rather than let a caller register a webhook that will never fire.

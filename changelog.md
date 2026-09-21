@@ -15,3 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Add Server-Sent Events Streaming for `sendStreamingMessage` and `subscribeToTask`, with Opt-In Automatic Reconnection
 - Add Credential Resolution by Security-Scheme Name via `CredentialProvider` and `InMemoryCredentialStore`
 - Add the Nine Error Types of Specification Section 5.4 as Distinct Subtypes of `Error`, plus `InternalError` for Unnamed Failures
+- Add `Listener`, an A2A Server over the HTTP+JSON Binding, Where a Single `Service.onMessage` Method Is the Whole Agent
+- Add `TaskUpdater` for Driving a Task Through Its States, Including Streaming and Input-Required Pauses
+- Add `TaskStore` and the Default `InMemoryTaskStore`, Which Enforces Legal State Transitions
+- Add Task-Scoped Push-Notification Configuration Storage and an Optional Extended Agent Card to the Server
