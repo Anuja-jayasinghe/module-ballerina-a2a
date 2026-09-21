@@ -1,0 +1,103 @@
+// Copyright (c) 2026 WSO2 LLC (http://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+// The server's outbound error serialization: the inverse of the client's
+// `toA2AErrorFromRest`. An `a2a:Error` becomes an HTTP status plus a
+// `google.rpc.Status` body carrying an `ErrorInfo.reason`, which is exactly
+// the shape the client decodes -- so a client of this library and this
+// library's server agree on the wire by construction.
+
+import ballerina/http;
+
+# The HTTP status and google.rpc reason for one A2A error type.
+type ErrorBinding record {|
+    # The HTTP status code to respond with
+    int status;
+    # The google.rpc ErrorInfo reason string
+    string reason;
+|};
+
+# Maps each Error subtype to its HTTP status and ErrorInfo.reason, per
+# specification section 11.6. The reasons are the same strings
+# `toA2AErrorFromRest` decodes; keeping the two in one module is what makes
+# the round trip symmetrical.
+#
+# + err - The error to classify
+# + return - The status and reason to serialise it as
+isolated function errorBindingFor(Error err) returns ErrorBinding {
+    if err is TaskNotFoundError {
+        return {status: http:STATUS_NOT_FOUND, reason: "TASK_NOT_FOUND"};
+    }
+    if err is TaskNotCancelableError {
+        return {status: http:STATUS_BAD_REQUEST, reason: "TASK_NOT_CANCELABLE"};
+    }
+    if err is PushNotificationNotSupportedError {
+        return {status: http:STATUS_BAD_REQUEST, reason: "PUSH_NOTIFICATION_NOT_SUPPORTED"};
+    }
+    if err is UnsupportedOperationError {
+        return {status: http:STATUS_BAD_REQUEST, reason: "UNSUPPORTED_OPERATION"};
+    }
+    if err is ContentTypeNotSupportedError {
+        return {status: http:STATUS_UNSUPPORTED_MEDIA_TYPE, reason: "CONTENT_TYPE_NOT_SUPPORTED"};
+    }
+    if err is InvalidAgentResponseError {
+        return {status: http:STATUS_BAD_REQUEST, reason: "INVALID_AGENT_RESPONSE"};
+    }
+    if err is ExtendedAgentCardNotConfiguredError {
+        return {status: http:STATUS_NOT_FOUND, reason: "EXTENDED_AGENT_CARD_NOT_CONFIGURED"};
+    }
+    if err is ExtensionSupportRequiredError {
+        return {status: http:STATUS_BAD_REQUEST, reason: "EXTENSION_SUPPORT_REQUIRED"};
+    }
+    if err is VersionNotSupportedError {
+        return {status: http:STATUS_BAD_REQUEST, reason: "VERSION_NOT_SUPPORTED"};
+    }
+    // InternalError and anything else the protocol does not name.
+    return {status: http:STATUS_INTERNAL_SERVER_ERROR, reason: "INTERNAL_ERROR"};
+}
+
+# Serialises an `a2a:Error` into an `http:Response`: the mapped status and a
+# `google.rpc.Status` body with an `ErrorInfo` entry in `details`.
+#
+# The body shape matches what `extractRestErrorReason`/`extractRestErrorMessage`
+# on the client side read, so a round trip preserves the error type.
+#
+# + err - The error to serialise
+# + return - The HTTP response carrying it
+isolated function toRestErrorResponse(Error err) returns http:Response {
+    ErrorBinding binding = errorBindingFor(err);
+    http:Response response = new;
+    response.statusCode = binding.status;
+    map<json> errorInfo = {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": binding.reason,
+        "domain": "a2a-protocol.org"
+    };
+    ErrorDetail detail = err.detail();
+    json? data = detail?.data;
+    if data != () {
+        errorInfo["metadata"] = data;
+    }
+    json body = {
+        "error": {
+            "code": binding.status,
+            "message": err.message(),
+            "details": [errorInfo]
+        }
+    };
+    response.setJsonPayload(body);
+    return response;
+}
