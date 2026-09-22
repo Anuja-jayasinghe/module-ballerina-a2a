@@ -40,11 +40,14 @@ isolated class DefaultHandler {
     // ExtendedAgentCardNotConfiguredError -- deriveServedCard already
     // reflects this in capabilities.extendedAgentCard.
     private final (AgentCard & readonly)? extendedCard;
+    private final PushNotificationSender pushSender;
 
-    isolated function init(Service agentService, TaskStore store, (AgentCard & readonly)? extendedCard) {
+    isolated function init(Service agentService, TaskStore store, (AgentCard & readonly)? extendedCard,
+            PushNotificationSender pushSender) {
         self.agentService = agentService;
         self.store = store;
         self.extendedCard = extendedCard;
+        self.pushSender = pushSender;
     }
 
     # Handles sendMessage: create a task, run the developer's `onMessage`

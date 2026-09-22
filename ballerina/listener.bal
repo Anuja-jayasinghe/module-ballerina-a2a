@@ -35,6 +35,11 @@ public type ListenerConfiguration record {|
     # visible to every caller — this server's behavior before this field
     # existed. See `a2a:TaskOwnerResolver`.
     TaskOwnerResolver? ownerResolver = ();
+    # Delivers task updates to registered push-notification webhooks.
+    # Defaults to `a2a:HttpPushNotificationSender`, a real HTTP POST — unlike
+    # `ownerResolver`, delivery needs no identity this library cannot
+    # invent, so it has a working default rather than an optional hook.
+    PushNotificationSender pushSender = new HttpPushNotificationSender();
 |};
 
 # Serves an A2A agent over the HTTP+JSON binding.
@@ -67,6 +72,7 @@ public isolated class Listener {
     private final TaskStore store;
     private final (AgentCard & readonly)? extendedCard;
     private final TaskOwnerResolver? ownerResolver;
+    private final PushNotificationSender pushSender;
     private DispatcherService? dispatcher = ();
 
     # Creates a Listener.
@@ -96,6 +102,7 @@ public isolated class Listener {
         self.extendedCard = extended is AgentCard ? extended.cloneReadOnly() : ();
         self.card = deriveServedCard(agentCard, self.extendedCard is AgentCard).cloneReadOnly();
         self.ownerResolver = config.ownerResolver;
+        self.pushSender = config.pushSender;
     }
 
     # Attaches an `a2a:Service` to serve.
@@ -107,7 +114,7 @@ public isolated class Listener {
     # + name - Ignored; the A2A paths are fixed by the specification
     # + return - An `a2a:Error` if attachment fails
     public isolated function attach(Service a2aService, string[]|string? name = ()) returns error? {
-        DefaultHandler handler = new (a2aService, self.store, self.extendedCard);
+        DefaultHandler handler = new (a2aService, self.store, self.extendedCard, self.pushSender);
         DispatcherService dispatcherService = new (self.card, handler, self.ownerResolver);
         lock {
             self.dispatcher = dispatcherService;
