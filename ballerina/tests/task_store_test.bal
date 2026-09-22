@@ -147,3 +147,70 @@ function testStoreRemoveIsIdempotent() returns error? {
     check store.remove("t1", ());
     check store.remove("never-existed", ());
 }
+
+@test:Config {}
+function testStoreGetHidesTaskFromNonOwner() returns error? {
+    InMemoryTaskStore store = new;
+    check store.put(taskAt("t1", TASK_STATE_WORKING, "2026-01-01T00:00:00Z"), "alice");
+
+    test:assertTrue(check store.get("t1", "alice") is Task, "the owner must see their own task");
+    test:assertTrue(check store.get("t1", "bob") is (),
+            "a different owner must not see the task -- indistinguishable from nonexistent");
+    test:assertTrue(check store.get("t1", ()) is (),
+            "an unscoped caller must not see a task owned by someone else");
+}
+
+@test:Config {}
+function testStoreUnscopedTasksFormTheirOwnPool() returns error? {
+    InMemoryTaskStore store = new;
+    check store.put(taskAt("t1", TASK_STATE_WORKING, "2026-01-01T00:00:00Z"), ());
+
+    test:assertTrue(check store.get("t1", ()) is Task,
+            "() is its own scope: an unscoped task is visible to an unscoped caller");
+    test:assertTrue(check store.get("t1", "alice") is (),
+            "an owned caller must not see a task stored under the unscoped pool");
+}
+
+@test:Config {}
+function testStorePutConflictsAcrossOwners() returns error? {
+    InMemoryTaskStore store = new;
+    check store.put(taskAt("t1", TASK_STATE_WORKING, "2026-01-01T00:00:00Z"), "alice");
+
+    Error? result = store.put(taskAt("t1", TASK_STATE_WORKING, "2026-01-01T00:01:00Z"), "bob");
+    test:assertTrue(result is TaskNotFoundError,
+            "a task id already owned by a different scope must not be silently taken over or ignored");
+
+    // The original is untouched.
+    Task? stillAlices = check store.get("t1", "alice");
+    test:assertTrue(stillAlices is Task, "the original owner's task must be unaffected by the rejected write");
+}
+
+@test:Config {}
+function testStoreListScopesToOwner() returns error? {
+    InMemoryTaskStore store = new;
+    check store.put(taskAt("a1", TASK_STATE_WORKING, "2026-01-01T00:00:00Z"), "alice");
+    check store.put(taskAt("a2", TASK_STATE_WORKING, "2026-01-02T00:00:00Z"), "alice");
+    check store.put(taskAt("b1", TASK_STATE_WORKING, "2026-01-03T00:00:00Z"), "bob");
+    check store.put(taskAt("u1", TASK_STATE_WORKING, "2026-01-04T00:00:00Z"), ());
+
+    ListTasksResponse aliceView = check store.list({}, "alice");
+    test:assertEquals(from Task t in aliceView.tasks select t.id, ["a2", "a1"],
+            "listing must see only the caller's own tasks");
+
+    ListTasksResponse unscopedView = check store.list({}, ());
+    test:assertEquals(from Task t in unscopedView.tasks select t.id, ["u1"],
+            "the unscoped pool is its own scope, not a view over everything");
+}
+
+@test:Config {}
+function testStoreRemoveHidesFromNonOwner() returns error? {
+    InMemoryTaskStore store = new;
+    check store.put(taskAt("t1", TASK_STATE_WORKING, "2026-01-01T00:00:00Z"), "alice");
+
+    check store.remove("t1", "bob");
+    test:assertTrue(check store.get("t1", "alice") is Task,
+            "removing as a different owner must be a no-op, not a deletion");
+
+    check store.remove("t1", "alice");
+    test:assertTrue(check store.get("t1", "alice") is (), "removing as the true owner must succeed");
+}

@@ -385,8 +385,162 @@ function testServerRoundTripCreatePushNotificationConfigForUnknownTaskIsTyped() 
             "registering a config against an unknown task must be rejected, not silently accepted");
 }
 
+// ---- task-owner scoping --------------------------------------------------
+//
+// A third listener, on its own port, configured with a TaskOwnerResolver
+// that reads a test-only "X-Test-Owner" header -- separate from echoListener
+// so that its own unscoped (no resolver configured) round trip stays
+// unambiguous. Proves scoping actually holds over the real HTTP wire, not
+// just at the TaskStore unit level.
+
+isolated class HeaderOwnerResolver {
+    *TaskOwnerResolver;
+
+    public isolated function resolveOwner(http:Request req) returns string?|Error {
+        string|http:HeaderNotFoundError header = req.getHeader("X-Test-Owner");
+        return header is string ? header : ();
+    }
+}
+
+const int OWNER_SCOPED_TEST_PORT = 19236;
+final string ownerScopedServerUrl = string `http://localhost:${OWNER_SCOPED_TEST_PORT}`;
+
+listener Listener ownerScopedListener = new (OWNER_SCOPED_TEST_PORT, agentCard = {
+    name: "Echo Agent",
+    description: "Echoes its input",
+    version: "1.0.0",
+    skills: [{id: "echo", name: "Echo", description: "Echoes text", tags: ["echo"]}],
+    defaultInputModes: ["text"],
+    defaultOutputModes: ["text"],
+    capabilities: {},
+    supportedInterfaces: []
+}, ownerResolver = new HeaderOwnerResolver());
+
+@test:BeforeSuite
+function startOwnerScopedServer() returns error? {
+    check ownerScopedListener.attach(new EchoAgent());
+}
+
+isolated function ownerScopedRawClient() returns http:Client|error => new (ownerScopedServerUrl);
+
+isolated function sendAsOwner(http:Client raw, string owner, string text) returns Task|error {
+    map<string> headers = {"A2A-Version": "1.0", "Content-Type": "application/json", "X-Test-Owner": owner};
+    json body = {
+        "message": {"messageId": "m1", "role": "ROLE_USER", "parts": [{"text": text}]}
+    };
+    json result = check raw->post("/message:send", body, headers);
+    map<json> envelope = check result.ensureType();
+    json? taskJson = envelope["task"];
+    if taskJson is () {
+        return error("expected a task in the response envelope");
+    }
+    return taskJson.cloneWithType(Task);
+}
+
+isolated function httpClientAs(string owner) returns HttpClient|error =>
+    new (ownerScopedServerUrl, headers = {"X-Test-Owner": owner});
+
+@test:Config {}
+function testOwnerScopedGetTaskHiddenFromDifferentOwner() returns error? {
+    http:Client raw = check ownerScopedRawClient();
+    Task created = check sendAsOwner(raw, "alice", "alice's task");
+
+    HttpClient aliceClient = check httpClientAs("alice");
+    Task fetchedByAlice = check aliceClient->getTask({id: created.id});
+    test:assertEquals(fetchedByAlice.id, created.id, "the owner must be able to fetch their own task");
+
+    HttpClient bobClient = check httpClientAs("bob");
+    Task|Error fetchedByBob = bobClient->getTask({id: created.id});
+    test:assertTrue(fetchedByBob is TaskNotFoundError,
+            "a different owner must see TaskNotFoundError, not the task or a distinct 'forbidden' error");
+}
+
+@test:Config {}
+function testOwnerScopedCancelAndSubscribeHiddenFromDifferentOwner() returns error? {
+    http:Client raw = check ownerScopedRawClient();
+    Task created = check sendAsOwner(raw, "alice", "cancel and subscribe me");
+
+    HttpClient bobClient = check httpClientAs("bob");
+
+    Task|Error canceled = bobClient->cancelTask({id: created.id});
+    test:assertTrue(canceled is TaskNotFoundError,
+            "cancelTask on another owner's task must be TaskNotFoundError, same as an unknown id");
+
+    stream<StreamResponse, error?>|Error subscribed = bobClient->subscribeToTask({id: created.id});
+    test:assertTrue(subscribed is TaskNotFoundError,
+            "subscribeToTask on another owner's task must be TaskNotFoundError, same as an unknown id");
+}
+
+@test:Config {}
+function testOwnerScopedListTasksShowsOnlyOwnTasks() returns error? {
+    http:Client raw = check ownerScopedRawClient();
+    Task _ = check sendAsOwner(raw, "alice-list", "alice item one");
+    Task _ = check sendAsOwner(raw, "alice-list", "alice item two");
+    Task _ = check sendAsOwner(raw, "bob-list", "bob item one");
+
+    HttpClient aliceClient = check httpClientAs("alice-list");
+    ListTasksResponse aliceView = check aliceClient->listTasks({pageSize: 10});
+    test:assertEquals(aliceView.totalSize, 2, "alice must see exactly her own two tasks, not bob's");
+}
+
+@test:Config {}
+function testOwnerScopedPushNotificationConfigAsymmetry() returns error? {
+    http:Client alice = check ownerScopedRawClient();
+    Task created = check sendAsOwner(alice, "push-alice", "needs a webhook, owned");
+
+    map<string> aliceHeaders = {"A2A-Version": "1.0", "Content-Type": "application/json", "X-Test-Owner": "push-alice"};
+    map<string> bobHeaders = {"A2A-Version": "1.0", "Content-Type": "application/json", "X-Test-Owner": "push-bob"};
+
+    json createBody = {"url": "https://example.com/webhook"};
+    json createResult = check alice->post(
+            string `/tasks/${created.id}/pushNotificationConfigs`, createBody, aliceHeaders);
+    TaskPushNotificationConfig config = check createResult.cloneWithType(TaskPushNotificationConfig);
+    string id = <string>config.id;
+
+    // Bob creating a config against alice's task: TaskNotFoundError, same as
+    // an unknown task -- create already checked task existence before this
+    // feature, and now it also checks visibility.
+    http:Response bobCreate = check alice->post(
+            string `/tasks/${created.id}/pushNotificationConfigs`, createBody, bobHeaders);
+    test:assertEquals(bobCreate.statusCode, http:STATUS_NOT_FOUND,
+            "creating a config against a task not visible to the caller must be rejected");
+
+    // Bob getting alice's config: TaskNotFoundError -- get previously did no
+    // task-visibility check at all, so this closes a real gap, not just a
+    // consistency nicety.
+    http:Response bobGet = check alice->get(
+            string `/tasks/${created.id}/pushNotificationConfigs/${id}`, bobHeaders);
+    test:assertEquals(bobGet.statusCode, http:STATUS_NOT_FOUND,
+            "getting a config on a task not visible to the caller must be rejected");
+
+    // Bob listing alice's task's configs: empty page, not an error --
+    // matches the existing behavior for a genuinely unknown task, so bob
+    // cannot distinguish "not yours" from "doesn't exist" by response shape.
+    json bobListResult = check alice->get(
+            string `/tasks/${created.id}/pushNotificationConfigs`, bobHeaders);
+    ListTaskPushNotificationConfigsResponse bobList =
+        check bobListResult.cloneWithType(ListTaskPushNotificationConfigsResponse);
+    test:assertEquals((bobList.configs ?: []).length(), 0,
+            "listing configs on a task not visible to the caller must return an empty page, not an error");
+
+    // Bob deleting alice's config: silent 200 no-op, not an error and not a
+    // real deletion -- matches the existing idempotent-delete behavior for
+    // an unknown config.
+    http:Response bobDelete = check alice->delete(
+            string `/tasks/${created.id}/pushNotificationConfigs/${id}`, headers = bobHeaders);
+    test:assertEquals(bobDelete.statusCode, http:STATUS_OK,
+            "deleting a config on a task not visible to the caller must silently succeed, not error");
+
+    // The config must genuinely still exist for alice: bob's delete did nothing.
+    json aliceGetAfter = check alice->get(
+            string `/tasks/${created.id}/pushNotificationConfigs/${id}`, aliceHeaders);
+    TaskPushNotificationConfig stillThere = check aliceGetAfter.cloneWithType(TaskPushNotificationConfig);
+    test:assertEquals(stillThere.id, id, "bob's no-op delete must not have actually removed alice's config");
+}
+
 @test:AfterSuite
 function stopEchoServer() returns error? {
     check echoListener.gracefulStop();
     check extendedCardListener.gracefulStop();
+    check ownerScopedListener.gracefulStop();
 }
