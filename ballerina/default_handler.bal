@@ -76,6 +76,17 @@ isolated class DefaultHandler {
         };
         check self.store.put(seed, owner);
 
+        // A client cannot name a taskId that doesn't exist yet, so the
+        // spec's own registration channel for this case is inline on the
+        // send request itself -- "leave unset in a sendMessage request"
+        // doc-commented on TaskPushNotificationConfig.taskId. The task now
+        // exists (just seeded above), so registering it here needs no
+        // existence check, unlike createTaskPushNotificationConfig's own.
+        TaskPushNotificationConfig? inlineConfig = request?.configuration?.taskPushNotificationConfig;
+        if inlineConfig is TaskPushNotificationConfig {
+            TaskPushNotificationConfig _ = self.registerPushConfig(taskId, inlineConfig);
+        }
+
         RequestContext context = {
             message: request.message,
             tenant,
@@ -134,6 +145,13 @@ isolated class DefaultHandler {
             status: {state: TASK_STATE_SUBMITTED, timestamp: time:utcToString(time:utcNow())}
         };
         check self.store.put(seed, owner);
+
+        // See sendMessage's identical block: the task now exists, so an
+        // inline config can be registered without an existence check.
+        TaskPushNotificationConfig? inlineConfig = request?.configuration?.taskPushNotificationConfig;
+        if inlineConfig is TaskPushNotificationConfig {
+            TaskPushNotificationConfig _ = self.registerPushConfig(taskId, inlineConfig);
+        }
 
         RequestContext context = {
             message: request.message,
@@ -268,14 +286,30 @@ isolated class DefaultHandler {
         if task is () {
             return taskNotFound(taskId);
         }
-        TaskPushNotificationConfig config = request.clone();
-        config.id = uuid:createType4AsString();
+        return self.registerPushConfig(taskId, request);
+    }
+
+    # Registers a config against a task already known to exist, assigning
+    # it a server-generated id. Shared by `createTaskPushNotificationConfig`
+    # (after its own taskId-existence check) and `sendMessage`/
+    # `sendStreamingMessage`'s inline `SendMessageConfiguration.taskPushNotificationConfig`
+    # registration -- the seed `store.put` immediately above each call site
+    # already establishes the task exists, so neither needs the check again.
+    #
+    # + taskId - The task's id
+    # + config - The config to register
+    # + return - The stored config, with `taskId` and `id` filled in
+    isolated function registerPushConfig(string taskId, TaskPushNotificationConfig config)
+            returns TaskPushNotificationConfig {
+        TaskPushNotificationConfig stored = config.clone();
+        stored.taskId = taskId;
+        stored.id = uuid:createType4AsString();
         lock {
             map<TaskPushNotificationConfig> forTask = self.pushConfigs[taskId] ?: {};
-            forTask[<string>config.id] = config.clone();
+            forTask[<string>stored.id] = stored.clone();
             self.pushConfigs[taskId] = forTask;
         }
-        return config;
+        return stored;
     }
 
     # Handles getTaskPushNotificationConfig.
