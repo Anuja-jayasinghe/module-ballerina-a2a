@@ -310,78 +310,60 @@ function testDefaultHandlerGetExtendedAgentCardFailsWhenNoneConfigured() returns
 
 // ---- push-notification config CRUD --------------------------------------
 //
-// capabilities.pushNotifications is always false in this release (config is
-// stored, never delivered -- see deriveServedCard), so HttpClient
-// refuse these four operations client-side, the same self-gate exercised
-// above for the extended card. That is exactly the point of the capability
-// staying false: a caller using this library's own client cannot even try
-// to rely on delivery that will never happen. Proving the operations
-// genuinely work server-side -- which they do, for any caller willing to
-// speak the wire directly -- needs a plain http:Client instead.
-
-isolated function pushConfigHttpClient() returns http:Client|error => new (serverUrl);
+// capabilities.pushNotifications is true since delivery landed, so the
+// library's own Client no longer self-gates these four operations -- unlike
+// the extended-card self-gate above, which is exercised on purpose. Using
+// the typed Client here, rather than a raw http:Client, is the stronger
+// assertion: it proves a real caller of this library, not just a caller
+// willing to speak the wire directly, can drive the whole CRUD cycle.
 
 @test:Config {}
 function testServerRoundTripPushNotificationConfigCrud() returns error? {
-    http:Client raw = check pushConfigHttpClient();
     Client c = check echoClient();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "needs a webhook"}]}
     });
 
-    map<string> headers = {"A2A-Version": "1.0", "Content-Type": "application/json"};
-
     // Create.
-    json createBody = {"url": "https://example.com/webhook", "token": "corr-1"};
-    json createResult = check raw->post(
-            string `/tasks/${created.id}/pushNotificationConfigs`, createBody, headers);
-    TaskPushNotificationConfig config = check createResult.cloneWithType(TaskPushNotificationConfig);
+    TaskPushNotificationConfig config = check c->createTaskPushNotificationConfig({
+        taskId: created.id,
+        url: "https://example.com/webhook",
+        token: "corr-1"
+    });
     test:assertEquals(config.url, "https://example.com/webhook");
     string? configId = config?.id;
     test:assertTrue(configId is string, "the server must assign a config id on create");
     string id = <string>configId;
 
     // Get.
-    json getResult = check raw->get(
-            string `/tasks/${created.id}/pushNotificationConfigs/${id}`, headers);
-    TaskPushNotificationConfig fetched = check getResult.cloneWithType(TaskPushNotificationConfig);
+    TaskPushNotificationConfig fetched = check c->getTaskPushNotificationConfig({taskId: created.id, id});
     test:assertEquals(fetched.id, id);
     test:assertEquals(fetched.token, "corr-1");
 
     // List.
-    json listResult = check raw->get(
-            string `/tasks/${created.id}/pushNotificationConfigs`, headers);
     ListTaskPushNotificationConfigsResponse page =
-        check listResult.cloneWithType(ListTaskPushNotificationConfigsResponse);
+        check c->listTaskPushNotificationConfigs({taskId: created.id});
     TaskPushNotificationConfig[] configs = page.configs ?: [];
     test:assertEquals(configs.length(), 1, "the config just created must show up in the list");
     test:assertEquals(configs[0].id, id);
 
     // Delete.
-    json _ = check raw->delete(
-            string `/tasks/${created.id}/pushNotificationConfigs/${id}`, headers = headers);
+    check c->deleteTaskPushNotificationConfig({taskId: created.id, id});
 
     // Get after delete: gone.
-    http:Response afterDelete = check raw->get(
-            string `/tasks/${created.id}/pushNotificationConfigs/${id}`, headers);
-    test:assertEquals(afterDelete.statusCode, http:STATUS_NOT_FOUND,
-            "the config must genuinely be gone after delete");
+    TaskPushNotificationConfig|Error afterDelete = c->getTaskPushNotificationConfig({taskId: created.id, id});
+    test:assertTrue(afterDelete is TaskNotFoundError, "the config must genuinely be gone after delete");
 
     // Delete again: idempotent, not an error, per specification 3.1.10.
-    http:Response secondDelete = check raw->delete(
-            string `/tasks/${created.id}/pushNotificationConfigs/${id}`, headers = headers);
-    test:assertEquals(secondDelete.statusCode, http:STATUS_OK,
-            "deleting an already-deleted config must succeed, not error");
+    check c->deleteTaskPushNotificationConfig({taskId: created.id, id});
 }
 
 @test:Config {}
 function testServerRoundTripCreatePushNotificationConfigForUnknownTaskIsTyped() returns error? {
-    http:Client raw = check pushConfigHttpClient();
-    map<string> headers = {"A2A-Version": "1.0", "Content-Type": "application/json"};
-    json body = {"url": "https://example.com/webhook"};
-    http:Response resp = check raw->post(
-            "/tasks/does-not-exist/pushNotificationConfigs", body, headers);
-    test:assertEquals(resp.statusCode, http:STATUS_NOT_FOUND,
+    Client c = check echoClient();
+    TaskPushNotificationConfig|Error result =
+        c->createTaskPushNotificationConfig({taskId: "does-not-exist", url: "https://example.com/webhook"});
+    test:assertTrue(result is TaskNotFoundError,
             "registering a config against an unknown task must be rejected, not silently accepted");
 }
 
@@ -538,9 +520,102 @@ function testOwnerScopedPushNotificationConfigAsymmetry() returns error? {
     test:assertEquals(stillThere.id, id, "bob's no-op delete must not have actually removed alice's config");
 }
 
+// ---- push-notification delivery ------------------------------------------
+//
+// A fourth listener, on its own port, configured with a pushSender whose
+// validateUrl is off -- this test's own webhook receiver (push_sender_test.bal's
+// webhookReceiver) is itself on localhost, which HttpPushNotificationSender's
+// default SSRF validation correctly rejects; that rejection is proven
+// separately in push_sender_test.bal. This section proves delivery actually
+// fires end to end, over the real wire, covering both registration channels.
+
+const int PUSH_NOTIFICATION_TEST_PORT = 19238;
+final string pushNotificationServerUrl = string `http://localhost:${PUSH_NOTIFICATION_TEST_PORT}`;
+final string testWebhookUrl = string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`;
+
+listener Listener pushNotificationListener = new (PUSH_NOTIFICATION_TEST_PORT, agentCard = {
+    name: "Echo Agent",
+    description: "Echoes its input",
+    version: "1.0.0",
+    skills: [{id: "echo", name: "Echo", description: "Echoes text", tags: ["echo"]}],
+    defaultInputModes: ["text"],
+    defaultOutputModes: ["text"],
+    capabilities: {},
+    supportedInterfaces: []
+}, pushSender = new HttpPushNotificationSender({validateUrl: false}));
+
+// Completes normally, except for "pause", which leaves the task at
+// TASK_STATE_WORKING -- non-terminal, so cancelTask can legally act on it.
+isolated service class PushNotificationAgent {
+    *Service;
+
+    isolated remote function onMessage(RequestContext context, TaskUpdater updater)
+            returns Message|Error? {
+        string text = "";
+        foreach Part part in context.message.parts {
+            string? t = part?.text;
+            if t is string {
+                text += t;
+            }
+        }
+        check updater->working();
+        if text == "pause" {
+            return ();
+        }
+        check updater->addArtifact([{text: string `echo: ${text}`}]);
+        check updater->complete();
+        return;
+    }
+}
+
+@test:BeforeSuite
+function startPushNotificationServer() returns error? {
+    check pushNotificationListener.attach(new PushNotificationAgent());
+}
+
+@test:Config {}
+function testServerRoundTripPushNotificationDeliveryOnCompletion() returns error? {
+    HttpClient c = check new (pushNotificationServerUrl);
+    Task created = <Task>check c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "notify me"}]},
+        configuration: {taskPushNotificationConfig: {url: testWebhookUrl}}
+    });
+    test:assertEquals(created.status.state, TASK_STATE_COMPLETED);
+
+    CapturedWebhookCall? call = takeLastWebhookCall();
+    test:assertTrue(call is CapturedWebhookCall,
+            "the webhook registered inline on the sendMessage request must have been called");
+    CapturedWebhookCall received = <CapturedWebhookCall>call;
+    test:assertEquals(received.body.id, created.id);
+    test:assertEquals(received.body.status.state, "TASK_STATE_COMPLETED");
+}
+
+@test:Config {}
+function testServerRoundTripPushNotificationDeliveryOnCancel() returns error? {
+    HttpClient c = check new (pushNotificationServerUrl);
+    Task created = <Task>check c->sendMessage({
+        message: {messageId: "m2", role: ROLE_USER, parts: [{text: "pause"}]}
+    });
+    test:assertEquals(created.status.state, TASK_STATE_WORKING,
+            "the pausing branch must leave the task non-terminal");
+
+    // Registered explicitly, after the task already exists -- the other
+    // registration channel from the inline one exercised above.
+    TaskPushNotificationConfig _ = check c->createTaskPushNotificationConfig({taskId: created.id, url: testWebhookUrl});
+
+    Task canceled = check c->cancelTask({id: created.id});
+    test:assertEquals(canceled.status.state, TASK_STATE_CANCELED);
+
+    CapturedWebhookCall? call = takeLastWebhookCall();
+    test:assertTrue(call is CapturedWebhookCall, "cancelTask must also notify registered webhooks");
+    CapturedWebhookCall received = <CapturedWebhookCall>call;
+    test:assertEquals(received.body.status.state, "TASK_STATE_CANCELED");
+}
+
 @test:AfterSuite
 function stopEchoServer() returns error? {
     check echoListener.gracefulStop();
     check extendedCardListener.gracefulStop();
     check ownerScopedListener.gracefulStop();
+    check pushNotificationListener.gracefulStop();
 }
