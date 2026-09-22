@@ -241,18 +241,18 @@ isolated class DefaultHandler {
     #
     # + request - The config to register; `taskId` must be set and name an
     #             existing task
+    # + owner - The caller's resolved owner scope, or `()`
     # + return - The stored config, with `id` filled in, or a
-    #            TaskNotFoundError if `taskId` names no task
-    isolated function createTaskPushNotificationConfig(TaskPushNotificationConfig request)
+    #            TaskNotFoundError if `taskId` names no task visible to
+    #            `owner`
+    isolated function createTaskPushNotificationConfig(TaskPushNotificationConfig request, string? owner)
             returns TaskPushNotificationConfig|Error {
         string? taskId = request?.taskId;
         if taskId is () {
             string msg = "TaskPushNotificationConfig.taskId is required to register a config";
             return invalidAgentResponse(msg);
         }
-        // TODO(owner scoping): threaded through properly once push-config
-        // operations gain their own owner parameter.
-        Task? task = check self.store.get(taskId, ());
+        Task? task = check self.store.get(taskId, owner);
         if task is () {
             return taskNotFound(taskId);
         }
@@ -268,10 +268,21 @@ isolated class DefaultHandler {
 
     # Handles getTaskPushNotificationConfig.
     #
+    # A task not visible to `owner` is treated identically to an unknown
+    # config on a known task -- both are `TaskNotFoundError`, so a caller
+    # cannot distinguish "not your task" from "no such config" by response
+    # shape, per specification section 13.1.
+    #
     # + request - The parent task id and the config's own id
-    # + return - The config, or a TaskNotFoundError if either id is unknown
-    isolated function getTaskPushNotificationConfig(GetTaskPushNotificationConfigRequest request)
+    # + owner - The caller's resolved owner scope, or `()`
+    # + return - The config, or a TaskNotFoundError if either id is unknown,
+    #            or the task is not visible to `owner`
+    isolated function getTaskPushNotificationConfig(GetTaskPushNotificationConfigRequest request, string? owner)
             returns TaskPushNotificationConfig|Error {
+        Task? task = check self.store.get(request.taskId, owner);
+        if task is () {
+            return taskPushNotificationConfigNotFound(request.taskId, request.id);
+        }
         lock {
             map<TaskPushNotificationConfig>? forTask = self.pushConfigs[request.taskId];
             TaskPushNotificationConfig? config = forTask is map<TaskPushNotificationConfig>
@@ -287,10 +298,21 @@ isolated class DefaultHandler {
     # actually needed at realistic per-task config counts, so every result
     # is returned as one page.
     #
+    # A task not visible to `owner` returns an empty page, matching this
+    # operation's existing behavior for a genuinely unknown task -- neither
+    # case is an error, and the two must stay indistinguishable per
+    # specification section 13.1.
+    #
     # + request - The parent task id
-    # + return - Every config registered for the task
-    isolated function listTaskPushNotificationConfigs(ListTaskPushNotificationConfigsRequest request)
+    # + owner - The caller's resolved owner scope, or `()`
+    # + return - Every config registered for the task, or an empty page if
+    #            the task is not visible to `owner`
+    isolated function listTaskPushNotificationConfigs(ListTaskPushNotificationConfigsRequest request, string? owner)
             returns ListTaskPushNotificationConfigsResponse|Error {
+        Task? task = check self.store.get(request.taskId, owner);
+        if task is () {
+            return {configs: [], nextPageToken: ""};
+        }
         TaskPushNotificationConfig[] configs;
         lock {
             configs = (self.pushConfigs[request.taskId] ?: {}).toArray().clone();
@@ -299,11 +321,20 @@ isolated class DefaultHandler {
     }
 
     # Handles deleteTaskPushNotificationConfig. Idempotent per specification
-    # section 3.1.10: deleting an unknown config is not an error.
+    # section 3.1.10: deleting an unknown config is not an error -- and, for
+    # the same section 13.1 reasoning as `listTaskPushNotificationConfigs`,
+    # neither is deleting on a task that exists but is not visible to
+    # `owner`; both are a silent no-op, never distinguished from each other.
     #
     # + request - The parent task id and the config's own id
+    # + owner - The caller's resolved owner scope, or `()`
     # + return - Nil; always succeeds
-    isolated function deleteTaskPushNotificationConfig(DeleteTaskPushNotificationConfigRequest request) returns Error? {
+    isolated function deleteTaskPushNotificationConfig(DeleteTaskPushNotificationConfigRequest request,
+            string? owner) returns Error? {
+        Task? task = check self.store.get(request.taskId, owner);
+        if task is () {
+            return;
+        }
         lock {
             map<TaskPushNotificationConfig>? forTask = self.pushConfigs[request.taskId];
             if forTask is map<TaskPushNotificationConfig> {

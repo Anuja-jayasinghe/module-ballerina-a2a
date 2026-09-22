@@ -256,9 +256,7 @@ isolated service class DispatcherService {
             return self.onSubscribeToTask(id, owner);
         }
         if path.includes(PUSH_NOTIFICATION_CONFIGS_SEGMENT) {
-            // TODO(owner scoping): push-config operations gain their own
-            // owner threading in a following change.
-            return self.onPushNotificationConfigs(method, path, req);
+            return self.onPushNotificationConfigs(method, path, owner, req);
         }
         if method == "GET" && path.startsWith(TASKS_PATH_PREFIX) && !path.includes(":")
                 && !path.includes(PUSH_NOTIFICATION_CONFIGS_SEGMENT) {
@@ -346,26 +344,28 @@ isolated service class DispatcherService {
     # + method - The HTTP method
     # + path - The path with no tenant prefix, already known to contain
     #          "/pushNotificationConfigs"
+    # + owner - The caller's resolved owner scope, or `()`
     # + req - The HTTP request
     # + return - The response, or an error to serialise
-    private isolated function onPushNotificationConfigs(string method, string path, http:Request req)
+    private isolated function onPushNotificationConfigs(string method, string path, string? owner, http:Request req)
             returns http:Response|Error {
         int marker = <int>path.indexOf(PUSH_NOTIFICATION_CONFIGS_SEGMENT);
         string taskId = path.substring(TASKS_PATH_PREFIX.length(), marker);
         string rest = path.substring(marker + PUSH_NOTIFICATION_CONFIGS_SEGMENT.length());
 
         if rest == "" && method == "POST" {
-            return self.onCreateTaskPushNotificationConfig(taskId, req);
+            return self.onCreateTaskPushNotificationConfig(taskId, owner, req);
         }
         if rest == "" && method == "GET" {
-            return self.onListTaskPushNotificationConfigs(taskId, req);
+            return self.onListTaskPushNotificationConfigs(taskId, owner, req);
         }
         if rest.startsWith("/") && method == "GET" {
             return jsonResponse(
-                    (check self.handler.getTaskPushNotificationConfig({taskId, id: rest.substring(1)})).toJson());
+                    (check self.handler.getTaskPushNotificationConfig({taskId, id: rest.substring(1)}, owner))
+                        .toJson());
         }
         if rest.startsWith("/") && method == "DELETE" {
-            check self.handler.deleteTaskPushNotificationConfig({taskId, id: rest.substring(1)});
+            check self.handler.deleteTaskPushNotificationConfig({taskId, id: rest.substring(1)}, owner);
             return jsonResponse({});
         }
         string msg = string `no A2A operation at ${method} ${path}`;
@@ -376,9 +376,10 @@ isolated service class DispatcherService {
     # config, stamp its `taskId` from the path, and register it.
     #
     # + taskId - The parent task id, from the path
+    # + owner - The caller's resolved owner scope, or `()`
     # + req - The HTTP request
     # + return - The stored config, or an error
-    private isolated function onCreateTaskPushNotificationConfig(string taskId, http:Request req)
+    private isolated function onCreateTaskPushNotificationConfig(string taskId, string? owner, http:Request req)
             returns http:Response|Error {
         json|error payload = req.getJsonPayload();
         if payload is error {
@@ -394,16 +395,17 @@ isolated service class DispatcherService {
             return invalidAgentResponse(
                     string `request body did not match TaskPushNotificationConfig: ${request.message()}`);
         }
-        return jsonResponse((check self.handler.createTaskPushNotificationConfig(request)).toJson());
+        return jsonResponse((check self.handler.createTaskPushNotificationConfig(request, owner)).toJson());
     }
 
     # Handles GET /tasks/{taskId}/pushNotificationConfigs: list every config
     # registered for the task, with optional pagination query params.
     #
     # + taskId - The parent task id, from the path
+    # + owner - The caller's resolved owner scope, or `()`
     # + req - The HTTP request
     # + return - The page of configs, or an error
-    private isolated function onListTaskPushNotificationConfigs(string taskId, http:Request req)
+    private isolated function onListTaskPushNotificationConfigs(string taskId, string? owner, http:Request req)
             returns http:Response|Error {
         ListTaskPushNotificationConfigsRequest request = {taskId};
         int? pageSize = queryInt(req, "pageSize");
@@ -414,7 +416,7 @@ isolated service class DispatcherService {
         if pageToken is string {
             request.pageToken = pageToken;
         }
-        return jsonResponse((check self.handler.listTaskPushNotificationConfigs(request)).toJson());
+        return jsonResponse((check self.handler.listTaskPushNotificationConfigs(request, owner)).toJson());
     }
 }
 
