@@ -74,6 +74,10 @@ public isolated class HttpPushNotificationSender {
     # + task - The task's state at the moment of this call
     # + return - An `a2a:Error` if delivery failed
     public isolated function send(TaskPushNotificationConfig config, Task task) returns Error? {
+        if self.validateUrl {
+            check validateWebhookUrl(config.url);
+        }
+
         // HTTP/1.1 forced, not left to negotiate: a webhook receiver is a
         // third party this server does not control, and a server that
         // advertises HTTPS without genuinely supporting HTTP/2 fails
@@ -103,4 +107,139 @@ public isolated class HttpPushNotificationSender {
             return wrapTransportError(result);
         }
     }
+}
+
+# Rejects a webhook URL by form, per specification section 13.2's
+# SSRF-protection obligation -- checked at send time against
+# `HttpPushNotificationSender.validateUrl`, not at registration, matching
+# the fire-and-forget delivery model: a caller registering a disallowed
+# URL still gets a stored config back; the rejection surfaces the same way
+# an unreachable webhook does, as a swallowed delivery failure.
+#
+# Form-level only, deliberately: Ballerina has no stdlib DNS resolver
+# (`ballerina/socket` no longer exists; `tcp`/`udp` never hand back a
+# resolved address), and this package carries no native Java code by its
+# own build convention, so resolving a hostname to an IP is not available
+# without a dependency this package does not otherwise need. A host that is
+# not itself an IP literal -- `webhook.internal.corp` resolving to a
+# private address, for instance -- is not caught here; that DNS-rebinding
+# gap is real and left open, the same gap the reference Java SDK's own
+# documentation concedes for the same reason.
+#
+# + url - The webhook URL to check
+# + return - An `a2a:Error` if the URL's scheme or host is disallowed
+isolated function validateWebhookUrl(string url) returns Error? {
+    int? schemeEnd = url.indexOf("://");
+    if schemeEnd is () {
+        return invalidWebhookUrl(url, "missing a scheme");
+    }
+    string scheme = url.substring(0, schemeEnd);
+    if scheme != "http" && scheme != "https" {
+        return invalidWebhookUrl(url, string `scheme "${scheme}" is not http or https`);
+    }
+
+    string rest = url.substring(schemeEnd + 3);
+    int authorityEnd = rest.length();
+    foreach string delimiter in ["/", "?", "#"] {
+        int? idx = rest.indexOf(delimiter);
+        if idx is int && idx < authorityEnd {
+            authorityEnd = idx;
+        }
+    }
+    string authority = rest.substring(0, authorityEnd);
+
+    int? atIdx = authority.lastIndexOf("@");
+    string hostPort = atIdx is int ? authority.substring(atIdx + 1) : authority;
+
+    string host;
+    if hostPort.startsWith("[") {
+        // An IPv6 literal, e.g. "[::1]:8080" -- the brackets disambiguate
+        // its embedded colons from a port separator.
+        int? closeBracket = hostPort.indexOf("]");
+        host = closeBracket is int ? hostPort.substring(1, closeBracket) : hostPort;
+    } else {
+        int? colonIdx = hostPort.lastIndexOf(":");
+        host = colonIdx is int ? hostPort.substring(0, colonIdx) : hostPort;
+    }
+    string lowerHost = host.toLowerAscii();
+
+    if lowerHost == "localhost" || lowerHost.endsWith(".localhost") || lowerHost.endsWith(".local")
+            || lowerHost == "metadata.google.internal" {
+        return invalidWebhookUrl(url, string `host "${host}" is disallowed`);
+    }
+    if isDisallowedIpLiteral(lowerHost) {
+        return invalidWebhookUrl(url, string `host "${host}" is a disallowed IP address`);
+    }
+}
+
+# Whether a host, already known to be an IP literal or plain hostname,
+# names a loopback, link-local (which covers the
+# `169.254.169.254`-style cloud metadata endpoint), private (RFC 1918),
+# carrier-grade-NAT (`100.64.0.0/10`), or IPv6 unique-local/loopback
+# address.
+#
+# + host - The lowercased host, brackets and port already stripped
+# + return - Whether the host is a disallowed IP literal
+isolated function isDisallowedIpLiteral(string host) returns boolean {
+    int[]? octets = parseIPv4(host);
+    if octets is int[] {
+        int a = octets[0];
+        int b = octets[1];
+        if a == 127 || a == 0 || a == 10 || (a == 172 && b >= 16 && b <= 31)
+                || (a == 192 && b == 168) || (a == 169 && b == 254) || (a == 100 && b >= 64 && b <= 127) {
+            return true;
+        }
+        return false;
+    }
+    // IPv6: loopback, unspecified, and the fc00::/7 unique-local block --
+    // whose two /8s, fc00::/8 and fd00::/8, both surface as the host
+    // starting "fc" or "fd" in standard (non-compressed-leading-zero)
+    // hextet form.
+    return host == "::1" || host == "::" || host.startsWith("fc") || host.startsWith("fd");
+}
+
+# Parses a dotted-quad IPv4 literal into its four octets, or `()` if `host`
+# is not one -- including any plain hostname, which is exactly the case
+# this function's caller uses `()` to mean "not an IP literal, nothing more
+# to check here."
+#
+# + host - The candidate host string
+# + return - The four octets, or `()` if `host` is not a valid IPv4 literal
+isolated function parseIPv4(string host) returns int[]? {
+    string[] parts = [];
+    string remaining = host;
+    while true {
+        int? dotIdx = remaining.indexOf(".");
+        if dotIdx is () {
+            parts.push(remaining);
+            break;
+        }
+        parts.push(remaining.substring(0, dotIdx));
+        remaining = remaining.substring(dotIdx + 1);
+    }
+    if parts.length() != 4 {
+        return ();
+    }
+    int[] result = [];
+    foreach string part in parts {
+        if part.length() == 0 || part.length() > 3 {
+            return ();
+        }
+        int|error n = int:fromString(part);
+        if n is error || n < 0 || n > 255 {
+            return ();
+        }
+        result.push(n);
+    }
+    return result;
+}
+
+# Builds the typed error for a rejected webhook URL.
+#
+# + url - The rejected URL
+# + reason - Why it was rejected
+# + return - The typed error
+isolated function invalidWebhookUrl(string url, string reason) returns Error {
+    string msg = string `push-notification webhook URL "${url}" is not allowed: ${reason}`;
+    return error InternalError(msg, message = msg);
 }
