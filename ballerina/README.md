@@ -334,3 +334,29 @@ Left unset, `capabilities.extendedAgentCard` is `false` and a request for it fai
 ### 7.4 Push notifications: registered, not yet delivered
 
 The four configuration operations work: an agent can register, read, list and remove a task's webhook configuration. This release never calls a webhook, so `capabilities.pushNotifications` stays `false`, and this module's own `HttpClient` refuses those four calls rather than let a caller register a webhook that will never fire.
+
+### 7.5 Task ownership and authorization scoping
+
+Specification section 13.1 requires that "clients can only access authorized tasks." By default this listener does not enforce that — every task is visible to every caller, in one shared pool. Supply a `TaskOwnerResolver` to change that:
+
+```ballerina
+isolated class BearerOwnerResolver {
+    *a2a:TaskOwnerResolver;
+
+    public isolated function resolveOwner(http:Request req) returns string?|a2a:Error {
+        // Resolve identity however your deployment actually authenticates a
+        // caller -- a bearer token's subject claim, an mTLS principal, an
+        // API key lookup. This example assumes something upstream already
+        // verified the token; a resolver that trusts an unverified header
+        // is not a security boundary.
+        string|http:HeaderNotFoundError subject = req.getHeader("X-Verified-Subject");
+        return subject is string ? subject : ();
+    }
+}
+
+listener a2a:Listener agent = new (9090, agentCard = card, ownerResolver = new BearerOwnerResolver());
+```
+
+Once configured, `getTask`, `cancelTask`, `listTasks`, `subscribeToTask`, and the four push-notification config operations all become owner-scoped: a task, or a task's push configs, created under one resolved owner are invisible to every other owner — indistinguishable from not existing at all, per the same section's requirement that a server "MUST NOT reveal the existence of resources the client is not authorized to access." `TaskUpdater` stamps every write with the owner the task was created under, so an agent's own driven updates stay in the right scope automatically.
+
+`()` — an unauthenticated caller, or simply no resolver configured — is its own scope, not a wildcard: every caller a resolver maps to `()` shares one pool, isolated from every named owner but not from each other. A resolver alone does not make an agent safe against anonymous traffic; pair it with real inbound authentication, which is deployment policy this module does not prescribe.

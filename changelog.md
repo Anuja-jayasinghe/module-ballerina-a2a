@@ -19,3 +19,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Add `TaskUpdater` for Driving a Task Through Its States, Including Streaming and Input-Required Pauses
 - Add `TaskStore` and the Default `InMemoryTaskStore`, Which Enforces Legal State Transitions
 - Add Task-Scoped Push-Notification Configuration Storage and an Optional Extended Agent Card to the Server
+- Add `TaskOwnerResolver` for Per-Caller Task and Push-Notification-Config Visibility Scoping, per Specification Section 13.1
