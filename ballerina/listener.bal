@@ -30,6 +30,11 @@ public type ListenerConfiguration record {|
     # derived card declares `capabilities.extendedAgentCard` false, and a
     # request for it fails with `a2a:ExtendedAgentCardNotConfiguredError`.
     AgentCard? extendedAgentCard = ();
+    # Resolves each request's caller to an owner scope, for task-visibility
+    # scoping per specification section 13.1. Unset means every task is
+    # visible to every caller — this server's behavior before this field
+    # existed. See `a2a:TaskOwnerResolver`.
+    TaskOwnerResolver? ownerResolver = ();
 |};
 
 # Serves an A2A agent over the HTTP+JSON binding.
@@ -61,6 +66,7 @@ public isolated class Listener {
     private final AgentCard & readonly card;
     private final TaskStore store;
     private final (AgentCard & readonly)? extendedCard;
+    private final TaskOwnerResolver? ownerResolver;
     private DispatcherService? dispatcher = ();
 
     # Creates a Listener.
@@ -89,6 +95,7 @@ public isolated class Listener {
         AgentCard? extended = config.extendedAgentCard;
         self.extendedCard = extended is AgentCard ? extended.cloneReadOnly() : ();
         self.card = deriveServedCard(agentCard, self.extendedCard is AgentCard).cloneReadOnly();
+        self.ownerResolver = config.ownerResolver;
     }
 
     # Attaches an `a2a:Service` to serve.
@@ -101,7 +108,7 @@ public isolated class Listener {
     # + return - An `a2a:Error` if attachment fails
     public isolated function attach(Service a2aService, string[]|string? name = ()) returns error? {
         DefaultHandler handler = new (a2aService, self.store, self.extendedCard);
-        DispatcherService dispatcherService = new (self.card, handler);
+        DispatcherService dispatcherService = new (self.card, handler, self.ownerResolver);
         lock {
             self.dispatcher = dispatcherService;
         }

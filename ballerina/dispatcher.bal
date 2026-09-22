@@ -51,10 +51,12 @@ isolated service class DispatcherService {
 
     private final AgentCard & readonly card;
     private final DefaultHandler handler;
+    private final TaskOwnerResolver? ownerResolver;
 
-    isolated function init(AgentCard card, DefaultHandler handler) {
+    isolated function init(AgentCard card, DefaultHandler handler, TaskOwnerResolver? ownerResolver) {
         self.card = card.cloneReadOnly();
         self.handler = handler;
+        self.ownerResolver = ownerResolver;
     }
 
     isolated resource function get [string... path](http:Request req)
@@ -105,7 +107,23 @@ isolated service class DispatcherService {
         }
         [string, string?] [path, tenant] = routed;
 
-        http:Response|stream<http:SseEvent, error?>|Error result = self.route(method, path, tenant, req);
+        // Resolved once per request, after the tenant is known (a resolver
+        // may want it) and before any operation runs. `()` when no resolver
+        // is configured -- every task stays in the one shared, unscoped
+        // pool this server has always used.
+        string? owner;
+        TaskOwnerResolver? resolver = self.ownerResolver;
+        if resolver is TaskOwnerResolver {
+            string?|Error resolved = resolver.resolveOwner(req);
+            if resolved is Error {
+                return toRestErrorResponse(resolved);
+            }
+            owner = resolved;
+        } else {
+            owner = ();
+        }
+
+        http:Response|stream<http:SseEvent, error?>|Error result = self.route(method, path, tenant, owner, req);
         if result is Error {
             return toRestErrorResponse(result);
         }
@@ -197,34 +215,33 @@ isolated service class DispatcherService {
     # + method - The HTTP method
     # + path - The path with no tenant prefix
     # + tenant - The matched tenant, or `()`
+    # + owner - The caller's resolved owner scope, or `()`
     # + req - The HTTP request
     # + return - The response, or an error to serialise
-    private isolated function route(string method, string path, string? tenant, http:Request req)
+    private isolated function route(string method, string path, string? tenant, string? owner, http:Request req)
             returns http:Response|stream<http:SseEvent, error?>|Error {
         // The exact-match operations dispatch by [method, path] equality; the
         // rest below need startsWith/endsWith/includes on the path, which a
         // match pattern can't express, so they stay as guarded `if`s.
         match [method, path] {
             ["POST", "/message:send"] => {
-                return self.onSendMessage(tenant, req);
+                return self.onSendMessage(tenant, owner, req);
             }
             ["POST", "/message:stream"] => {
-                return self.onSendStreamingMessage(tenant, req);
+                return self.onSendStreamingMessage(tenant, owner, req);
             }
             ["GET", "/extendedAgentCard"] => {
                 return jsonResponse((check self.handler.getExtendedAgentCard()).toJson());
             }
             ["GET", "/tasks"] => {
                 ListTasksRequest filter = queryToListFilter(req);
-                // TODO(owner scoping): () until per-request resolution is wired in.
-                return jsonResponse((check self.handler.listTasks(filter, ())).toJson());
+                return jsonResponse((check self.handler.listTasks(filter, owner)).toJson());
             }
         }
 
         if method == "POST" && path.startsWith(TASKS_PATH_PREFIX) && path.endsWith(":cancel") {
             string id = path.substring(TASKS_PATH_PREFIX.length(), path.length() - ":cancel".length());
-            // TODO(owner scoping): () until per-request resolution is wired in.
-            return jsonResponse((check self.handler.cancelTask({id}, ())).toJson());
+            return jsonResponse((check self.handler.cancelTask({id}, owner)).toJson());
         }
         // The proto's own annotation is GET, but the client falls back to
         // POST on a 404 -- a compat workaround for a non-reference server
@@ -236,17 +253,18 @@ isolated service class DispatcherService {
         // such route" masking the first.
         if (method == "GET" || method == "POST") && path.startsWith(TASKS_PATH_PREFIX) && path.endsWith(":subscribe") {
             string id = path.substring(TASKS_PATH_PREFIX.length(), path.length() - ":subscribe".length());
-            return self.onSubscribeToTask(id);
+            return self.onSubscribeToTask(id, owner);
         }
         if path.includes(PUSH_NOTIFICATION_CONFIGS_SEGMENT) {
+            // TODO(owner scoping): push-config operations gain their own
+            // owner threading in a following change.
             return self.onPushNotificationConfigs(method, path, req);
         }
         if method == "GET" && path.startsWith(TASKS_PATH_PREFIX) && !path.includes(":")
                 && !path.includes(PUSH_NOTIFICATION_CONFIGS_SEGMENT) {
             string id = path.substring(TASKS_PATH_PREFIX.length());
             int? historyLength = queryInt(req, "historyLength");
-            // TODO(owner scoping): () until per-request resolution is wired in.
-            return jsonResponse((check self.handler.getTask({id, historyLength}, ())).toJson());
+            return jsonResponse((check self.handler.getTask({id, historyLength}, owner)).toJson());
         }
         string msg = string `no A2A operation at ${method} ${path}`;
         return error InternalError(msg, message = msg, code = http:STATUS_NOT_FOUND);
@@ -256,9 +274,10 @@ isolated service class DispatcherService {
     # the default handler, and serialise the Task or Message it returns.
     #
     # + tenant - The matched tenant, or `()`
+    # + owner - The caller's resolved owner scope, or `()`
     # + req - The HTTP request
     # + return - The response, or an error
-    private isolated function onSendMessage(string? tenant, http:Request req) returns http:Response|Error {
+    private isolated function onSendMessage(string? tenant, string? owner, http:Request req) returns http:Response|Error {
         json|error payload = req.getJsonPayload();
         if payload is error {
             return invalidAgentResponse(string `request body is not valid JSON: ${payload.message()}`);
@@ -268,8 +287,7 @@ isolated service class DispatcherService {
             return invalidAgentResponse(
                     string `request body did not match SendMessageRequest: ${request.message()}`);
         }
-        // TODO(owner scoping): () until per-request resolution is wired in.
-        Task|Message result = check self.handler.sendMessage(request, tenant, ());
+        Task|Message result = check self.handler.sendMessage(request, tenant, owner);
         // The wire wraps the result in its oneof arm, matching what the client
         // decodes: {"task": ...} or {"message": ...}.
         string arm = result is Task ? "task" : "message";
@@ -284,9 +302,10 @@ isolated service class DispatcherService {
     # the default handler, and frame every event it produced as SSE.
     #
     # + tenant - The matched tenant, or `()`
+    # + owner - The caller's resolved owner scope, or `()`
     # + req - The HTTP request
     # + return - The SSE stream, or an error
-    private isolated function onSendStreamingMessage(string? tenant, http:Request req)
+    private isolated function onSendStreamingMessage(string? tenant, string? owner, http:Request req)
             returns stream<http:SseEvent, error?>|Error {
         if !self.card.capabilities.streaming {
             return serverStreamingUnsupportedError("sendStreamingMessage");
@@ -300,8 +319,7 @@ isolated service class DispatcherService {
             return invalidAgentResponse(
                     string `request body did not match SendMessageRequest: ${request.message()}`);
         }
-        // TODO(owner scoping): () until per-request resolution is wired in.
-        StreamResponse[] events = check self.handler.sendStreamingMessage(request, tenant, ());
+        StreamResponse[] events = check self.handler.sendStreamingMessage(request, tenant, owner);
         return check eventsToSseStream(events);
     }
 
@@ -310,13 +328,13 @@ isolated service class DispatcherService {
     # release's stream is always exactly that one event.
     #
     # + id - The task id
+    # + owner - The caller's resolved owner scope, or `()`
     # + return - The SSE stream, or an error
-    private isolated function onSubscribeToTask(string id) returns stream<http:SseEvent, error?>|Error {
+    private isolated function onSubscribeToTask(string id, string? owner) returns stream<http:SseEvent, error?>|Error {
         if !self.card.capabilities.streaming {
             return serverStreamingUnsupportedError("subscribeToTask");
         }
-        // TODO(owner scoping): () until per-request resolution is wired in.
-        StreamResponse[] events = check self.handler.subscribeToTask({id}, ());
+        StreamResponse[] events = check self.handler.subscribeToTask({id}, owner);
         return check eventsToSseStream(events);
     }
 
