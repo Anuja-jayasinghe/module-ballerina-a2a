@@ -27,6 +27,13 @@
 // path. The A2A paths use literal colons (`/message:send`, `/tasks/{id}:cancel`)
 // which are not ordinary path segments, so matching the raw path is simpler
 // and more faithful than trying to express them as typed resource paths.
+//
+// This is also why operation handlers build `http:Response` directly instead
+// of returning the `http:Ok|http:BadRequest|...` status-typed unions other
+// listeners in this ecosystem use: that pattern relies on a typed resource
+// signature per operation, which the colon-paths rule out here. `jsonResponse`
+// and `toRestErrorResponse` are the substitute -- one place each that builds
+// the response, rather than one return type per operation.
 
 import ballerina/http;
 
@@ -194,12 +201,25 @@ isolated service class DispatcherService {
     # + return - The response, or an error to serialise
     private isolated function route(string method, string path, string? tenant, http:Request req)
             returns http:Response|stream<http:SseEvent, error?>|Error {
-        if method == "POST" && path == "/message:send" {
-            return self.onSendMessage(tenant, req);
+        // The exact-match operations dispatch by [method, path] equality; the
+        // rest below need startsWith/endsWith/includes on the path, which a
+        // match pattern can't express, so they stay as guarded `if`s.
+        match [method, path] {
+            ["POST", "/message:send"] => {
+                return self.onSendMessage(tenant, req);
+            }
+            ["POST", "/message:stream"] => {
+                return self.onSendStreamingMessage(tenant, req);
+            }
+            ["GET", "/extendedAgentCard"] => {
+                return jsonResponse((check self.handler.getExtendedAgentCard()).toJson());
+            }
+            ["GET", "/tasks"] => {
+                ListTasksRequest filter = queryToListFilter(req);
+                return jsonResponse((check self.handler.listTasks(filter)).toJson());
+            }
         }
-        if method == "POST" && path == "/message:stream" {
-            return self.onSendStreamingMessage(tenant, req);
-        }
+
         if method == "POST" && path.startsWith(TASKS_PATH_PREFIX) && path.endsWith(":cancel") {
             string id = path.substring(TASKS_PATH_PREFIX.length(), path.length() - ":cancel".length());
             return jsonResponse((check self.handler.cancelTask({id})).toJson());
@@ -218,13 +238,6 @@ isolated service class DispatcherService {
         }
         if path.includes(PUSH_NOTIFICATION_CONFIGS_SEGMENT) {
             return self.onPushNotificationConfigs(method, path, req);
-        }
-        if method == "GET" && path == "/extendedAgentCard" {
-            return jsonResponse((check self.handler.getExtendedAgentCard()).toJson());
-        }
-        if method == "GET" && path == "/tasks" {
-            ListTasksRequest filter = queryToListFilter(req);
-            return jsonResponse((check self.handler.listTasks(filter)).toJson());
         }
         if method == "GET" && path.startsWith(TASKS_PATH_PREFIX) && !path.includes(":")
                 && !path.includes(PUSH_NOTIFICATION_CONFIGS_SEGMENT) {
