@@ -331,9 +331,40 @@ listener a2a:Listener agent = new (9090, agentCard = publicCard, extendedAgentCa
 
 Left unset, `capabilities.extendedAgentCard` is `false` and a request for it fails with `ExtendedAgentCardNotConfiguredError`. Configuring one flips the capability on and serves the card from `GET /extendedAgentCard`.
 
-### 7.4 Push notifications: registered, not yet delivered
+### 7.4 Push notifications
 
-The four configuration operations work: an agent can register, read, list and remove a task's webhook configuration. This release never calls a webhook, so `capabilities.pushNotifications` stays `false`, and this module's own `HttpClient` refuses those four calls rather than let a caller register a webhook that will never fire.
+An agent can register, read, list and remove a task's webhook configuration, and this listener actually calls it: whenever a task it drives reaches a new state — including cancellation — every webhook registered for that task gets a POST of the task's current JSON. Delivery is fire-and-forget: a webhook that is unreachable or errors does not fail the operation that triggered it.
+
+A client registers a webhook one of two ways. Inline, attached to a `sendMessage`/`sendStreamingMessage` call — the only channel that works before a task's id is even known, since a config normally has to name an existing `taskId`:
+
+```ballerina
+a2a:Task|a2a:Message reply = check agent->sendMessage({
+    message: {messageId: "msg-1", role: a2a:ROLE_USER, parts: [{text: "..."}]},
+    configuration: {
+        taskPushNotificationConfig: {url: "https://client.example.com/webhooks/a2a"}
+    }
+});
+```
+
+Or explicitly, once a `taskId` is already known — the register/read/list/remove operations from [section 3.2](#32-push-notifications):
+
+```ballerina
+a2a:TaskPushNotificationConfig config = check agent->createTaskPushNotificationConfig({
+    taskId: "task-1",
+    url: "https://client.example.com/webhooks/a2a"
+});
+```
+
+`config.token`, if set, is echoed back as the `X-A2A-Notification-Token` header on every delivery, for correlation. `config.authentication`, if set, becomes a standard `Authorization: <scheme> <credentials>` header on the outbound call.
+
+Delivery uses `a2a:HttpPushNotificationSender` by default, an HTTP POST with a configurable timeout. It rejects a webhook URL that is not `http`/`https`, or whose host is a loopback, link-local, private (RFC 1918), carrier-grade-NAT, or otherwise non-public address — specification section 13.2's SSRF-protection obligation — before ever connecting:
+
+```ballerina
+listener a2a:Listener agent = new (9090, agentCard = card,
+    pushSender = new a2a:HttpPushNotificationSender({validateUrl: false, timeout: 5}));
+```
+
+`validateUrl: false` is the escape hatch a deployment with a legitimately internal webhook host needs. The check is by URL form, not by resolving the hostname — a name that only resolves to a private address at connect time (DNS rebinding) is not caught; supply your own `a2a:PushNotificationSender` to close that gap with whatever resolution your deployment trusts.
 
 ### 7.5 Task ownership and authorization scoping
 
