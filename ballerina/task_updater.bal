@@ -32,6 +32,7 @@ public isolated client class TaskUpdater {
     private final string taskId;
     private final string contextId;
     private final TaskStore store;
+    private final string? owner;
     private Artifact[] artifacts = [];
     // Every transition and artifact, in call order -- what
     // `sendStreamingMessage` replays as the stream body once `onMessage`
@@ -45,10 +46,13 @@ public isolated client class TaskUpdater {
     # + taskId - The task's server-generated id
     # + contextId - The task's context id
     # + store - The store the task lives in
-    isolated function init(string taskId, string contextId, TaskStore store) {
+    # + owner - The resolved owner scope every write is stamped and checked
+    #           against, or `()`
+    isolated function init(string taskId, string contextId, TaskStore store, string? owner) {
         self.taskId = taskId;
         self.contextId = contextId;
         self.store = store;
+        self.owner = owner;
     }
 
     # The task's server-generated id.
@@ -160,7 +164,7 @@ public isolated client class TaskUpdater {
         if accumulated.length() > 0 {
             task.artifacts = accumulated;
         }
-        return self.store.put(task);
+        return self.store.put(task, self.owner);
     }
 
     # The events recorded so far, in call order: one `TaskArtifactUpdateEvent`

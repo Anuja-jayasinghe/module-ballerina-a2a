@@ -216,13 +216,15 @@ isolated service class DispatcherService {
             }
             ["GET", "/tasks"] => {
                 ListTasksRequest filter = queryToListFilter(req);
-                return jsonResponse((check self.handler.listTasks(filter)).toJson());
+                // TODO(owner scoping): () until per-request resolution is wired in.
+                return jsonResponse((check self.handler.listTasks(filter, ())).toJson());
             }
         }
 
         if method == "POST" && path.startsWith(TASKS_PATH_PREFIX) && path.endsWith(":cancel") {
             string id = path.substring(TASKS_PATH_PREFIX.length(), path.length() - ":cancel".length());
-            return jsonResponse((check self.handler.cancelTask({id})).toJson());
+            // TODO(owner scoping): () until per-request resolution is wired in.
+            return jsonResponse((check self.handler.cancelTask({id}, ())).toJson());
         }
         // The proto's own annotation is GET, but the client falls back to
         // POST on a 404 -- a compat workaround for a non-reference server
@@ -243,7 +245,8 @@ isolated service class DispatcherService {
                 && !path.includes(PUSH_NOTIFICATION_CONFIGS_SEGMENT) {
             string id = path.substring(TASKS_PATH_PREFIX.length());
             int? historyLength = queryInt(req, "historyLength");
-            return jsonResponse((check self.handler.getTask({id, historyLength})).toJson());
+            // TODO(owner scoping): () until per-request resolution is wired in.
+            return jsonResponse((check self.handler.getTask({id, historyLength}, ())).toJson());
         }
         string msg = string `no A2A operation at ${method} ${path}`;
         return error InternalError(msg, message = msg, code = http:STATUS_NOT_FOUND);
@@ -265,7 +268,8 @@ isolated service class DispatcherService {
             return invalidAgentResponse(
                     string `request body did not match SendMessageRequest: ${request.message()}`);
         }
-        Task|Message result = check self.handler.sendMessage(request, tenant);
+        // TODO(owner scoping): () until per-request resolution is wired in.
+        Task|Message result = check self.handler.sendMessage(request, tenant, ());
         // The wire wraps the result in its oneof arm, matching what the client
         // decodes: {"task": ...} or {"message": ...}.
         string arm = result is Task ? "task" : "message";
@@ -296,7 +300,8 @@ isolated service class DispatcherService {
             return invalidAgentResponse(
                     string `request body did not match SendMessageRequest: ${request.message()}`);
         }
-        StreamResponse[] events = check self.handler.sendStreamingMessage(request, tenant);
+        // TODO(owner scoping): () until per-request resolution is wired in.
+        StreamResponse[] events = check self.handler.sendStreamingMessage(request, tenant, ());
         return check eventsToSseStream(events);
     }
 
@@ -310,7 +315,8 @@ isolated service class DispatcherService {
         if !self.card.capabilities.streaming {
             return serverStreamingUnsupportedError("subscribeToTask");
         }
-        StreamResponse[] events = check self.handler.subscribeToTask({id});
+        // TODO(owner scoping): () until per-request resolution is wired in.
+        StreamResponse[] events = check self.handler.subscribeToTask({id}, ());
         return check eventsToSseStream(events);
     }
 

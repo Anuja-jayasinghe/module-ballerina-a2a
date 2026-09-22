@@ -56,8 +56,9 @@ isolated class DefaultHandler {
     #
     # + request - The decoded send request
     # + tenant - The tenant the request was routed under, or `()`
+    # + owner - The caller's resolved owner scope, or `()`
     # + return - The finished Task or a direct Message, or an error
-    isolated function sendMessage(SendMessageRequest request, string? tenant) returns Task|Message|Error {
+    isolated function sendMessage(SendMessageRequest request, string? tenant, string? owner) returns Task|Message|Error {
         check validateOutboundMessage(request.message);
 
         string contextId = request.message?.contextId ?: uuid:createType4AsString();
@@ -70,14 +71,15 @@ isolated class DefaultHandler {
             contextId,
             status: {state: TASK_STATE_SUBMITTED, timestamp: time:utcToString(time:utcNow())}
         };
-        check self.store.put(seed);
+        check self.store.put(seed, owner);
 
         RequestContext context = {
             message: request.message,
             tenant,
+            owner,
             configuration: request?.configuration
         };
-        TaskUpdater updater = new (taskId, contextId, self.store);
+        TaskUpdater updater = new (taskId, contextId, self.store, owner);
 
         Message|Error? direct = self.agentService->onMessage(context, updater);
         if direct is Error {
@@ -86,12 +88,12 @@ isolated class DefaultHandler {
         if direct is Message {
             // A direct reply: the seeded task is not part of the conversation,
             // so drop it and hand the Message back.
-            check self.store.remove(taskId);
+            check self.store.remove(taskId, owner);
             return direct;
         }
 
         // The agent drove the task through `updater`. Return its final state.
-        Task? finished = check self.store.get(taskId);
+        Task? finished = check self.store.get(taskId, owner);
         if finished is () {
             return invalidAgentResponse(
                     string `onMessage returned without driving the task to a state for ${taskId}`);
@@ -113,8 +115,10 @@ isolated class DefaultHandler {
     #
     # + request - The decoded send request
     # + tenant - The tenant the request was routed under, or `()`
+    # + owner - The caller's resolved owner scope, or `()`
     # + return - The events to stream, in order, or an error
-    isolated function sendStreamingMessage(SendMessageRequest request, string? tenant) returns StreamResponse[]|Error {
+    isolated function sendStreamingMessage(SendMessageRequest request, string? tenant, string? owner)
+            returns StreamResponse[]|Error {
         check validateOutboundMessage(request.message);
 
         string contextId = request.message?.contextId ?: uuid:createType4AsString();
@@ -125,21 +129,22 @@ isolated class DefaultHandler {
             contextId,
             status: {state: TASK_STATE_SUBMITTED, timestamp: time:utcToString(time:utcNow())}
         };
-        check self.store.put(seed);
+        check self.store.put(seed, owner);
 
         RequestContext context = {
             message: request.message,
             tenant,
+            owner,
             configuration: request?.configuration
         };
-        TaskUpdater updater = new (taskId, contextId, self.store);
+        TaskUpdater updater = new (taskId, contextId, self.store, owner);
 
         Message|Error? direct = self.agentService->onMessage(context, updater);
         if direct is Error {
             return direct;
         }
         if direct is Message {
-            check self.store.remove(taskId);
+            check self.store.remove(taskId, owner);
             return [direct];
         }
 
@@ -168,9 +173,10 @@ isolated class DefaultHandler {
     # one still notionally in progress on another connection.
     #
     # + request - The task identifier
+    # + owner - The caller's resolved owner scope, or `()`
     # + return - The one-event stream, or a TaskNotFoundError
-    isolated function subscribeToTask(SubscribeToTaskRequest request) returns StreamResponse[]|Error {
-        Task? task = check self.store.get(request.id);
+    isolated function subscribeToTask(SubscribeToTaskRequest request, string? owner) returns StreamResponse[]|Error {
+        Task? task = check self.store.get(request.id, owner);
         if task is () {
             return taskNotFound(request.id);
         }
@@ -180,9 +186,10 @@ isolated class DefaultHandler {
     # Handles getTask.
     #
     # + request - The task identifier and optional history length
+    # + owner - The caller's resolved owner scope, or `()`
     # + return - The task, or a TaskNotFoundError
-    isolated function getTask(GetTaskRequest request) returns Task|Error {
-        Task? task = check self.store.get(request.id);
+    isolated function getTask(GetTaskRequest request, string? owner) returns Task|Error {
+        Task? task = check self.store.get(request.id, owner);
         if task is () {
             return taskNotFound(request.id);
         }
@@ -203,9 +210,10 @@ isolated class DefaultHandler {
     # that is a TaskNotCancelableError.
     #
     # + request - The task identifier
+    # + owner - The caller's resolved owner scope, or `()`
     # + return - The canceled task, or an error
-    isolated function cancelTask(CancelTaskRequest request) returns Task|Error {
-        Task? task = check self.store.get(request.id);
+    isolated function cancelTask(CancelTaskRequest request, string? owner) returns Task|Error {
+        Task? task = check self.store.get(request.id, owner);
         if task is () {
             return taskNotFound(request.id);
         }
@@ -215,16 +223,17 @@ isolated class DefaultHandler {
             return error TaskNotCancelableError(msg, message = msg, code = -32002);
         }
         task.status = {state: TASK_STATE_CANCELED, timestamp: time:utcToString(time:utcNow())};
-        check self.store.put(task);
+        check self.store.put(task, owner);
         return task;
     }
 
     # Handles listTasks.
     #
     # + request - The filter and pagination parameters
+    # + owner - The caller's resolved owner scope, or `()`
     # + return - A page of tasks
-    isolated function listTasks(ListTasksRequest request) returns ListTasksResponse|Error {
-        return self.store.list(request);
+    isolated function listTasks(ListTasksRequest request, string? owner) returns ListTasksResponse|Error {
+        return self.store.list(request, owner);
     }
 
     # Handles createTaskPushNotificationConfig: registers a webhook config
@@ -241,7 +250,9 @@ isolated class DefaultHandler {
             string msg = "TaskPushNotificationConfig.taskId is required to register a config";
             return invalidAgentResponse(msg);
         }
-        Task? task = check self.store.get(taskId);
+        // TODO(owner scoping): threaded through properly once push-config
+        // operations gain their own owner parameter.
+        Task? task = check self.store.get(taskId, ());
         if task is () {
             return taskNotFound(taskId);
         }

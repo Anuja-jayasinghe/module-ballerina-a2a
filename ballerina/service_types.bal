@@ -50,13 +50,18 @@ public type Service distinct isolated service object {
 # The inbound message and the context of the request that delivered it.
 #
 # Passed to `a2a:Service.onMessage`. Holds the message the client sent, the
-# effective tenant the request was routed under (or `()` when none), and any
-# `configuration` the client attached.
+# effective tenant the request was routed under (or `()` when none), the
+# caller's resolved owner scope, and any `configuration` the client attached.
 public type RequestContext record {|
     # The message the client sent
     Message message;
     # The tenant segment the request arrived under, or `()`
     string? tenant;
+    # The caller's resolved owner scope, or `()` when no
+    # `a2a:TaskOwnerResolver` is configured, or the resolver itself returned
+    # `()`. Not an authentication result -- `()` is its own scope, shared by
+    # every unscoped caller, not a wildcard.
+    string? owner;
     # The send configuration the client attached, if any
     SendMessageConfiguration? configuration;
 |};

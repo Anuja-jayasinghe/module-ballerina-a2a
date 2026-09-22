@@ -50,28 +50,47 @@ public type TaskStore isolated object {
 
     # Stores a new task, or replaces an existing one with the same id.
     #
+    # `owner` is an opaque scope, not an identity to trust on its own -- `()`
+    # is its own scope, not a wildcard. A task id already stored under a
+    # different owner is a conflict, not an overwrite: implementations should
+    # reject it with `a2a:TaskNotFoundError`, the same error an unauthorized
+    # caller sees elsewhere, rather than leak that the id is taken.
+    #
     # + task - The task to persist
+    # + owner - The caller's resolved owner scope, or `()`
     # + return - An error if the task could not be stored
-    public isolated function put(Task task) returns Error?;
+    public isolated function put(Task task, string? owner) returns Error?;
 
-    # Retrieves a task by id.
+    # Retrieves a task by id, scoped to `owner`.
+    #
+    # A task that exists under a different owner must be indistinguishable
+    # from one that does not exist at all -- specification section 13.1
+    # requires that a server not reveal the existence of a resource the
+    # caller is not authorized to access.
     #
     # + id - The task's id
-    # + return - The task, `()` if no task has this id, or an error if the
-    #            lookup failed
-    public isolated function get(string id) returns Task?|Error;
+    # + owner - The caller's resolved owner scope, or `()`
+    # + return - The task, `()` if no task with this id is visible to
+    #            `owner`, or an error if the lookup failed
+    public isolated function get(string id, string? owner) returns Task?|Error;
 
-    # Lists tasks matching a filter, newest first, with cursor pagination.
+    # Lists tasks matching a filter, newest first, with cursor pagination,
+    # restricted to those visible to `owner`.
     #
     # + filter - The filter and pagination parameters; every field is optional
+    # + owner - The caller's resolved owner scope, or `()`
     # + return - A page of matching tasks, or an error
-    public isolated function list(ListTasksRequest filter) returns ListTasksResponse|Error;
+    public isolated function list(ListTasksRequest filter, string? owner) returns ListTasksResponse|Error;
 
-    # Removes a task by id. A no-op when no task has the id.
+    # Removes a task by id, scoped to `owner`. A no-op when no task with the
+    # id is visible to `owner` -- whether because none exists, or because it
+    # belongs to a different owner; the two are not distinguished, per the
+    # same section 13.1 reasoning as `get`.
     #
     # + id - The task's id
+    # + owner - The caller's resolved owner scope, or `()`
     # + return - An error if the removal failed
-    public isolated function remove(string id) returns Error?;
+    public isolated function remove(string id, string? owner) returns Error?;
 };
 
 # The default in-memory `a2a:TaskStore`.
@@ -85,22 +104,43 @@ public isolated class InMemoryTaskStore {
 
     private map<Task> tasks = {};
     # Insertion order, so `list` can page deterministically and the
-    # newest-first sort has a stable tiebreak when timestamps match.
+    # newest-first sort has a stable tiebreak when timestamps match. Global,
+    # not per-owner: task ids are unique across every owner, so pagination
+    # cursors keep one consistent meaning regardless of who is listing.
     private string[] insertionOrder = [];
+    # The owner each task was stored under, keyed by task id. Entries exist
+    # only for a non-`()` owner -- absence from this map means the task's
+    # owner is `()`, avoiding a map entry for the common unscoped case.
+    # A side map rather than a nested `map<map<Task>>` keeps `tasks` and
+    # `insertionOrder` untouched: `string` is readonly, so reading this
+    # inside `lock` needs no clone, and task ids stay globally unique, which
+    # `/tasks/{id}` as a resource path and the push-config store (keyed by
+    # bare taskId) both depend on.
+    private map<string> taskOwners = {};
 
     # Stores a new task, or replaces an existing one, enforcing the state
     # machine.
     #
     # A task already in a terminal state cannot be transitioned again: the
     # four terminal states are final per specification section 3.1.1, so an
-    # attempt to move one is a caller error, not a silent overwrite.
+    # attempt to move one is a caller error, not a silent overwrite. A task
+    # id already stored under a different owner is the same kind of
+    # conflict -- reported as `a2a:TaskNotFoundError`, not a
+    # visibility-leaking error, since `owner` not matching is
+    # indistinguishable from the id belonging to someone else entirely.
     #
     # + task - The task to persist
+    # + owner - The caller's resolved owner scope, or `()`
     # + return - An `a2a:InternalError` if the task would illegally leave a
-    #            terminal state, otherwise nil
-    public isolated function put(Task task) returns Error? {
+    #            terminal state, an `a2a:TaskNotFoundError` if the id is
+    #            already owned by a different scope, otherwise nil
+    public isolated function put(Task task, string? owner) returns Error? {
         lock {
             Task? existing = self.tasks[task.id];
+            string? existingOwner = self.taskOwners[task.id];
+            if existing is Task && existingOwner != owner {
+                return taskNotFound(task.id);
+            }
             if existing is Task && isTerminalState(existing.status.state)
                     && existing.status.state != task.status.state {
                 string msg = string `task ${task.id} is in terminal state `
@@ -109,15 +149,22 @@ public isolated class InMemoryTaskStore {
             }
             if existing is () {
                 self.insertionOrder.push(task.id);
+                if owner is string {
+                    self.taskOwners[task.id] = owner;
+                }
             }
             self.tasks[task.id] = task.clone();
         }
     }
 
     # + id - The task's id
-    # + return - The task, or `()` if none has this id
-    public isolated function get(string id) returns Task?|Error {
+    # + owner - The caller's resolved owner scope, or `()`
+    # + return - The task, or `()` if none has this id and is visible to `owner`
+    public isolated function get(string id, string? owner) returns Task?|Error {
         lock {
+            if self.taskOwners[id] != owner {
+                return ();
+            }
             Task? task = self.tasks[id];
             return task is Task ? task.clone() : ();
         }
@@ -135,17 +182,24 @@ public isolated class InMemoryTaskStore {
     # `historyLength`.
     #
     # + filter - The filter and pagination parameters
+    # + owner - The caller's resolved owner scope, or `()`; only tasks
+    #           visible to it are listed
     # + return - A page of matching tasks
-    public isolated function list(ListTasksRequest filter) returns ListTasksResponse|Error {
+    public isolated function list(ListTasksRequest filter, string? owner) returns ListTasksResponse|Error {
         // Snapshot the store into a local, in insertion order, before
         // querying. A query capturing `self.tasks` directly trips the
         // compiler's isolation analysis inside a lock, and a mutable array
         // declared outside the lock cannot be pushed to from within it, so
-        // the snapshot is built lock-local and cloned out.
+        // the snapshot is built lock-local and cloned out. The owner filter
+        // is applied here, alongside the existence check, for the same
+        // reason: self.taskOwners is only reachable inside this lock.
         Task[] all;
         lock {
             Task[] snapshot = [];
             foreach string id in self.insertionOrder {
+                if self.taskOwners[id] != owner {
+                    continue;
+                }
                 Task? t = self.tasks[id];
                 if t is Task {
                     snapshot.push(t.clone());
@@ -198,10 +252,16 @@ public isolated class InMemoryTaskStore {
     }
 
     # + id - The task's id
-    # + return - nil; removing a task that does not exist is a no-op
-    public isolated function remove(string id) returns Error? {
+    # + owner - The caller's resolved owner scope, or `()`
+    # + return - nil; removing a task that does not exist, or is not visible
+    #            to `owner`, is a no-op
+    public isolated function remove(string id, string? owner) returns Error? {
         lock {
+            if self.taskOwners[id] != owner {
+                return;
+            }
             _ = self.tasks.removeIfHasKey(id);
+            _ = self.taskOwners.removeIfHasKey(id);
             int? idx = self.insertionOrder.indexOf(id);
             if idx is int {
                 _ = self.insertionOrder.remove(idx);
