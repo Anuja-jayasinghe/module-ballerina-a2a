@@ -89,43 +89,117 @@ isolated class DefaultHandler {
             TaskPushNotificationConfig _ = self.registerPushConfig(taskId, inlineConfig);
         }
 
-        RequestContext context = {
+        EventBroadcaster? broadcaster = self.registry.acquire(taskId);
+        if broadcaster is () {
+            // Unreachable with today's always-fresh, random taskId; becomes
+            // real once a future commit lets a client continue an existing
+            // task -- a second concurrent message to one already being
+            // driven is a clean rejection, not two TaskUpdaters racing.
+            string msg = string `task ${taskId} is already being processed`;
+            return error UnsupportedOperationError(msg, message = msg, code = -32004);
+        }
+
+        final RequestContext context = {
             message: request.message,
             tenant,
             owner,
             configuration: request?.configuration
         };
-        EventBroadcaster broadcaster = self.registry.acquire(taskId) ?: new;
-        TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster);
+        final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster);
 
-        // TODO(detached execution): this whole block moves into driveTask,
-        // started via `start` and either awaited or not depending on
-        // returnImmediately -- see the plan. For now, still fully
-        // synchronous; registry.release below just keeps the driver slot
-        // from leaking across calls in the meantime.
-        Message|Error? direct = self.agentService->onMessage(context, updater);
-        if direct is Error {
-            self.registry.release(taskId, true);
-            return direct;
+        future<Task|Message|Error> f = start self.driveTask(taskId, owner, context.clone(), updater);
+        Task|Message result = check self.awaitDriveTask(f);
+        self.registry.release(taskId, true);
+        if result is Task {
+            self.notifyPushConfigs(taskId, result);
         }
+        return result;
+    }
+
+    # Runs `onMessage` for one task, detached from the request that started
+    # it -- so a slow agent never blocks the strand a separate
+    # `subscribeToTask` call needs to attach to the same task's live events.
+    #
+    # A panic in agent code is trapped rather than left to propagate: with
+    # `returnImmediately: true`, or once a subscriber is watching live,
+    # there is no synchronous caller left to receive it if it escapes.
+    # Both a trapped panic and `onMessage` returning an `Error` transition
+    # the task to `TASK_STATE_FAILED` via the same `updater-&gt;failed(...)`
+    # an agent itself would call, and forward that Error to whoever
+    # eventually reads this call's result -- the only way a live or later
+    # observer learns anything went wrong once execution is no longer
+    # synchronous.
+    #
+    # + taskId - The task being driven
+    # + owner - The caller's resolved owner scope, or `()`
+    # + context - The message and request context to hand to `onMessage`
+    # + updater - The bound updater; already carries the broadcaster and base
+    # + return - The direct `Message`, the finished `Task`, or an `Error`
+    private isolated function driveTask(string taskId, string? owner, RequestContext context, TaskUpdater updater)
+            returns Task|Message|Error {
+        Message|Error?|error direct = trap self.agentService->onMessage(context, updater);
+
         if direct is Message {
-            // A direct reply: the seeded task is not part of the conversation,
-            // so drop it and hand the Message back.
+            // A direct reply: the seeded task is not part of the
+            // conversation, so drop it and hand the Message back.
             check self.store.remove(taskId, owner);
-            self.registry.release(taskId, true);
             return direct;
         }
 
-        // The agent drove the task through `updater`. Return its final state.
-        Task? finished = check self.store.get(taskId, owner);
-        if finished is () {
-            self.registry.release(taskId, true);
-            return invalidAgentResponse(
+        Error? failure = ();
+        if direct is Error {
+            failure = direct;
+        } else if direct is error {
+            failure = wrapTransportError(direct);
+        } else if !updater.touched() {
+            failure = invalidAgentResponse(
                     string `onMessage returned without driving the task to a state for ${taskId}`);
         }
-        self.registry.release(taskId, true);
-        self.notifyPushConfigs(taskId, finished);
-        return finished;
+        if failure is Error {
+            Message failMessage = {
+                messageId: uuid:createType4AsString(),
+                role: ROLE_AGENT,
+                parts: [{text: failure.message()}]
+            };
+            // Best-effort: if even marking the task FAILED fails (e.g. a
+            // concurrent cancelTask already moved it to a different
+            // terminal state), the original failure is still what's
+            // reported -- there is nothing more useful to do with a
+            // second error here.
+            Error? failTransitionResult = updater->failed(failMessage);
+            if failTransitionResult is Error {
+                // Deliberately not propagated; see comment above.
+            }
+            return failure;
+        }
+
+        return updater.currentTask();
+    }
+
+    # Normalizes `wait` on a `future&lt;Task|Message|Error&gt;`, which is
+    # statically `Task|Message|Error|error` -- the trailing bare `error` arm
+    # is the panic channel `wait` itself can surface (distinct from, and in
+    # addition to, `driveTask`'s own internal `trap`), wrapped the same way
+    # every other unnamed transport failure is.
+    #
+    # + f - The future to await
+    # + return - The driven result, or a wrapped Error
+    private isolated function awaitDriveTask(future<Task|Message|Error> f) returns Task|Message|Error {
+        Task|Message|Error|error waited = wait f;
+        if waited is Task {
+            return waited;
+        } else if waited is Message {
+            return waited;
+        } else if waited is Error {
+            return waited;
+        }
+        // `waited` is a plain `error` here -- the panic channel `wait`
+        // itself can surface. Every A2A spec type (Task, Message) is an
+        // open record, so the compiler cannot narrow it out of the type
+        // by elimination the way it would a closed type; the explicit
+        // cast is what the module's own README documents for exactly
+        // this situation.
+        return wrapTransportError(<error>waited);
     }
 
     # Handles sendStreamingMessage: like `sendMessage`, but returns every
@@ -165,45 +239,38 @@ isolated class DefaultHandler {
             TaskPushNotificationConfig _ = self.registerPushConfig(taskId, inlineConfig);
         }
 
-        RequestContext context = {
+        EventBroadcaster? broadcaster = self.registry.acquire(taskId);
+        if broadcaster is () {
+            // See sendMessage's identical branch.
+            string msg = string `task ${taskId} is already being processed`;
+            return error UnsupportedOperationError(msg, message = msg, code = -32004);
+        }
+
+        final RequestContext context = {
             message: request.message,
             tenant,
             owner,
             configuration: request?.configuration
         };
-        EventBroadcaster broadcaster = self.registry.acquire(taskId) ?: new;
-        TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster);
+        final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster);
 
-        // TODO(live streaming): moves into driveTask + a live stream read
-        // from the broadcaster, same as sendMessage. registry.release below
-        // is interim, kept correct until then.
-        Message|Error? direct = self.agentService->onMessage(context, updater);
-        if direct is Error {
-            self.registry.release(taskId, true);
-            return direct;
-        }
-        if direct is Message {
-            check self.store.remove(taskId, owner);
-            self.registry.release(taskId, true);
-            return [direct];
-        }
-
-        StreamResponse[] events = [seed];
-        events.push(...updater.drainEvents());
-        if events.length() == 1 {
-            self.registry.release(taskId, true);
-            return invalidAgentResponse(
-                    string `onMessage returned without driving the task to a state for ${taskId}`);
-        }
-        // Notified with the task's actual finished state, not `seed`
-        // (still SUBMITTED) or the last streamed event (no artifacts) --
-        // read back from the store the same way sendMessage does.
-        Task? finished = check self.store.get(taskId, owner);
+        // TODO(live streaming): the array built below becomes a live read
+        // from the broadcaster instead -- see the plan. Detached execution
+        // itself, and driveTask's own untouched/error handling, already
+        // apply here exactly as they do in sendMessage.
+        future<Task|Message|Error> f = start self.driveTask(taskId, owner, context.clone(), updater);
+        Task|Message result = check self.awaitDriveTask(f);
         self.registry.release(taskId, true);
-        if finished is Task {
-            self.notifyPushConfigs(taskId, finished);
+
+        if result is Message {
+            return [result];
+        } else if result is Task {
+            StreamResponse[] events = [seed];
+            events.push(...updater.drainEvents());
+            self.notifyPushConfigs(taskId, result);
+            return events;
         }
-        return events;
+        return invalidAgentResponse("driveTask returned neither a Task nor a Message");
     }
 
     # Handles subscribeToTask: the task's current state, as a one-event
