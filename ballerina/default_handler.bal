@@ -101,6 +101,7 @@ isolated class DefaultHandler {
             return invalidAgentResponse(
                     string `onMessage returned without driving the task to a state for ${taskId}`);
         }
+        self.notifyPushConfigs(taskId, finished);
         return finished;
     }
 
@@ -156,6 +157,13 @@ isolated class DefaultHandler {
         if events.length() == 1 {
             return invalidAgentResponse(
                     string `onMessage returned without driving the task to a state for ${taskId}`);
+        }
+        // Notified with the task's actual finished state, not `seed`
+        // (still SUBMITTED) or the last streamed event (no artifacts) --
+        // read back from the store the same way sendMessage does.
+        Task? finished = check self.store.get(taskId, owner);
+        if finished is Task {
+            self.notifyPushConfigs(taskId, finished);
         }
         return events;
     }
@@ -227,6 +235,7 @@ isolated class DefaultHandler {
         }
         task.status = {state: TASK_STATE_CANCELED, timestamp: time:utcToString(time:utcNow())};
         check self.store.put(task, owner);
+        self.notifyPushConfigs(request.id, task);
         return task;
     }
 
@@ -342,6 +351,36 @@ isolated class DefaultHandler {
             map<TaskPushNotificationConfig>? forTask = self.pushConfigs[request.taskId];
             if forTask is map<TaskPushNotificationConfig> {
                 _ = forTask.removeIfHasKey(request.id);
+            }
+        }
+    }
+
+    # Notifies every push-notification config registered for a task that it
+    # reached a new state, fire-and-forget.
+    #
+    # Unconditional on the state reached -- not filtered to terminal states
+    # -- matching every reference SDK read this session; a deliberate
+    # choice, not an oversight. Unscoped by owner on purpose: dispatch fires
+    # every config registered for the task regardless of which caller
+    # registered it, the same way `a2a-java`'s dispatch read path is
+    # separate from its owner-scoped one. The task itself already passed
+    # its own owner check before this is ever called, so this is not a
+    # visibility leak -- it is delivery, which was never owner-scoped to
+    # begin with.
+    #
+    # + taskId - The task that changed
+    # + task - Its state at the moment of this call
+    isolated function notifyPushConfigs(string taskId, Task task) {
+        map<TaskPushNotificationConfig> configs;
+        lock {
+            configs = (self.pushConfigs[taskId] ?: {}).clone();
+        }
+        foreach TaskPushNotificationConfig config in configs {
+            Error? deliveryResult = self.pushSender.send(config, task);
+            if deliveryResult is Error {
+                // Fire-and-forget: a delivery failure must not fail the
+                // operation that triggered it, so it is deliberately
+                // dropped here rather than propagated.
             }
         }
     }

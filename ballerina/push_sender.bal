@@ -20,6 +20,8 @@
 // library cannot invent), delivery has one sensible universal default: POST
 // to the registered URL. That default is HttpPushNotificationSender, below.
 
+import ballerina/http;
+
 # Delivers one task update to one registered webhook.
 #
 # `a2a:DefaultHandler` calls this once per registered
@@ -72,9 +74,33 @@ public isolated class HttpPushNotificationSender {
     # + task - The task's state at the moment of this call
     # + return - An `a2a:Error` if delivery failed
     public isolated function send(TaskPushNotificationConfig config, Task task) returns Error? {
-        // Real delivery lands in a following change; this commit only
-        // wires the type through so nothing downstream depends on a
-        // not-yet-existing send().
-        return;
+        // HTTP/1.1 forced, not left to negotiate: a webhook receiver is a
+        // third party this server does not control, and a server that
+        // advertises HTTPS without genuinely supporting HTTP/2 fails
+        // negotiation with a generic, undiagnosable connection error --
+        // hit directly against a real endpoint earlier in this module's
+        // development. A receiver expecting HTTP/2 still speaks HTTP/1.1.
+        http:Client|error webhook = new (config.url, httpVersion = http:HTTP_1_1, timeout = self.timeout);
+        if webhook is error {
+            return wrapTransportError(webhook);
+        }
+
+        map<string> headers = {"Content-Type": "application/json"};
+        string? token = config?.token;
+        if token is string {
+            headers["X-A2A-Notification-Token"] = token;
+        }
+        AuthenticationInfo? auth = config?.authentication;
+        if auth is AuthenticationInfo {
+            string? credentials = auth?.credentials;
+            if credentials is string {
+                headers["Authorization"] = string `${auth.scheme} ${credentials}`;
+            }
+        }
+
+        http:Response|error result = webhook->post("", task.toJson(), headers);
+        if result is error {
+            return wrapTransportError(result);
+        }
     }
 }
