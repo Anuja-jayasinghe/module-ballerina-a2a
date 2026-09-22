@@ -41,13 +41,15 @@ isolated class DefaultHandler {
     // reflects this in capabilities.extendedAgentCard.
     private final (AgentCard & readonly)? extendedCard;
     private final PushNotificationSender pushSender;
+    private final TaskExecutionRegistry registry;
 
     isolated function init(Service agentService, TaskStore store, (AgentCard & readonly)? extendedCard,
-            PushNotificationSender pushSender) {
+            PushNotificationSender pushSender, TaskExecutionRegistry registry) {
         self.agentService = agentService;
         self.store = store;
         self.extendedCard = extendedCard;
         self.pushSender = pushSender;
+        self.registry = registry;
     }
 
     # Handles sendMessage: create a task, run the developer's `onMessage`
@@ -93,25 +95,35 @@ isolated class DefaultHandler {
             owner,
             configuration: request?.configuration
         };
-        TaskUpdater updater = new (taskId, contextId, self.store, owner);
+        EventBroadcaster broadcaster = self.registry.acquire(taskId) ?: new;
+        TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster);
 
+        // TODO(detached execution): this whole block moves into driveTask,
+        // started via `start` and either awaited or not depending on
+        // returnImmediately -- see the plan. For now, still fully
+        // synchronous; registry.release below just keeps the driver slot
+        // from leaking across calls in the meantime.
         Message|Error? direct = self.agentService->onMessage(context, updater);
         if direct is Error {
+            self.registry.release(taskId, true);
             return direct;
         }
         if direct is Message {
             // A direct reply: the seeded task is not part of the conversation,
             // so drop it and hand the Message back.
             check self.store.remove(taskId, owner);
+            self.registry.release(taskId, true);
             return direct;
         }
 
         // The agent drove the task through `updater`. Return its final state.
         Task? finished = check self.store.get(taskId, owner);
         if finished is () {
+            self.registry.release(taskId, true);
             return invalidAgentResponse(
                     string `onMessage returned without driving the task to a state for ${taskId}`);
         }
+        self.registry.release(taskId, true);
         self.notifyPushConfigs(taskId, finished);
         return finished;
     }
@@ -159,20 +171,27 @@ isolated class DefaultHandler {
             owner,
             configuration: request?.configuration
         };
-        TaskUpdater updater = new (taskId, contextId, self.store, owner);
+        EventBroadcaster broadcaster = self.registry.acquire(taskId) ?: new;
+        TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster);
 
+        // TODO(live streaming): moves into driveTask + a live stream read
+        // from the broadcaster, same as sendMessage. registry.release below
+        // is interim, kept correct until then.
         Message|Error? direct = self.agentService->onMessage(context, updater);
         if direct is Error {
+            self.registry.release(taskId, true);
             return direct;
         }
         if direct is Message {
             check self.store.remove(taskId, owner);
+            self.registry.release(taskId, true);
             return [direct];
         }
 
         StreamResponse[] events = [seed];
         events.push(...updater.drainEvents());
         if events.length() == 1 {
+            self.registry.release(taskId, true);
             return invalidAgentResponse(
                     string `onMessage returned without driving the task to a state for ${taskId}`);
         }
@@ -180,6 +199,7 @@ isolated class DefaultHandler {
         // (still SUBMITTED) or the last streamed event (no artifacts) --
         // read back from the store the same way sendMessage does.
         Task? finished = check self.store.get(taskId, owner);
+        self.registry.release(taskId, true);
         if finished is Task {
             self.notifyPushConfigs(taskId, finished);
         }
