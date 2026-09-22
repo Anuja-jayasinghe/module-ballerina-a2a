@@ -181,10 +181,9 @@ public isolated class Listener {
 # version this server speaks — and sets the capability flags to what is
 # implemented, so the card never claims a capability the server lacks. In this
 # release that is: streaming on (sendStreamingMessage/subscribeToTask); push
-# notifications off always -- the four config CRUD operations work, but
-# outbound webhook delivery is a later release, and a card that claimed the
-# capability without ever delivering would be worse than not claiming it;
-# extended card on only when the developer configured one.
+# notifications on (the config CRUD operations plus real webhook delivery via
+# the configured `a2a:PushNotificationSender`, `a2a:HttpPushNotificationSender`
+# by default); extended card on only when the developer configured one.
 #
 # + supplied - The card the developer passed
 # + extendedCardConfigured - Whether `ListenerConfiguration.extendedAgentCard`
@@ -197,7 +196,7 @@ isolated function deriveServedCard(AgentCard supplied, boolean extendedCardConfi
     ];
     card.capabilities = {
         streaming: true,
-        pushNotifications: false,
+        pushNotifications: true,
         extendedAgentCard: extendedCardConfigured
     };
     return card;
