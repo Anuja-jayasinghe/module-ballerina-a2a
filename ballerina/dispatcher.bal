@@ -322,9 +322,10 @@ isolated service class DispatcherService {
         return framed;
     }
 
-    # Handles GET /tasks/{id}:subscribe: the task's current state, as a
-    # one-event SSE stream. See `DefaultHandler.subscribeToTask` for why this
-    # release's stream is always exactly that one event.
+    # Handles GET /tasks/{id}:subscribe: the task's current state, followed
+    # live by every further event a driver still running against it
+    # produces. See `DefaultHandler.subscribeToTask` for the terminal-task
+    # rejection and the attach-before-snapshot ordering.
     #
     # + id - The task id
     # + owner - The caller's resolved owner scope, or `()`
@@ -333,8 +334,9 @@ isolated service class DispatcherService {
         if !self.card.capabilities.streaming {
             return serverStreamingUnsupportedError("subscribeToTask");
         }
-        StreamResponse[] events = check self.handler.subscribeToTask({id}, owner);
-        return check eventsToSseStream(events);
+        stream<StreamResponse, Error?> events = check self.handler.subscribeToTask({id}, owner);
+        stream<http:SseEvent, error?> framed = new (new SseFramingGenerator(events));
+        return framed;
     }
 
     # Routes one of the four push-notification config operations, all under
@@ -456,31 +458,13 @@ isolated function wireEnvelopeFor(StreamResponse value) returns json|error {
     return {[arm]: wired};
 }
 
-# Frames a pre-computed `StreamResponse` list as an SSE event stream, in
-# order. Used by `subscribeToTask`, whose snapshot-only stream this
-# release still computes eagerly (see `DefaultHandler.subscribeToTask`);
-# `sendStreamingMessage` frames live instead, via `SseFramingGenerator`.
-#
-# + events - The events to frame, in order
-# + return - The SSE stream, or an error if any event failed to wire-encode
-isolated function eventsToSseStream(StreamResponse[] events) returns stream<http:SseEvent, error?>|Error {
-    http:SseEvent[] sseEvents = [];
-    foreach StreamResponse event in events {
-        json|error envelope = wireEnvelopeFor(event);
-        if envelope is error {
-            return wrapTransportError(envelope);
-        }
-        sseEvents.push({data: envelope.toJsonString()});
-    }
-    return sseEvents.toStream();
-}
-
 # Frames a live `stream<StreamResponse, Error?>` as SSE, event by event, as
-# each one arrives -- the generator underlying `sendStreamingMessage`'s
-# (and, from a later commit, `subscribeToTask`'s) response.
+# each one arrives -- the generator underlying both `sendStreamingMessage`'s
+# and `subscribeToTask`'s responses.
 #
-# A value wire-encodes the same way `eventsToSseStream` does. A stream
-# ending with an `Error` completion -- `DefaultHandler.finishDrivenTask`
+# A value wire-encodes via `wireEnvelopeFor`, the same as a plain HTTP JSON
+# response would. A stream ending with an `Error` completion --
+# `DefaultHandler.finishDrivenTask`
 # ending a live tap this way when a task's driving turn itself failed --
 # is framed as a named `event: error` SSE frame carrying the same
 # `restErrorBody` shape `toRestErrorResponse` would use for a plain HTTP

@@ -218,21 +218,20 @@ function testServerRoundTripSendStreamingMessageDirectReply() returns error? {
 
 @test:Config {}
 function testServerRoundTripSubscribeToTask() returns error? {
+    // Per specification 3.1.6, a task already in a terminal state cannot
+    // be subscribed to. The echo agent always finishes inside its own
+    // sendMessage call, so by the time this test's own subscribeToTask
+    // request reaches the server, the task it names is already
+    // TASK_STATE_COMPLETED -- exactly the case this rejects.
     Client c = check echoClient();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "subscribe me"}]}
     });
 
-    stream<StreamResponse, error?> events = check c->subscribeToTask({id: created.id});
-    StreamResponse first = check expectStreamValue(events);
-    test:assertTrue(first is Task, "subscribeToTask's first event must be the task's current state");
-    test:assertEquals((<Task>first).id, created.id);
-    test:assertEquals((<Task>first).status.state, TASK_STATE_COMPLETED);
-
-    record {| StreamResponse value; |}|error? second = events.next();
-    test:assertTrue(second is (),
-            "the echo agent always finishes inside its own sendMessage call, so a subsequent " +
-            "subscribeToTask only ever sees a terminal snapshot and the stream closes immediately");
+    stream<StreamResponse, error?>|Error result = c->subscribeToTask({id: created.id});
+    test:assertTrue(result is UnsupportedOperationError,
+            "subscribeToTask on an already-terminal task must be a2a:UnsupportedOperationError, " +
+            "not a one-event snapshot");
 }
 
 @test:Config {}

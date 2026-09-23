@@ -338,30 +338,56 @@ isolated class DefaultHandler {
         return result;
     }
 
-    # Handles subscribeToTask: the task's current state, as a one-event
-    # stream.
+    # Handles subscribeToTask: the task's current state, followed by every
+    # further event a driver still running against it produces, live.
     #
-    # Per specification 3.1.6, the first event on a genuine subscribe is the
-    # task's current state. This release has no live cross-request following
-    # of a task still being driven by another in-flight call -- `onMessage`
-    # always finishes inside the request that started it (see
-    # `sendStreamingMessage`), so by the time a separate subscribeToTask
-    # request can reach the server the task is already in the state that
-    # request's own `sendMessage`/`sendStreamingMessage` call left it in, and
-    # that snapshot is all there ever will be to see. The stream is therefore
-    # always exactly one event, closing immediately after -- correct for a
-    # task already terminal, and a documented scope boundary (not a bug) for
-    # one still notionally in progress on another connection.
+    # Per specification 3.1.6, a task already in a terminal state cannot be
+    # subscribed to -- `UnsupportedOperationError`, the same rejection
+    # `sendMessage`/`sendStreamingMessage` give a message aimed at one.
+    # (This corrects this server's previous behavior, which answered a
+    # one-event snapshot instead; see the changelog.) Otherwise, the tap
+    # attaches to the task's broadcaster *before* the snapshot actually
+    # streamed is read -- attach-then-read can duplicate one event if a
+    # driver writes between the two (harmless: a client already reconciles
+    # on task state), but read-then-attach can lose one in the same window,
+    # which is not recoverable once missed.
     #
     # + request - The task identifier
     # + owner - The caller's resolved owner scope, or `()`
-    # + return - The one-event stream, or a TaskNotFoundError
-    isolated function subscribeToTask(SubscribeToTaskRequest request, string? owner) returns StreamResponse[]|Error {
+    # + return - The live stream, a TaskNotFoundError, or an
+    #            UnsupportedOperationError if the task is already terminal
+    isolated function subscribeToTask(SubscribeToTaskRequest request, string? owner)
+            returns stream<StreamResponse, Error?>|Error {
         Task? task = check self.store.get(request.id, owner);
         if task is () {
             return taskNotFound(request.id);
         }
-        return [task];
+        if isTerminalState(task.status.state) {
+            string msg = string `task ${request.id} is in terminal state ${task.status.state} `
+                + "and cannot be subscribed to";
+            return error UnsupportedOperationError(msg, message = msg, code = -32004);
+        }
+
+        EventBroadcaster broadcaster = self.registry.subscribe(request.id);
+        EventTap tap = broadcaster.newTap(self.streamIdleTimeout);
+
+        // Re-read after attaching, not the copy from the existence check
+        // above -- a driver may have written between the two, and the
+        // snapshot prepended must be the freshest one available.
+        Task? fresh = check self.store.get(request.id, owner);
+        if fresh is () {
+            // The task existed moments ago and was removed before this
+            // tap could attach -- only possible for a direct-Message
+            // reply's seed removal, racing implausibly close to this
+            // call. Nothing further will ever be broadcast to it either,
+            // so report it the same way a subscribe that never found the
+            // task at all would.
+            return taskNotFound(request.id);
+        }
+        tap.prependSnapshot(fresh);
+
+        stream<StreamResponse, Error?> result = new (tap);
+        return result;
     }
 
     # Handles getTask.
