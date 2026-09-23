@@ -72,7 +72,15 @@ listener Listener extendedCardListener = new (EXTENDED_CARD_TEST_PORT, agentCard
 });
 
 // A minimal agent: echoes the inbound text back as a completed task's
-// artifact, unless the text is "ping", which gets a direct Message reply.
+// artifact, with a handful of trigger texts for the checkpoints live
+// streaming and error handling need to test deterministically:
+// - "ping": a direct Message reply, no task at all.
+// - "ask": pauses at TASK_STATE_INPUT_REQUIRED, for continuation tests.
+// - "boom": onMessage returns an a2a:Error directly.
+// - "panic": onMessage panics, for driveTask's own `trap` to catch.
+// - "paced:<key>": blocks at each of three checkpoints on the Gate
+//   registered under <key> (see testutil.bal's registerGate), for
+//   deterministic live-streaming and multi-subscriber fan-out tests.
 isolated service class EchoAgent {
     *Service;
 
@@ -87,6 +95,34 @@ isolated service class EchoAgent {
         }
         if text == "ping" {
             return {messageId: "reply-1", role: ROLE_AGENT, parts: [{text: "pong"}]};
+        }
+        if text == "ask" {
+            check updater->working();
+            check updater->requireInput({
+                messageId: "ask-1",
+                role: ROLE_AGENT,
+                parts: [{text: "need more information"}]
+            });
+            return;
+        }
+        if text == "boom" {
+            string msg = "agent exploded";
+            return error InternalError(msg, message = msg);
+        }
+        if text == "panic" {
+            panic error("agent panicked");
+        }
+        if text.startsWith("paced:") {
+            Gate? gate = gateFor(text.substring(6));
+            if gate is Gate {
+                gate.awaitStep(1);
+                check updater->working();
+                gate.awaitStep(2);
+                check updater->addArtifact([{text: "paced artifact"}]);
+                gate.awaitStep(3);
+                check updater->complete();
+            }
+            return;
         }
         check updater->working();
         check updater->addArtifact([{text: string `echo: ${text}`}]);
@@ -259,6 +295,64 @@ isolated function pollUntilTerminal(Client c, string taskId) returns Task|error 
 }
 
 @test:Config {}
+function testServerRoundTripContinuePausedTaskSucceeds() returns error? {
+    // The happy path: "ask" pauses at TASK_STATE_INPUT_REQUIRED with no
+    // driver left running (onMessage already returned), so continuing it
+    // is a clean, non-racing acquire.
+    Client c = check echoClient();
+    Task paused = <Task>check c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "ask"}]}
+    });
+    test:assertEquals(paused.status.state, TASK_STATE_INPUT_REQUIRED);
+
+    Task|Message reply = check c->sendMessage({
+        message: {
+            messageId: "m2",
+            role: ROLE_USER,
+            taskId: paused.id,
+            contextId: paused.contextId,
+            parts: [{text: "here is more information"}]
+        }
+    });
+    test:assertTrue(reply is Task, "continuing the paused task must drive it, not reply directly");
+    Task completed = <Task>reply;
+    test:assertEquals(completed.id, paused.id, "continuation must drive the SAME task, not mint a new one");
+    test:assertEquals(completed.status.state, TASK_STATE_COMPLETED,
+            "the continuation text isn't a trigger, so the echo agent completes it normally");
+
+    Message[] history = completed?.history ?: [];
+    test:assertEquals(history.length(), 1, "the continuation message must be appended to the task's history");
+    test:assertEquals(history[0].messageId, "m2");
+}
+
+@test:Config {}
+function testServerRoundTripAgentErrorFailsTask() returns error? {
+    Client c = check echoClient();
+    Task submitted = <Task>check c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "boom"}]},
+        configuration: {returnImmediately: true}
+    });
+    Task finished = check pollUntilTerminal(c, submitted.id);
+    test:assertEquals(finished.status.state, TASK_STATE_FAILED,
+            "an agent-returned Error must transition the task to FAILED");
+    Message? statusMessage = finished.status?.message;
+    test:assertTrue(statusMessage is Message, "the failure must be recorded as the task's status message");
+    test:assertEquals((<Message>statusMessage).parts[0]?.text, "agent exploded");
+}
+
+@test:Config {}
+function testServerRoundTripAgentPanicFailsTask() returns error? {
+    Client c = check echoClient();
+    Task submitted = <Task>check c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "panic"}]},
+        configuration: {returnImmediately: true}
+    });
+    Task finished = check pollUntilTerminal(c, submitted.id);
+    test:assertEquals(finished.status.state, TASK_STATE_FAILED,
+            "a panic in agent code must be trapped and transition the task to FAILED, not crash the server");
+}
+
+@test:Config {}
 function testServerRoundTripGetTask() returns error? {
     Client c = check echoClient();
     Task created = <Task>check c->sendMessage({
@@ -360,6 +454,69 @@ function testServerRoundTripSubscribeToUnknownTaskIsTyped() returns error? {
     stream<StreamResponse, error?>|Error result = c->subscribeToTask({id: "does-not-exist"});
     test:assertTrue(result is TaskNotFoundError,
             "an unknown task must round-trip as a2a:TaskNotFoundError through the google.rpc.Status body");
+}
+
+@test:Config {}
+function testServerRoundTripMultiSubscriberFanOut() returns error? {
+    // The real proof of specification 3.5.2: two concurrent streams
+    // following one in-flight task must see the same further events, in
+    // the same order, deterministically -- not by runtime:sleep timing
+    // luck. EchoAgent's "paced:<key>" trigger blocks at each of its three
+    // checkpoints on the Gate registered under <key>, so this test decides
+    // exactly when each event broadcasts.
+    Client c = check echoClient();
+    Gate gate = new;
+    string key = "fanout-1";
+    registerGate(key, gate);
+
+    // sendStreamingMessage's own client call blocks until the server's
+    // response begins, which here means until the agent's first
+    // checkpoint releases -- so step 1 is opened concurrently, on its own
+    // strand, rather than after the call returns.
+    future<()> _ = start gate.advanceTo(1);
+    stream<StreamResponse, error?> primary = check c->sendStreamingMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "paced:" + key}]}
+    });
+
+    StreamResponse primarySeed = check expectStreamValue(primary);
+    test:assertTrue(primarySeed is Task, "the first event must be the lazily-emitted seed Task");
+    string taskId = (<Task>primarySeed).id;
+    StreamResponse primaryWorking = check expectStreamValue(primary);
+    test:assertTrue(primaryWorking is TaskStatusUpdateEvent);
+    test:assertEquals((<TaskStatusUpdateEvent>primaryWorking).status.state, TASK_STATE_WORKING);
+
+    // A second subscriber attaches only now -- after the task already
+    // exists and is WORKING, mid-drive -- and must still see every
+    // further event the first subscriber does, identically and in the
+    // same order.
+    stream<StreamResponse, error?> secondary = check c->subscribeToTask({id: taskId});
+    StreamResponse secondarySnapshot = check expectStreamValue(secondary);
+    test:assertTrue(secondarySnapshot is Task, "a late subscriber's first event is the task's current snapshot");
+    test:assertEquals((<Task>secondarySnapshot).status.state, TASK_STATE_WORKING);
+
+    gate.advanceTo(2);
+    StreamResponse primaryArtifact = check expectStreamValue(primary);
+    StreamResponse secondaryArtifact = check expectStreamValue(secondary);
+    test:assertTrue(primaryArtifact is TaskArtifactUpdateEvent);
+    test:assertTrue(secondaryArtifact is TaskArtifactUpdateEvent);
+    test:assertEquals((<TaskArtifactUpdateEvent>primaryArtifact).artifact.artifactId,
+            (<TaskArtifactUpdateEvent>secondaryArtifact).artifact.artifactId,
+            "both subscribers must see the identical artifact event");
+
+    gate.advanceTo(3);
+    StreamResponse primaryDone = check expectStreamValue(primary);
+    StreamResponse secondaryDone = check expectStreamValue(secondary);
+    test:assertTrue(primaryDone is TaskStatusUpdateEvent);
+    test:assertTrue(secondaryDone is TaskStatusUpdateEvent);
+    test:assertEquals((<TaskStatusUpdateEvent>primaryDone).status.state, TASK_STATE_COMPLETED);
+    test:assertEquals((<TaskStatusUpdateEvent>secondaryDone).status.state, TASK_STATE_COMPLETED);
+
+    // Both streams must end now: the task is terminal, so the broadcaster
+    // closed -- closing one stream must not affect the other.
+    record {| StreamResponse value; |}|error? primaryEnd = primary.next();
+    record {| StreamResponse value; |}|error? secondaryEnd = secondary.next();
+    test:assertTrue(primaryEnd is (), "the primary stream must close once the task completes");
+    test:assertTrue(secondaryEnd is (), "the secondary stream must close once the task completes");
 }
 
 isolated function expectStreamValue(stream<StreamResponse, error?> events) returns StreamResponse|error {
