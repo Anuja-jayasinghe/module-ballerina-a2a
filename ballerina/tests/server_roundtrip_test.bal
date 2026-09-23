@@ -139,6 +139,64 @@ function testServerRoundTripDirectMessageReply() returns error? {
 }
 
 @test:Config {}
+function testServerRoundTripContinueUnknownTaskIsTyped() returns error? {
+    // Per specification 3.4.2, a client cannot name a task into existence --
+    // message.taskId naming an id the server has never seen is
+    // TaskNotFoundError, not "create a new task with this id".
+    Client c = check echoClient();
+    Task|Message|Error result = c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, taskId: "does-not-exist", parts: [{text: "hello"}]}
+    });
+    test:assertTrue(result is TaskNotFoundError,
+            "an unrecognized message.taskId must be TaskNotFoundError");
+}
+
+@test:Config {}
+function testServerRoundTripContinueTerminalTaskIsRejected() returns error? {
+    // The echo agent always finishes synchronously, so by the time this
+    // test's own continuation attempt reaches the server, the task it
+    // names is already TASK_STATE_COMPLETED -- specification 3.1.1
+    // forbids sending it a further message.
+    Client c = check echoClient();
+    Task created = <Task>check c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hello"}]}
+    });
+    Task|Message|Error result = c->sendMessage({
+        message: {
+            messageId: "m2",
+            role: ROLE_USER,
+            taskId: created.id,
+            contextId: created.contextId,
+            parts: [{text: "again"}]
+        }
+    });
+    test:assertTrue(result is UnsupportedOperationError,
+            "a message continuing an already-terminal task must be UnsupportedOperationError");
+}
+
+@test:Config {}
+function testServerRoundTripContinueMismatchedContextIdIsRejected() returns error? {
+    // Per specification 3.4.3, a message whose contextId disagrees with
+    // the task it names by taskId must be rejected outright, not silently
+    // reconciled either way.
+    Client c = check echoClient();
+    Task created = <Task>check c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hello"}]}
+    });
+    Task|Message|Error result = c->sendMessage({
+        message: {
+            messageId: "m2",
+            role: ROLE_USER,
+            taskId: created.id,
+            contextId: "a-different-context-entirely",
+            parts: [{text: "again"}]
+        }
+    });
+    test:assertTrue(result is InvalidAgentResponseError,
+            "a message.contextId that disagrees with the continued task's own must be rejected");
+}
+
+@test:Config {}
 function testServerRoundTripGetTask() returns error? {
     Client c = check echoClient();
     Task created = <Task>check c->sendMessage({

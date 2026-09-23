@@ -25,6 +25,22 @@
 import ballerina/time;
 import ballerina/uuid;
 
+# What `DefaultHandler.resolveTaskForSend` hands `sendMessage`/
+# `sendStreamingMessage`: the task id and context id to drive, its
+# current stored state to seed the `TaskUpdater` with, and whether this
+# is a fresh task (as opposed to a continuation of one that already
+# existed before this call).
+type ResolvedSendTarget record {|
+    # The task id to drive
+    string taskId;
+    # The task's context id
+    string contextId;
+    # The task's current stored state, to seed the `TaskUpdater` with
+    Task seed;
+    # Whether `taskId` was freshly seeded for this call
+    boolean isNewTask;
+|};
+
 isolated class DefaultHandler {
     private final Service agentService;
     private final TaskStore store;
@@ -58,9 +74,10 @@ isolated class DefaultHandler {
         self.streamIdleTimeout = streamIdleTimeout;
     }
 
-    # Handles sendMessage: create a task, run the developer's `onMessage`
-    # against it, and return the finished task — or the direct `Message` the
-    # agent returned instead.
+    # Handles sendMessage: create a task (or continue an existing one named
+    # by `message.taskId`), run the developer's `onMessage` against it, and
+    # return the finished task — or the direct `Message` the agent returned
+    # instead.
     #
     # A client-supplied `contextId` is honoured; otherwise one is generated and
     # carried on the task, as section 3.4.1 requires.
@@ -72,24 +89,18 @@ isolated class DefaultHandler {
     isolated function sendMessage(SendMessageRequest request, string? tenant, string? owner) returns Task|Message|Error {
         check validateOutboundMessage(request.message);
 
-        string contextId = request.message?.contextId ?: uuid:createType4AsString();
-        string taskId = uuid:createType4AsString();
-
-        // Seed the task as submitted before handing control to the agent, so a
-        // concurrent getTask sees it exists.
-        Task seed = {
-            id: taskId,
-            contextId,
-            status: {state: TASK_STATE_SUBMITTED, timestamp: time:utcToString(time:utcNow())}
-        };
-        check self.store.put(seed, owner);
+        ResolvedSendTarget target = check self.resolveTaskForSend(request, owner);
+        string taskId = target.taskId;
+        string contextId = target.contextId;
+        Task seed = target.seed;
 
         // A client cannot name a taskId that doesn't exist yet, so the
         // spec's own registration channel for this case is inline on the
         // send request itself -- "leave unset in a sendMessage request"
         // doc-commented on TaskPushNotificationConfig.taskId. The task now
-        // exists (just seeded above), so registering it here needs no
-        // existence check, unlike createTaskPushNotificationConfig's own.
+        // exists (either just seeded, or already did as the task
+        // continued), so registering it here needs no existence check,
+        // unlike createTaskPushNotificationConfig's own.
         TaskPushNotificationConfig? inlineConfig = request?.configuration?.taskPushNotificationConfig;
         if inlineConfig is TaskPushNotificationConfig {
             TaskPushNotificationConfig _ = self.registerPushConfig(taskId, inlineConfig);
@@ -97,10 +108,10 @@ isolated class DefaultHandler {
 
         EventBroadcaster? broadcaster = self.registry.acquire(taskId);
         if broadcaster is () {
-            // Unreachable with today's always-fresh, random taskId; becomes
-            // real once a future commit lets a client continue an existing
-            // task -- a second concurrent message to one already being
-            // driven is a clean rejection, not two TaskUpdaters racing.
+            // A second concurrent message to a task already being driven
+            // -- only reachable via continuation, since a fresh taskId is
+            // always unique. A clean rejection rather than two
+            // TaskUpdaters racing each other.
             string msg = string `task ${taskId} is already being processed`;
             return error UnsupportedOperationError(msg, message = msg, code = -32004);
         }
@@ -113,7 +124,8 @@ isolated class DefaultHandler {
         };
         final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster);
 
-        future<Task|Message|Error> f = start self.driveTask(taskId, owner, context.clone(), updater, broadcaster);
+        future<Task|Message|Error> f =
+            start self.driveTask(taskId, owner, context.clone(), updater, broadcaster, target.isNewTask);
         Task|Message|Error result = self.awaitDriveTask(f);
         boolean stopped = resultStopped(result);
         if stopped {
@@ -129,6 +141,78 @@ isolated class DefaultHandler {
             return result;
         }
         return invalidAgentResponse("driveTask returned an unexpected type");
+    }
+
+    # Resolves the task a sendMessage/sendStreamingMessage call drives: a
+    # fresh `TASK_STATE_SUBMITTED` task, already stored; or, when
+    # `message.taskId` names one, that task continued -- not yet
+    # re-stored (the caller's own store write, via `TaskUpdater`, is what
+    # actually persists the appended history).
+    #
+    # Per specification 3.4.2, an unrecognized `taskId` is never treated
+    # as "create a new task with this id" -- a client cannot name a task
+    # into existence -- so an unknown id is `TaskNotFoundError`. Per
+    # 3.4.3, a `contextId` that disagrees with the task's own is rejected
+    # outright rather than one silently overriding the other, and the
+    # continuation's own `contextId` is what the rest of the call uses
+    # either way. Gated on terminal state only, per specification 3.1.1
+    # ("messages sent to tasks in a terminal state... cannot accept
+    # further messages") -- any non-terminal state may be continued; the
+    # actual concurrency guard against two overlapping drivers is
+    # `registry.acquire`'s interlock in the caller, not a narrower state
+    # restriction here.
+    #
+    # + request - The decoded send request
+    # + owner - The caller's resolved owner scope, or `()`
+    # + return - The resolved target, or an error
+    private isolated function resolveTaskForSend(SendMessageRequest request, string? owner)
+            returns ResolvedSendTarget|Error {
+        string? continuedTaskId = request.message?.taskId;
+        if continuedTaskId is () {
+            string contextId = request.message?.contextId ?: uuid:createType4AsString();
+            string taskId = uuid:createType4AsString();
+            // Seed the task as submitted before handing control to the
+            // agent, so a concurrent getTask sees it exists.
+            Task seed = {
+                id: taskId,
+                contextId,
+                status: {state: TASK_STATE_SUBMITTED, timestamp: time:utcToString(time:utcNow())}
+            };
+            check self.store.put(seed, owner);
+            return {taskId, contextId, seed, isNewTask: true};
+        }
+
+        Task? existing = check self.store.get(continuedTaskId, owner);
+        if existing is () {
+            return taskNotFound(continuedTaskId);
+        }
+        // Every task this library creates has a contextId -- it is set
+        // unconditionally by resolveTaskForSend's own fresh-task branch
+        // above -- so an empty fallback here is unreachable in practice;
+        // the field is merely optional in the wire type itself.
+        string existingContextId = existing.contextId ?: "";
+        string? suppliedContextId = request.message?.contextId;
+        if suppliedContextId is string && suppliedContextId != existingContextId {
+            string msg = string `message.contextId "${suppliedContextId}" does not match task `
+                + string `${continuedTaskId}'s own contextId "${existingContextId}"`;
+            return invalidAgentResponse(msg);
+        }
+        if isTerminalState(existing.status.state) {
+            string msg = string `task ${continuedTaskId} is in terminal state ${existing.status.state} `
+                + "and cannot accept further messages";
+            return error UnsupportedOperationError(msg, message = msg, code = -32004);
+        }
+
+        Message[] history = existing?.history is Message[] ? (<Message[]>existing?.history).clone() : [];
+        history.push(request.message.clone());
+        existing.history = history;
+        // Persisted immediately, like the fresh-task branch's own seed
+        // write above -- otherwise a concurrent getTask, arriving before
+        // onMessage's first TaskUpdater call, would see this message
+        // missing from history until the agent happens to touch the
+        // updater for an unrelated reason.
+        check self.store.put(existing, owner);
+        return {taskId: continuedTaskId, contextId: existingContextId, seed: existing, isNewTask: false};
     }
 
     # Runs `onMessage` for one task, detached from the request that started
@@ -154,18 +238,26 @@ isolated class DefaultHandler {
     #                 `Message` reply (which never touches `updater`) is
     #                 pushed here instead, the one event a live
     #                 `sendStreamingMessage` subscriber must still see
+    # + isNewTask - Whether `taskId` was freshly seeded for this call
+    #               (as opposed to an existing task being continued) --
+    #               controls whether a direct `Message` reply removes it
+    #               from the store, below
     # + return - The direct `Message`, the finished `Task`, or an `Error`
     private isolated function driveTask(string taskId, string? owner, RequestContext context, TaskUpdater updater,
-            EventBroadcaster broadcaster) returns Task|Message|Error {
+            EventBroadcaster broadcaster, boolean isNewTask) returns Task|Message|Error {
         Message|Error?|error direct = trap self.agentService->onMessage(context, updater);
 
         if direct is Message {
-            // A direct reply: the seeded task is not part of the
-            // conversation, so drop it and hand the Message back. Pushed
-            // to the broadcaster (not through updater -- a direct reply
-            // never touches it) so a live sendStreamingMessage subscriber
-            // sees exactly this one event, per specification 3.1.2.
-            check self.store.remove(taskId, owner);
+            // A direct reply on a fresh task: the seeded task was never
+            // part of the conversation, so drop it and hand the Message
+            // back. A direct reply on a *continued* task, by contrast,
+            // leaves that task's already-real history and state alone --
+            // it existed before this call and the client already holds
+            // its id, so a reply this call happens not to route through
+            // the updater must not erase it.
+            if isNewTask {
+                check self.store.remove(taskId, owner);
+            }
             broadcaster.push(direct);
             return direct;
         }
@@ -249,9 +341,10 @@ isolated class DefaultHandler {
     # + context - The message and request context to hand to `onMessage`
     # + updater - The bound updater; already carries the broadcaster and base
     # + broadcaster - The task's broadcaster
+    # + isNewTask - Forwarded to `driveTask`
     private isolated function finishDrivenTask(string taskId, string? owner, RequestContext context,
-            TaskUpdater updater, EventBroadcaster broadcaster) {
-        Task|Message|Error result = self.driveTask(taskId, owner, context, updater, broadcaster);
+            TaskUpdater updater, EventBroadcaster broadcaster, boolean isNewTask) {
+        Task|Message|Error result = self.driveTask(taskId, owner, context, updater, broadcaster, isNewTask);
         boolean stopped = resultStopped(result);
         if result is Error {
             // driveTask already best-effort transitioned the task to
@@ -295,15 +388,10 @@ isolated class DefaultHandler {
             returns stream<StreamResponse, Error?>|Error {
         check validateOutboundMessage(request.message);
 
-        string contextId = request.message?.contextId ?: uuid:createType4AsString();
-        string taskId = uuid:createType4AsString();
-
-        Task seed = {
-            id: taskId,
-            contextId,
-            status: {state: TASK_STATE_SUBMITTED, timestamp: time:utcToString(time:utcNow())}
-        };
-        check self.store.put(seed, owner);
+        ResolvedSendTarget target = check self.resolveTaskForSend(request, owner);
+        string taskId = target.taskId;
+        string contextId = target.contextId;
+        Task seed = target.seed;
 
         // See sendMessage's identical block: the task now exists, so an
         // inline config can be registered without an existence check.
@@ -332,7 +420,8 @@ isolated class DefaultHandler {
         };
         final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster);
 
-        future<()> _ = start self.finishDrivenTask(taskId, owner, context.clone(), updater, broadcaster);
+        future<()> _ =
+            start self.finishDrivenTask(taskId, owner, context.clone(), updater, broadcaster, target.isNewTask);
 
         stream<StreamResponse, Error?> result = new (tap);
         return result;
