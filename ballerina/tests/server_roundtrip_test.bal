@@ -385,6 +385,29 @@ function testServerRoundTripCancelTask() returns error? {
 }
 
 @test:Config {}
+function testServerRoundTripErrorStatusCodesMatchSpecTable() returns error? {
+    // The typed Client decodes purely by ErrorInfo.reason, so it cannot
+    // catch a wrong HTTP status on its own -- these go around it with a
+    // raw http:Client to check the wire status directly, per
+    // specification section 5.4's error-code mapping table.
+    map<string> headers = {"A2A-Version": "1.0"};
+    http:Client raw = check new (serverUrl);
+
+    Task created = <Task>check (check echoClient())->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "already done"}]}
+    });
+    http:Response cancelResponse = check raw->post(string `/tasks/${created.id}:cancel`, (), headers);
+    test:assertEquals(cancelResponse.statusCode, http:STATUS_CONFLICT,
+            "TaskNotCancelableError must be 409 Conflict, not 400 -- it's a state conflict, not a bad request");
+
+    // echoListener never configures an extended card.
+    http:Response cardResponse = check raw->get("/extendedAgentCard", headers);
+    test:assertEquals(cardResponse.statusCode, http:STATUS_BAD_REQUEST,
+            "ExtendedAgentCardNotConfiguredError must be 400, not 404 -- it's the server's own " +
+            "configuration, not a missing resource the request named");
+}
+
+@test:Config {}
 function testServerRoundTripSendStreamingMessage() returns error? {
     Client c = check echoClient();
     stream<StreamResponse, error?> events = check c->sendStreamingMessage({

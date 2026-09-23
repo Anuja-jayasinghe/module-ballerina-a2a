@@ -42,7 +42,11 @@ isolated function errorBindingFor(Error err) returns ErrorBinding {
         return {status: http:STATUS_NOT_FOUND, reason: "TASK_NOT_FOUND"};
     }
     if err is TaskNotCancelableError {
-        return {status: http:STATUS_BAD_REQUEST, reason: "TASK_NOT_CANCELABLE"};
+        // Per specification section 5.4's error-code mapping table: a
+        // task in a state that cannot legally accept this transition is
+        // a conflict with the resource's current state, not a malformed
+        // request.
+        return {status: http:STATUS_CONFLICT, reason: "TASK_NOT_CANCELABLE"};
     }
     if err is PushNotificationNotSupportedError {
         return {status: http:STATUS_BAD_REQUEST, reason: "PUSH_NOTIFICATION_NOT_SUPPORTED"};
@@ -54,10 +58,16 @@ isolated function errorBindingFor(Error err) returns ErrorBinding {
         return {status: http:STATUS_UNSUPPORTED_MEDIA_TYPE, reason: "CONTENT_TYPE_NOT_SUPPORTED"};
     }
     if err is InvalidAgentResponseError {
-        return {status: http:STATUS_BAD_REQUEST, reason: "INVALID_AGENT_RESPONSE"};
+        // Per the same table: the agent's own response was the problem,
+        // not the client's request -- a bad-gateway condition, not a
+        // bad-request one.
+        return {status: http:STATUS_BAD_GATEWAY, reason: "INVALID_AGENT_RESPONSE"};
     }
     if err is ExtendedAgentCardNotConfiguredError {
-        return {status: http:STATUS_NOT_FOUND, reason: "EXTENDED_AGENT_CARD_NOT_CONFIGURED"};
+        // Per the same table: this is the server's own configuration --
+        // no extended card was set up -- not the absence of a resource
+        // named by the request.
+        return {status: http:STATUS_BAD_REQUEST, reason: "EXTENDED_AGENT_CARD_NOT_CONFIGURED"};
     }
     if err is ExtensionSupportRequiredError {
         return {status: http:STATUS_BAD_REQUEST, reason: "EXTENSION_SUPPORT_REQUIRED"};
