@@ -21,3 +21,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Add Task-Scoped Push-Notification Configuration Storage and an Optional Extended Agent Card to the Server
 - Add `TaskOwnerResolver` for Per-Caller Task and Push-Notification-Config Visibility Scoping, per Specification Section 13.1
 - Add Real Push-Notification Delivery via `PushNotificationSender`, with `HttpPushNotificationSender` Rejecting Non-Public Webhook URLs by Default per Specification Section 13.2
+- Run `onMessage` Detached from the Request That Started It, so a Separate `subscribeToTask` Call Can Follow a Task Still in Progress
+- Stream `sendStreamingMessage` and `subscribeToTask` Live, with Correct Multi-Subscriber Fan-Out per Specification Section 3.5.2
+- Add Task Continuation via `message.taskId`, per Specification Sections 3.4.2 and 3.4.3
+- Honor `SendMessageConfiguration.returnImmediately`, Returning a Task Before `onMessage` Finishes
+
+### Fixed
+
+- `subscribeToTask` on an Already-Terminal Task Now Correctly Answers `UnsupportedOperationError` per Specification Section 3.1.6, Instead of a One-Event Snapshot
+- A Panic or Returned `Error` from `onMessage` Now Transitions the Task to `TASK_STATE_FAILED` Instead of Leaving It at Whatever State It Was Left In

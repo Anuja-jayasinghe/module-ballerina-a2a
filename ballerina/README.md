@@ -313,9 +313,44 @@ check updater->requireInput(promptMessage);
 check updater->complete();
 ```
 
-`requireInput` pauses the task; a later message to the same task runs `onMessage` again. Every call is persisted through the attached `a2a:TaskStore`. `onMessage` runs to completion within the request that started it, so a stream returned by `sendStreamingMessage` or `subscribeToTask` replays what `onMessage` already did rather than following a task still in progress. `requireAuth` is the same shape as `requireInput`, for a task that needs the caller to authorize.
+`requireInput` pauses the task at `TASK_STATE_INPUT_REQUIRED`; a later message continuing the same task (see [section 7.2](#72-live-streaming-and-continuing-a-task)) runs `onMessage` again. Every call is persisted through the attached `a2a:TaskStore`. `requireAuth` is the same shape as `requireInput`, for a task that needs the caller to authorize.
 
-### 7.2 Task storage
+`onMessage` runs detached from the request that started it, so a slow or long-running agent never blocks a separate `subscribeToTask` call from attaching to the same task's events as they happen. A panic in `onMessage` is caught and transitions the task to `TASK_STATE_FAILED` with the panic's message, the same as returning an `a2a:Error` does -- neither crashes the server or strands the task at whatever state it was left in.
+
+### 7.2 Live streaming and continuing a task
+
+`sendStreamingMessage` and `subscribeToTask` both return a live stream: events arrive as `onMessage` produces them, not replayed after the fact. Two callers following the same task -- a `sendStreamingMessage` caller and a later `subscribeToTask` caller, or several `subscribeToTask` callers -- each see every event from the point they attached, in the same order; closing one stream does not affect another (specification section 3.5.2). `subscribeToTask` on a task already in a terminal state is `UnsupportedOperationError`, not a snapshot -- there is nothing further it could ever stream (specification section 3.1.6).
+
+A client continues an existing, non-terminal task by setting `message.taskId` on a later `sendMessage`/`sendStreamingMessage` call:
+
+```ballerina
+a2a:Task|a2a:Message reply = check agent->sendMessage({
+    message: {
+        messageId: "msg-2",
+        role: a2a:ROLE_USER,
+        taskId: pausedTask.id,
+        contextId: pausedTask.contextId,
+        parts: [{text: "here is the information you asked for"}]
+    }
+});
+```
+
+`onMessage` runs again against the same task, with the continuing message appended to its `history`. An unrecognized `taskId` is `TaskNotFoundError` -- a client cannot name a new task into existence this way (specification section 3.4.2); a `contextId` that disagrees with the task's own is rejected; a task already terminal cannot be continued (`UnsupportedOperationError`), the same rejection a second concurrent message to a task still being driven gets. Any non-terminal state can be continued, not only `TASK_STATE_INPUT_REQUIRED`/`TASK_STATE_AUTH_REQUIRED`.
+
+`sendMessage`'s default behavior is unchanged: it blocks until the task reaches a terminal or interrupted state, or `onMessage` replies with a direct `a2a:Message`. Set `configuration.returnImmediately: true` to instead get the task back as soon as it exists, without waiting:
+
+```ballerina
+a2a:Task submitted = <a2a:Task>check agent->sendMessage({
+    message: {messageId: "msg-1", role: a2a:ROLE_USER, parts: [{text: "start this"}]},
+    configuration: {returnImmediately: true}
+});
+```
+
+`onMessage` keeps running detached either way. This removes the implicit backpressure a blocking `sendMessage` gave for free -- every concurrent task used to hold a worker for its full duration -- so a deployment expecting many concurrent long-running tasks under `returnImmediately: true` should plan capacity accordingly. `returnImmediately` has no effect on `sendStreamingMessage`, which already runs detached and streams live regardless (specification's own text); if `onMessage` replies with a direct `a2a:Message` under `returnImmediately: true`, the caller already holds the task's id from the immediate-return snapshot, so the task completes with that `a2a:Message` as its final `status.message` instead of the task disappearing as if it never existed.
+
+`streamIdleTimeout` on `ListenerConfiguration` (default 300 seconds) bounds how long a live stream may sit with no event before the server ends it -- the backstop for a client that disconnects without the transport surfacing it as a clean close.
+
+### 7.3 Task storage
 
 ```ballerina
 listener a2a:Listener agent = new (9090, agentCard = card, taskStore = new MyDatabaseTaskStore());
@@ -323,7 +358,7 @@ listener a2a:Listener agent = new (9090, agentCard = card, taskStore = new MyDat
 
 `a2a:InMemoryTaskStore` is the default, and its tasks do not survive a restart. Implement `a2a:TaskStore` (`put`, `get`, `list`, `remove`) to back an agent with real storage. `list` must sort by status timestamp, newest first, and omit `artifacts` unless asked.
 
-### 7.3 The extended Agent Card
+### 7.4 The extended Agent Card
 
 ```ballerina
 listener a2a:Listener agent = new (9090, agentCard = publicCard, extendedAgentCard = richerCard);
@@ -331,7 +366,7 @@ listener a2a:Listener agent = new (9090, agentCard = publicCard, extendedAgentCa
 
 Left unset, `capabilities.extendedAgentCard` is `false` and a request for it fails with `ExtendedAgentCardNotConfiguredError`. Configuring one flips the capability on and serves the card from `GET /extendedAgentCard`.
 
-### 7.4 Push notifications
+### 7.5 Push notifications
 
 An agent can register, read, list and remove a task's webhook configuration, and this listener actually calls it: whenever a task it drives reaches a new state — including cancellation — every webhook registered for that task gets a POST of the task's current JSON. Delivery is fire-and-forget: a webhook that is unreachable or errors does not fail the operation that triggered it.
 
@@ -366,7 +401,7 @@ listener a2a:Listener agent = new (9090, agentCard = card,
 
 `validateUrl: false` is the escape hatch a deployment with a legitimately internal webhook host needs. The check is by URL form, not by resolving the hostname — a name that only resolves to a private address at connect time (DNS rebinding) is not caught; supply your own `a2a:PushNotificationSender` to close that gap with whatever resolution your deployment trusts.
 
-### 7.5 Task ownership and authorization scoping
+### 7.6 Task ownership and authorization scoping
 
 Specification section 13.1 requires that "clients can only access authorized tasks." By default this listener does not enforce that — every task is visible to every caller, in one shared pool. Supply a `TaskOwnerResolver` to change that:
 
