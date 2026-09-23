@@ -199,9 +199,12 @@ isolated service class DispatcherService {
         }
 
         string|http:HeaderNotFoundError header = req.getHeader("A2A-Extensions");
-        string[] declared = header is string
-            ? from string uri in re `,`.split(header) select uri.trim()
-            : [];
+        string[] declared = [];
+        if header is string {
+            foreach string uri in re `,`.split(header) {
+                declared.push(uri.trim());
+            }
+        }
 
         foreach AgentExtension ext in extensions {
             string? uri = ext.uri;
