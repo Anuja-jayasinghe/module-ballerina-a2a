@@ -352,6 +352,14 @@ isolated service class DispatcherService {
     # + return - The response, or an error to serialise
     private isolated function onPushNotificationConfigs(string method, string path, string? owner, http:Request req)
             returns http:Response|Error {
+        // Per specification section 3.3.4, capability validation applies
+        // to Create/Get/List/Delete explicitly -- all four route through
+        // here, so one gate covers all four, the same way
+        // cardDeniesPushNotifications gates all four on the client side.
+        if !self.card.capabilities.pushNotifications {
+            return serverPushNotificationsUnsupportedError("push-notification-config operations");
+        }
+
         int marker = <int>path.indexOf(PUSH_NOTIFICATION_CONFIGS_SEGMENT);
         string taskId = path.substring(TASKS_PATH_PREFIX.length(), marker);
         string rest = path.substring(marker + PUSH_NOTIFICATION_CONFIGS_SEGMENT.length());
@@ -434,6 +442,21 @@ isolated service class DispatcherService {
 isolated function serverStreamingUnsupportedError(string operation) returns UnsupportedOperationError {
     string msg = string `${operation}: this agent's capabilities.streaming is false`;
     return error UnsupportedOperationError(msg, message = msg, code = -32004);
+}
+
+# Builds the server-side rejection for a push-notification-config
+# operation called against a card that does not declare
+# `capabilities.pushNotifications`. Distinct from `errors.bal`'s
+# client-side `pushNotificationsUnsupportedError`, which rejects before a
+# request is even sent; this one is what a client sees on the wire when
+# it sends one anyway. Per specification section 3.3.4, applies to
+# Create/Get/List/Delete alike.
+#
+# + operation - The operation name, for the message
+# + return - The typed error
+isolated function serverPushNotificationsUnsupportedError(string operation) returns PushNotificationNotSupportedError {
+    string msg = string `${operation}: this agent's capabilities.pushNotifications is false`;
+    return error PushNotificationNotSupportedError(msg, message = msg, code = -32003);
 }
 
 # Wraps one already-computed `StreamResponse` value into the oneof-envelope
