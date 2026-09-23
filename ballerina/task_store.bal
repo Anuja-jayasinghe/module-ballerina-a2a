@@ -26,7 +26,7 @@ import ballerina/time;
 
 # Whether a task state is terminal — no further transition is legal from it.
 #
-# The four terminal states are fixed by the specification (section 3.1.1):
+# The four terminal states are fixed by the specification ([section 3.1.1](https://a2a-protocol.org/latest/specification/#311-send-message)):
 # a message sent to a task in one of these must be refused.
 #
 # + state - The state to classify
@@ -64,7 +64,7 @@ public type TaskStore isolated object {
     # Retrieves a task by id, scoped to `owner`.
     #
     # A task that exists under a different owner must be indistinguishable
-    # from one that does not exist at all -- specification section 13.1
+    # from one that does not exist at all -- [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping)
     # requires that a server not reveal the existence of a resource the
     # caller is not authorized to access.
     #
@@ -97,7 +97,7 @@ public type TaskStore isolated object {
 #
 # Holds tasks in a map guarded by a lock, enforces the specification's task
 # state machine on every update, and orders `list` by status timestamp
-# descending as section 3.1.4 requires. Tasks do not survive a restart — a
+# descending as [section 3.1.4](https://a2a-protocol.org/latest/specification/#314-list-tasks) requires. Tasks do not survive a restart — a
 # production agent supplies its own `a2a:TaskStore` instead.
 public isolated class InMemoryTaskStore {
     *TaskStore;
@@ -122,7 +122,7 @@ public isolated class InMemoryTaskStore {
     # machine.
     #
     # A task already in a terminal state cannot be transitioned again: the
-    # four terminal states are final per specification section 3.1.1, so an
+    # four terminal states are final per [specification section 3.1.1](https://a2a-protocol.org/latest/specification/#311-send-message), so an
     # attempt to move one is a caller error, not a silent overwrite. A task
     # id already stored under a different owner is the same kind of
     # conflict -- reported as `a2a:TaskNotFoundError`, not a
@@ -163,7 +163,7 @@ public isolated class InMemoryTaskStore {
     public isolated function get(string id, string? owner) returns Task?|Error {
         lock {
             if self.taskOwners[id] != owner {
-                return ();
+                return;
             }
             Task? task = self.tasks[id];
             return task is Task ? task.clone() : ();

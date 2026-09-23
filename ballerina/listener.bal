@@ -28,10 +28,10 @@ public type ListenerConfiguration record {|
     # The richer card `getExtendedAgentCard` returns to callers who request
     # it. Unset means the agent does not implement the operation: the
     # derived card declares `capabilities.extendedAgentCard` false, and a
-    # request for it fails with `a2a:ExtendedAgentCardNotConfiguredError`.
+    # request for it fails with `a2a:UnsupportedOperationError`.
     AgentCard? extendedAgentCard = ();
     # Resolves each request's caller to an owner scope, for task-visibility
-    # scoping per specification section 13.1. Unset means every task is
+    # scoping per [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping). Unset means every task is
     # visible to every caller — this server's behavior before this field
     # existed. See `a2a:TaskOwnerResolver`.
     TaskOwnerResolver? ownerResolver = ();

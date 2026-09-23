@@ -377,7 +377,8 @@ isolated function encodeAgentCardForWire(AgentCard card) returns json {
     json[]|error skillsJson = encoded["skills"].ensureType();
     if skillsJson is json[] {
         foreach int i in 0 ..< skillsJson.length() {
-            SecurityRequirement[]? skillRequirements = i < card.skills.length() ? card.skills[i].securityRequirements : ();
+            SecurityRequirement[]? skillRequirements =
+                i < card.skills.length() ? card.skills[i].securityRequirements : ();
             if skillRequirements is SecurityRequirement[] {
                 map<json>|error skillMap = skillsJson[i].ensureType();
                 if skillMap is map<json> {

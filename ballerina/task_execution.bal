@@ -133,11 +133,11 @@ isolated class EventTap {
                     return pending;
                 }
                 if self.closed {
-                    return ();
+                    return;
                 }
             }
             if self.idleTimeout > 0d && waited >= self.idleTimeout {
-                return ();
+                return;
             }
             runtime:sleep(EVENT_POLL_INTERVAL);
             waited += EVENT_POLL_INTERVAL;
@@ -161,7 +161,7 @@ isolated class EventTap {
 
 # Fans one task's events out to every subscriber currently following it.
 #
-# Per specification section 3.5.2: every active stream for a task receives
+# Per [specification section 3.5.2](https://a2a-protocol.org/latest/specification/#352-streaming-event-delivery): every active stream for a task receives
 # the same events in the same order, and closing one stream must not
 # affect another.
 isolated class EventBroadcaster {
@@ -257,7 +257,7 @@ isolated class TaskExecutionRegistry {
     isolated function acquire(string taskId) returns EventBroadcaster? {
         lock {
             if self.driving[taskId] == true {
-                return ();
+                return;
             }
             self.driving[taskId] = true;
             EventBroadcaster broadcaster = self.broadcasters[taskId] ?: new;

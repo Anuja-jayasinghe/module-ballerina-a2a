@@ -53,7 +53,7 @@ isolated class DefaultHandler {
     private map<map<TaskPushNotificationConfig>> pushConfigs = {};
     // The richer card `getExtendedAgentCard` returns, if the developer
     // configured one. `()` means the operation always answers
-    // ExtendedAgentCardNotConfiguredError -- deriveServedCard already
+    // UnsupportedOperationError -- deriveServedCard already
     // reflects this in capabilities.extendedAgentCard.
     private final (AgentCard & readonly)? extendedCard;
     private final PushNotificationSender pushSender;
@@ -80,13 +80,14 @@ isolated class DefaultHandler {
     # instead.
     #
     # A client-supplied `contextId` is honoured; otherwise one is generated and
-    # carried on the task, as section 3.4.1 requires.
+    # carried on the task, as [section 3.4.1](https://a2a-protocol.org/latest/specification/#341-context-identifier-semantics) requires.
     #
     # + request - The decoded send request
     # + tenant - The tenant the request was routed under, or `()`
     # + owner - The caller's resolved owner scope, or `()`
     # + return - The finished Task or a direct Message, or an error
-    isolated function sendMessage(SendMessageRequest request, string? tenant, string? owner) returns Task|Message|Error {
+    isolated function sendMessage(SendMessageRequest request, string? tenant, string? owner)
+            returns Task|Message|Error {
         check validateOutboundMessage(request.message);
 
         ResolvedSendTarget target = check self.resolveTaskForSend(request, owner);
@@ -550,7 +551,7 @@ isolated class DefaultHandler {
 
     # Handles cancelTask.
     #
-    # A task already in a terminal state cannot be canceled (section 3.1.1), so
+    # A task already in a terminal state cannot be canceled ([section 3.1.1](https://a2a-protocol.org/latest/specification/#311-send-message)), so
     # that is a TaskNotCancelableError.
     #
     # + request - The task identifier
@@ -647,7 +648,7 @@ isolated class DefaultHandler {
     # A task not visible to `owner` is treated identically to an unknown
     # config on a known task -- both are `TaskNotFoundError`, so a caller
     # cannot distinguish "not your task" from "no such config" by response
-    # shape, per specification section 13.1.
+    # shape, per [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping).
     #
     # + request - The parent task id and the config's own id
     # + owner - The caller's resolved owner scope, or `()`
@@ -677,7 +678,7 @@ isolated class DefaultHandler {
     # A task not visible to `owner` returns an empty page, matching this
     # operation's existing behavior for a genuinely unknown task -- neither
     # case is an error, and the two must stay indistinguishable per
-    # specification section 13.1.
+    # [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping).
     #
     # + request - The parent task id
     # + owner - The caller's resolved owner scope, or `()`
@@ -696,9 +697,9 @@ isolated class DefaultHandler {
         return {configs, nextPageToken: ""};
     }
 
-    # Handles deleteTaskPushNotificationConfig. Idempotent per specification
-    # section 3.1.10: deleting an unknown config is not an error -- and, for
-    # the same section 13.1 reasoning as `listTaskPushNotificationConfigs`,
+    # Handles deleteTaskPushNotificationConfig. Idempotent per [specification section 3.1.10](https://a2a-protocol.org/latest/specification/#3110-delete-push-notification-config):
+    # deleting an unknown config is not an error -- and, for the same
+    # [section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping) reasoning as `listTaskPushNotificationConfigs`,
     # neither is deleting on a task that exists but is not visible to
     # `owner`; both are a silent no-op, never distinguished from each other.
     #
@@ -751,7 +752,7 @@ isolated class DefaultHandler {
 
     # Handles getExtendedAgentCard.
     #
-    # Per specification section 3.3.4, the two failure reasons are
+    # Per [specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation), the two failure reasons are
     # distinct: `capabilities.extendedAgentCard` false/absent is
     # `UnsupportedOperationError`; declared `true` but no card actually
     # configured is `ExtendedAgentCardNotConfiguredError`. This listener's

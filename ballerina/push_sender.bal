@@ -218,16 +218,16 @@ isolated function parseIPv4(string host) returns int[]? {
         remaining = remaining.substring(dotIdx + 1);
     }
     if parts.length() != 4 {
-        return ();
+        return;
     }
     int[] result = [];
     foreach string part in parts {
         if part.length() == 0 || part.length() > 3 {
-            return ();
+            return;
         }
         int|error n = int:fromString(part);
         if n is error || n < 0 || n > 255 {
-            return ();
+            return;
         }
         result.push(n);
     }

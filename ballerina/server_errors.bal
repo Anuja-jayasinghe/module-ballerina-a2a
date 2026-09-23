@@ -31,7 +31,7 @@ type ErrorBinding record {|
 |};
 
 # Maps each Error subtype to its HTTP status and ErrorInfo.reason, per
-# specification section 11.6. The reasons are the same strings
+# [specification section 11.6](https://a2a-protocol.org/latest/specification/#116-error-handling). The reasons are the same strings
 # `toA2AErrorFromRest` decodes; keeping the two in one module is what makes
 # the round trip symmetrical.
 #
@@ -54,7 +54,7 @@ isolated function errorBindingFor(Error err) returns ErrorBinding {
         return {status: http:STATUS_BAD_REQUEST, reason: "CONTENT_TYPE_NOT_SUPPORTED"};
     }
     if err is InvalidAgentResponseError {
-        // Per specification section 5.4's error-code mapping table: the
+        // Per [specification section 5.4](https://a2a-protocol.org/latest/specification/#54-error-code-mappings)'s error-code mapping table: the
         // only two entries that aren't 400 are TaskNotFoundError (404,
         // above) and this one -- the agent's own response was the
         // problem, not the client's request.

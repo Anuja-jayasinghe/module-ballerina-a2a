@@ -159,8 +159,8 @@ isolated service class DispatcherService {
     }
 
     # Rejects a request whose A2A-Version header names anything but exactly
-    # 1.0. An absent header means 0.3 (section 3.6.2), which this v1.0-only
-    # server does not serve. Specification section 3.6.2 requires Major.Minor
+    # 1.0. An absent header means 0.3 ([section 3.6.2](https://a2a-protocol.org/latest/specification/#362-server-responsibilities)), which this v1.0-only
+    # server does not serve. That section requires Major.Minor
     # to match exactly and gives no guarantee that a later 1.x minor stays
     # wire-compatible with 1.0 -- so "1.1" is exactly as unsafe to accept as
     # "2.0" or "0.3" is. Matches the client-side requireV1Interface check.
@@ -180,10 +180,10 @@ isolated service class DispatcherService {
 
     # Rejects a request that omits a required extension.
     #
-    # Per specification section 3.3.4/4.6.3: an `AgentExtension` the card
+    # Per [specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation)/[4.6.3](https://a2a-protocol.org/latest/specification/#463-extension-versioning-and-compatibility): an `AgentExtension` the card
     # declares `required: true` is not optional the way an unrequired one
     # is -- a client that has not declared support for it (via the
-    # A2A-Extensions header, section 14.2.2) must not have its request
+    # A2A-Extensions header, [section 14.2.2](https://a2a-protocol.org/latest/specification/#1422-a2a-extensions-header)) must not have its request
     # silently processed as if the extension's requirements did not
     # apply. Extensions with no `uri` set are skipped -- nothing a client
     # could ever declare support for.
@@ -211,7 +211,6 @@ isolated service class DispatcherService {
                 return error ExtensionSupportRequiredError(msg, message = msg, code = -32008);
             }
         }
-        return;
     }
 
     # Splits an optional leading /{tenant} segment off the path.
@@ -314,7 +313,8 @@ isolated service class DispatcherService {
     # + owner - The caller's resolved owner scope, or `()`
     # + req - The HTTP request
     # + return - The response, or an error
-    private isolated function onSendMessage(string? tenant, string? owner, http:Request req) returns http:Response|Error {
+    private isolated function onSendMessage(string? tenant, string? owner, http:Request req)
+            returns http:Response|Error {
         json|error payload = req.getJsonPayload();
         if payload is error {
             return invalidAgentResponse(string `request body is not valid JSON: ${payload.message()}`);
@@ -391,7 +391,7 @@ isolated service class DispatcherService {
     # + return - The response, or an error to serialise
     private isolated function onPushNotificationConfigs(string method, string path, string? owner, http:Request req)
             returns http:Response|Error {
-        // Per specification section 3.3.4, capability validation applies
+        // Per [specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation), capability validation applies
         // to Create/Get/List/Delete explicitly -- all four route through
         // here, so one gate covers all four, the same way
         // cardDeniesPushNotifications gates all four on the client side.
@@ -488,7 +488,7 @@ isolated function serverStreamingUnsupportedError(string operation) returns Unsu
 # `capabilities.pushNotifications`. Distinct from `errors.bal`'s
 # client-side `pushNotificationsUnsupportedError`, which rejects before a
 # request is even sent; this one is what a client sees on the wire when
-# it sends one anyway. Per specification section 3.3.4, applies to
+# it sends one anyway. Per [specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation), applies to
 # Create/Get/List/Delete alike.
 #
 # + operation - The operation name, for the message
@@ -590,17 +590,17 @@ isolated function jsonResponse(json body) returns http:Response {
 }
 
 # Seconds a client may cache a served Agent Card before revalidating.
-# Per specification section 8.6.1: no particular value is mandated, only
+# Per [specification section 8.6.1](https://a2a-protocol.org/latest/specification/#861-server-requirements): no particular value is mandated, only
 # that it be "appropriate for the agent's expected update frequency" --
 # cards changing on redeploy rather than per-request, five minutes is a
 # reasonable, conservative default for a card this rarely changes.
 const int AGENT_CARD_CACHE_MAX_AGE_SECONDS = 300;
 
 # Serves an `AgentCard` (the well-known discovery card or the extended
-# one) with the caching headers specification section 8.6.1 asks for.
+# one) with the caching headers [section 8.6.1](https://a2a-protocol.org/latest/specification/#861-server-requirements) asks for.
 #
 # `ETag` uses the card's own `version` field, the simpler of the two
-# options 8.6.1 names (the other being a hash of the served content) --
+# options that section names (the other being a hash of the served content) --
 # sufficient since a served card's `version` is the developer's own,
 # presumed to change whenever the card's definition does.
 #

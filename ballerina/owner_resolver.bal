@@ -16,8 +16,8 @@
 
 // Server-side identity resolution, for task-visibility scoping. Mirrors
 // auth.bal's CredentialProvider in shape -- a pluggable, single-method
-// isolated object -- for the server's own equivalent need: specification
-// section 13.1 requires that "clients can only access authorized tasks,"
+// isolated object -- for the server's own equivalent need:
+// [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping) requires that "clients can only access authorized tasks,"
 // but the specification defines no mechanism for establishing who a caller
 // is. That is deployment policy, not protocol, so this library surfaces a
 // hook rather than inventing an authentication scheme.
@@ -38,7 +38,7 @@ import ballerina/http;
 # bearer token's subject claim, an mTLS certificate's principal, an API key
 # looked up against a directory. This resolves identity; it does not
 # authenticate it. A resolver that trusts an unverified header is not a
-# security boundary, and satisfying specification section 13.1 requires
+# security boundary, and satisfying [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping) requires
 # pairing this with real inbound authentication, which is deployment policy
 # this library does not prescribe.
 public type TaskOwnerResolver isolated object {

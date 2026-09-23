@@ -49,7 +49,7 @@ public isolated client class TaskUpdater {
     // Whether the task's current (pre-transition) state has been broadcast
     // yet. Emitted lazily, on the agent's first real touch of the updater
     // -- not eagerly at construction -- so a direct-Message reply's stream
-    // is exactly the one Message event specification section 3.1.2
+    // is exactly the one Message event [specification section 3.1.2](https://a2a-protocol.org/latest/specification/#312-send-streaming-message)
     // requires, never a spurious Task first.
     private boolean seedEmitted = false;
 
