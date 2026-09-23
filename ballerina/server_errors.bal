@@ -42,11 +42,7 @@ isolated function errorBindingFor(Error err) returns ErrorBinding {
         return {status: http:STATUS_NOT_FOUND, reason: "TASK_NOT_FOUND"};
     }
     if err is TaskNotCancelableError {
-        // Per specification section 5.4's error-code mapping table: a
-        // task in a state that cannot legally accept this transition is
-        // a conflict with the resource's current state, not a malformed
-        // request.
-        return {status: http:STATUS_CONFLICT, reason: "TASK_NOT_CANCELABLE"};
+        return {status: http:STATUS_BAD_REQUEST, reason: "TASK_NOT_CANCELABLE"};
     }
     if err is PushNotificationNotSupportedError {
         return {status: http:STATUS_BAD_REQUEST, reason: "PUSH_NOTIFICATION_NOT_SUPPORTED"};
@@ -55,13 +51,14 @@ isolated function errorBindingFor(Error err) returns ErrorBinding {
         return {status: http:STATUS_BAD_REQUEST, reason: "UNSUPPORTED_OPERATION"};
     }
     if err is ContentTypeNotSupportedError {
-        return {status: http:STATUS_UNSUPPORTED_MEDIA_TYPE, reason: "CONTENT_TYPE_NOT_SUPPORTED"};
+        return {status: http:STATUS_BAD_REQUEST, reason: "CONTENT_TYPE_NOT_SUPPORTED"};
     }
     if err is InvalidAgentResponseError {
-        // Per the same table: the agent's own response was the problem,
-        // not the client's request -- a bad-gateway condition, not a
-        // bad-request one.
-        return {status: http:STATUS_BAD_GATEWAY, reason: "INVALID_AGENT_RESPONSE"};
+        // Per specification section 5.4's error-code mapping table: the
+        // only two entries that aren't 400 are TaskNotFoundError (404,
+        // above) and this one -- the agent's own response was the
+        // problem, not the client's request.
+        return {status: http:STATUS_INTERNAL_SERVER_ERROR, reason: "INVALID_AGENT_RESPONSE"};
     }
     if err is ExtendedAgentCardNotConfiguredError {
         // Per the same table: this is the server's own configuration --

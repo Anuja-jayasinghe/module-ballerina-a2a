@@ -397,8 +397,8 @@ function testServerRoundTripErrorStatusCodesMatchSpecTable() returns error? {
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "already done"}]}
     });
     http:Response cancelResponse = check raw->post(string `/tasks/${created.id}:cancel`, (), headers);
-    test:assertEquals(cancelResponse.statusCode, http:STATUS_CONFLICT,
-            "TaskNotCancelableError must be 409 Conflict, not 400 -- it's a state conflict, not a bad request");
+    test:assertEquals(cancelResponse.statusCode, http:STATUS_BAD_REQUEST,
+            "TaskNotCancelableError must be 400 Bad Request per the spec's error table");
 
     // echoListener never configures an extended card.
     http:Response cardResponse = check raw->get("/extendedAgentCard", headers);
