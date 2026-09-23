@@ -89,9 +89,7 @@ isolated service class DispatcherService {
         // the request that fetches the card is what reveals it. This is how a
         // client that resolves the card then gets a usable URL to call.
         if method == "GET" && rawPath == "/.well-known/agent-card.json" {
-            http:Response cardResponse = new;
-            cardResponse.setJsonPayload(encodeAgentCardForWire(self.cardForHost(req)));
-            return cardResponse;
+            return cardHttpResponse(self.cardForHost(req));
         }
 
         Error? versionError = self.checkVersion(req);
@@ -272,7 +270,7 @@ isolated service class DispatcherService {
                 return self.onSendStreamingMessage(tenant, owner, req);
             }
             ["GET", "/extendedAgentCard"] => {
-                return jsonResponse(encodeAgentCardForWire(check self.handler.getExtendedAgentCard()));
+                return cardHttpResponse(check self.handler.getExtendedAgentCard());
             }
             ["GET", "/tasks"] => {
                 ListTasksRequest filter = queryToListFilter(req);
@@ -587,7 +585,31 @@ isolated function declaredTenant(AgentCard card) returns string? {
 # + return - The response
 isolated function jsonResponse(json body) returns http:Response {
     http:Response response = new;
-    response.setJsonPayload(body);
+    response.setJsonPayload(body, CONTENT_TYPE_A2A_JSON);
+    return response;
+}
+
+# Seconds a client may cache a served Agent Card before revalidating.
+# Per specification section 8.6.1: no particular value is mandated, only
+# that it be "appropriate for the agent's expected update frequency" --
+# cards changing on redeploy rather than per-request, five minutes is a
+# reasonable, conservative default for a card this rarely changes.
+const int AGENT_CARD_CACHE_MAX_AGE_SECONDS = 300;
+
+# Serves an `AgentCard` (the well-known discovery card or the extended
+# one) with the caching headers specification section 8.6.1 asks for.
+#
+# `ETag` uses the card's own `version` field, the simpler of the two
+# options 8.6.1 names (the other being a hash of the served content) --
+# sufficient since a served card's `version` is the developer's own,
+# presumed to change whenever the card's definition does.
+#
+# + card - The card to serve
+# + return - The HTTP response carrying it
+isolated function cardHttpResponse(AgentCard card) returns http:Response {
+    http:Response response = jsonResponse(encodeAgentCardForWire(card));
+    response.setHeader("Cache-Control", string `max-age=${AGENT_CARD_CACHE_MAX_AGE_SECONDS}`);
+    response.setHeader("ETag", string `"${card.version}"`);
     return response;
 }
 

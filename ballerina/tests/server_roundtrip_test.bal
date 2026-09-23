@@ -152,6 +152,32 @@ function testServerServesAgentCardForClientDiscovery() returns error? {
 }
 
 @test:Config {}
+function testServerServesAgentCardWithCachingHeaders() returns error? {
+    // Specification 8.6.1: Agent Card endpoints SHOULD carry Cache-Control
+    // and ETag response headers.
+    http:Client raw = check new (serverUrl);
+    http:Response resp = check raw->get("/.well-known/agent-card.json");
+    string cacheControl = check resp.getHeader("Cache-Control");
+    test:assertTrue(cacheControl.includes("max-age="), "the Agent Card response must declare a max-age");
+    string etag = check resp.getHeader("ETag");
+    test:assertTrue(etag.length() > 0, "the Agent Card response must carry an ETag");
+}
+
+@test:Config {}
+function testServerResponsesUseA2AJsonContentType() returns error? {
+    // Specification 11.1: application/a2a+json SHOULD be used for
+    // requests and responses. Checked on both a plain JSON response and
+    // an error response, since they're built through different code
+    // paths (jsonResponse/cardHttpResponse vs. toRestErrorResponse).
+    http:Client raw = check new (serverUrl);
+    http:Response cardResp = check raw->get("/.well-known/agent-card.json");
+    test:assertEquals(cardResp.getContentType(), "application/a2a+json");
+
+    http:Response errorResp = check raw->get("/tasks/does-not-exist", {"A2A-Version": "1.0"});
+    test:assertEquals(errorResp.getContentType(), "application/a2a+json");
+}
+
+@test:Config {}
 function testServerRoundTripSendMessageReturnsTask() returns error? {
     Client c = check echoClient();
     Task|Message reply = check c->sendMessage({

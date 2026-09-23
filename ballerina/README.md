@@ -364,7 +364,9 @@ listener a2a:Listener agent = new (9090, agentCard = card, taskStore = new MyDat
 listener a2a:Listener agent = new (9090, agentCard = publicCard, extendedAgentCard = richerCard);
 ```
 
-Left unset, `capabilities.extendedAgentCard` is `false` and a request for it fails with `ExtendedAgentCardNotConfiguredError`. Configuring one flips the capability on and serves the card from `GET /extendedAgentCard`.
+Left unset, `capabilities.extendedAgentCard` is `false` and a request for it fails with `UnsupportedOperationError`. Configuring one flips the capability on and serves the card from `GET /extendedAgentCard`.
+
+Specification section 13.3 requires this operation specifically to require authentication — more pointedly than the general punt in [section 7.6](#76-task-ownership-and-authorization-scoping): an extended card exists to reveal information the *public* card deliberately doesn't, so an unauthenticated deployment of this endpoint defeats its own purpose, not just the general authorization scoping other operations lose without a resolver. This listener has no request-time authentication mechanism of its own — same as every other operation — so putting one in front of `GET /extendedAgentCard` specifically (not just gating who can *see* which tasks, which `TaskOwnerResolver` already does) is the deploying operator's responsibility.
 
 ### 7.5 Push notifications
 

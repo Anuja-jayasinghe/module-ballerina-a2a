@@ -117,6 +117,6 @@ isolated function restErrorBody(Error err) returns json {
 isolated function toRestErrorResponse(Error err) returns http:Response {
     http:Response response = new;
     response.statusCode = errorBindingFor(err).status;
-    response.setJsonPayload(restErrorBody(err));
+    response.setJsonPayload(restErrorBody(err), CONTENT_TYPE_A2A_JSON);
     return response;
 }
