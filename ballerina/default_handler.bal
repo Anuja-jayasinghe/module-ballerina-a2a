@@ -124,8 +124,19 @@ isolated class DefaultHandler {
         };
         final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster);
 
+        boolean returnImmediately = request?.configuration?.returnImmediately ?: false;
+        if returnImmediately {
+            // The task already exists (seeded, or continued and
+            // persisted, above) -- hand it back now, without waiting for
+            // driveTask, which keeps running on its own detached strand
+            // exactly like sendStreamingMessage's own driver.
+            future<()> _ = start self.finishDrivenTask(
+                    taskId, owner, context.clone(), updater, broadcaster, target.isNewTask, true);
+            return seed;
+        }
+
         future<Task|Message|Error> f =
-            start self.driveTask(taskId, owner, context.clone(), updater, broadcaster, target.isNewTask);
+            start self.driveTask(taskId, owner, context.clone(), updater, broadcaster, target.isNewTask, false);
         Task|Message|Error result = self.awaitDriveTask(f);
         boolean stopped = resultStopped(result);
         if stopped {
@@ -242,19 +253,52 @@ isolated class DefaultHandler {
     #               (as opposed to an existing task being continued) --
     #               controls whether a direct `Message` reply removes it
     #               from the store, below
+    # + returnImmediately - Whether `sendMessage`'s caller already
+    #                        received this task's id before `onMessage`
+    #                        even started -- if so, a direct `Message`
+    #                        reply can no longer make the task disappear
+    #                        as if it never existed (see below). Always
+    #                        `false` from `sendStreamingMessage`, which
+    #                        the specification says this configuration
+    #                        field has no effect on: a live subscriber
+    #                        only ever learns a taskId once the seed is
+    #                        actually broadcast, which a direct reply
+    #                        never causes, so there is no early exposure
+    #                        to account for there.
     # + return - The direct `Message`, the finished `Task`, or an `Error`
     private isolated function driveTask(string taskId, string? owner, RequestContext context, TaskUpdater updater,
-            EventBroadcaster broadcaster, boolean isNewTask) returns Task|Message|Error {
+            EventBroadcaster broadcaster, boolean isNewTask, boolean returnImmediately) returns Task|Message|Error {
         Message|Error?|error direct = trap self.agentService->onMessage(context, updater);
 
         if direct is Message {
-            // A direct reply on a fresh task: the seeded task was never
-            // part of the conversation, so drop it and hand the Message
-            // back. A direct reply on a *continued* task, by contrast,
-            // leaves that task's already-real history and state alone --
-            // it existed before this call and the client already holds
-            // its id, so a reply this call happens not to route through
-            // the updater must not erase it.
+            if returnImmediately {
+                // The caller already received (and may already be
+                // relying on) this task's id, from the immediate-return
+                // snapshot sendMessage handed back before onMessage even
+                // started. A direct reply can no longer make the task
+                // disappear as if it never existed -- complete it with
+                // the Message as its final status.message instead, so a
+                // later getTask sees a real, resting task rather than
+                // one stuck at SUBMITTED forever. The Message is still
+                // broadcast in its own right first, so a live observer
+                // sees both the literal reply and the resulting
+                // COMPLETED status, same as any other addArtifact-then-
+                // complete sequence would produce.
+                broadcaster.push(direct);
+                Error? completeResult = updater->complete(direct);
+                if completeResult is Error {
+                    return completeResult;
+                }
+                return updater.currentTask();
+            }
+            // A direct reply on a fresh task under the default blocking
+            // contract: the seeded task was never part of the
+            // conversation, so drop it and hand the Message back. A
+            // direct reply on a *continued* task, by contrast, leaves
+            // that task's already-real history and state alone -- it
+            // existed before this call and the client already holds its
+            // id, so a reply this call happens not to route through the
+            // updater must not erase it.
             if isNewTask {
                 check self.store.remove(taskId, owner);
             }
@@ -319,16 +363,16 @@ isolated class DefaultHandler {
     }
 
     # Runs `driveTask` to completion and closes out its driving turn, all
-    # on one detached strand -- `sendStreamingMessage`'s equivalent of
-    # `sendMessage`'s `start self.driveTask(...)` immediately followed by
-    # `wait`, except nothing here is a synchronous caller's response, so
-    # there is nothing to hand the result back to. `driveTask` runs
-    # directly rather than through its own further `start`/`wait` pair --
-    # this whole method is already the detached strand `sendStreamingMessage`
-    # started, so a second layer of detachment underneath it would add
-    # nothing except a second future nobody needs (and passing a `future`
-    # itself as a `start` argument is not an isolated expression, so it is
-    # not even available as an option here).
+    # on one detached strand -- used both by `sendStreamingMessage`
+    # (always) and by `sendMessage` when `returnImmediately: true`, the
+    # two cases where nothing is synchronously waiting on `driveTask`'s
+    # own result, so there is nothing to hand it back to directly.
+    # `driveTask` runs directly rather than through its own further
+    # `start`/`wait` pair -- this whole method is already the detached
+    # strand its caller started, so a second layer of detachment
+    # underneath it would add nothing except a second future nobody needs
+    # (and passing a `future` itself as a `start` argument is not an
+    # isolated expression, so it is not even available as an option here).
     #
     # Order matters: the broadcaster only closes (or ends with an error)
     # once every live subscriber has already received whatever
@@ -342,9 +386,11 @@ isolated class DefaultHandler {
     # + updater - The bound updater; already carries the broadcaster and base
     # + broadcaster - The task's broadcaster
     # + isNewTask - Forwarded to `driveTask`
+    # + returnImmediately - Forwarded to `driveTask`
     private isolated function finishDrivenTask(string taskId, string? owner, RequestContext context,
-            TaskUpdater updater, EventBroadcaster broadcaster, boolean isNewTask) {
-        Task|Message|Error result = self.driveTask(taskId, owner, context, updater, broadcaster, isNewTask);
+            TaskUpdater updater, EventBroadcaster broadcaster, boolean isNewTask, boolean returnImmediately) {
+        Task|Message|Error result =
+            self.driveTask(taskId, owner, context, updater, broadcaster, isNewTask, returnImmediately);
         boolean stopped = resultStopped(result);
         if result is Error {
             // driveTask already best-effort transitioned the task to
@@ -420,8 +466,10 @@ isolated class DefaultHandler {
         };
         final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster);
 
-        future<()> _ =
-            start self.finishDrivenTask(taskId, owner, context.clone(), updater, broadcaster, target.isNewTask);
+        // returnImmediately has no effect on streaming per the
+        // specification -- always false here; see driveTask's own doc.
+        future<()> _ = start self.finishDrivenTask(
+                taskId, owner, context.clone(), updater, broadcaster, target.isNewTask, false);
 
         stream<StreamResponse, Error?> result = new (tap);
         return result;

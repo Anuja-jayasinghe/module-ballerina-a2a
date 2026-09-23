@@ -22,6 +22,7 @@
 // @test:BeforeSuite and stopped in @test:AfterSuite.
 
 import ballerina/http;
+import ballerina/lang.runtime;
 import ballerina/test;
 
 const int SERVER_TEST_PORT = 19234;
@@ -194,6 +195,67 @@ function testServerRoundTripContinueMismatchedContextIdIsRejected() returns erro
     });
     test:assertTrue(result is InvalidAgentResponseError,
             "a message.contextId that disagrees with the continued task's own must be rejected");
+}
+
+@test:Config {}
+function testServerRoundTripReturnImmediatelyHandsBackBeforeCompletion() returns error? {
+    Client c = check echoClient();
+    Task|Message reply = check c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hello"}]},
+        configuration: {returnImmediately: true}
+    });
+    test:assertTrue(reply is Task, "returnImmediately must still hand back the task, not wait for a reply");
+    Task submitted = <Task>reply;
+    test:assertEquals(submitted.status.state, TASK_STATE_SUBMITTED,
+            "the caller must see the task before the (fast, detached) echo agent has driven it further");
+
+    // driveTask keeps running detached; poll until it lands where a
+    // blocking sendMessage would have returned it synchronously.
+    Task finished = check pollUntilTerminal(c, submitted.id);
+    test:assertEquals(finished.status.state, TASK_STATE_COMPLETED);
+    Artifact[] artifacts = finished.artifacts ?: [];
+    test:assertEquals(artifacts.length(), 1);
+    test:assertEquals(artifacts[0].parts[0]?.text, "echo: hello");
+}
+
+@test:Config {}
+function testServerRoundTripReturnImmediatelyCompletesDirectMessageReply() returns error? {
+    // Per this server's resolution of a gap the specification leaves
+    // open: once the caller already holds a task id from the
+    // immediate-return snapshot, a direct Message reply can no longer
+    // make the task disappear as if it never existed -- it completes the
+    // task with the Message as its final status.message instead.
+    Client c = check echoClient();
+    Task|Message reply = check c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "ping"}]},
+        configuration: {returnImmediately: true}
+    });
+    test:assertTrue(reply is Task, "returnImmediately always hands back a Task, even for a direct-reply agent");
+    Task submitted = <Task>reply;
+
+    Task finished = check pollUntilTerminal(c, submitted.id);
+    test:assertEquals(finished.status.state, TASK_STATE_COMPLETED);
+    Message? statusMessage = finished.status?.message;
+    test:assertTrue(statusMessage is Message, "the direct Message reply must land as status.message");
+    test:assertEquals((<Message>statusMessage).parts[0]?.text, "pong");
+}
+
+# Polls getTask until the task reaches a terminal state, or fails the test
+# after a generous bound -- the echo agent's own work is near-instant, so a
+# real hang here means driveTask never ran at all, not a slow agent.
+#
+# + c - The client to poll through
+# + taskId - The task to poll
+# + return - The task, once terminal
+isolated function pollUntilTerminal(Client c, string taskId) returns Task|error {
+    foreach int _ in 0 ..< 100 {
+        Task task = check c->getTask({id: taskId});
+        if isTerminalState(task.status.state) {
+            return task;
+        }
+        runtime:sleep(0.05);
+    }
+    return error("task did not reach a terminal state in time");
 }
 
 @test:Config {}
