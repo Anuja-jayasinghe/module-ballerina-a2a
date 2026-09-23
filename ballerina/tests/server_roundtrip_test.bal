@@ -302,7 +302,7 @@ function testDefaultHandlerGetExtendedAgentCardFailsWhenNoneConfigured() returns
     // DefaultHandler without that same coupling, so it is exercised
     // directly here rather than left untested.
     TaskStore store = new InMemoryTaskStore();
-    DefaultHandler handler = new (new EchoAgent(), store, (), new HttpPushNotificationSender(), new);
+    DefaultHandler handler = new (new EchoAgent(), store, (), new HttpPushNotificationSender(), new, 300);
     AgentCard|Error result = handler.getExtendedAgentCard();
     test:assertTrue(result is ExtendedAgentCardNotConfiguredError,
             "no extended card configured must fail this specific way, not just any error");

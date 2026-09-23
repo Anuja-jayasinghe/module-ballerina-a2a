@@ -40,6 +40,15 @@ public type ListenerConfiguration record {|
     # `ownerResolver`, delivery needs no identity this library cannot
     # invent, so it has a working default rather than an optional hook.
     PushNotificationSender pushSender = new HttpPushNotificationSender();
+    # Seconds a live `sendStreamingMessage`/`subscribeToTask` stream may sit
+    # idle — no event, from a task still being driven — before the server
+    # ends it. The backstop for a client that disconnects without the HTTP
+    # layer surfacing it as a clean stream close; a healthy long-running
+    # task's own events reset this on every one they produce, so raising it
+    # only matters for a task that can legitimately sit silent for a long
+    # stretch (e.g. paused on `TASK_STATE_INPUT_REQUIRED`) with a
+    # subscriber still attached.
+    decimal streamIdleTimeout = 300;
 |};
 
 # Serves an A2A agent over the HTTP+JSON binding.
@@ -73,6 +82,7 @@ public isolated class Listener {
     private final (AgentCard & readonly)? extendedCard;
     private final TaskOwnerResolver? ownerResolver;
     private final PushNotificationSender pushSender;
+    private final decimal streamIdleTimeout;
     private DispatcherService? dispatcher = ();
 
     # Creates a Listener.
@@ -103,6 +113,7 @@ public isolated class Listener {
         self.card = deriveServedCard(agentCard, self.extendedCard is AgentCard).cloneReadOnly();
         self.ownerResolver = config.ownerResolver;
         self.pushSender = config.pushSender;
+        self.streamIdleTimeout = config.streamIdleTimeout;
     }
 
     # Attaches an `a2a:Service` to serve.
@@ -115,7 +126,8 @@ public isolated class Listener {
     # + return - An `a2a:Error` if attachment fails
     public isolated function attach(Service a2aService, string[]|string? name = ()) returns error? {
         TaskExecutionRegistry registry = new;
-        DefaultHandler handler = new (a2aService, self.store, self.extendedCard, self.pushSender, registry);
+        DefaultHandler handler = new (a2aService, self.store, self.extendedCard, self.pushSender, registry,
+                self.streamIdleTimeout);
         DispatcherService dispatcherService = new (self.card, handler, self.ownerResolver);
         lock {
             self.dispatcher = dispatcherService;

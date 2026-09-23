@@ -69,18 +69,17 @@ isolated function errorBindingFor(Error err) returns ErrorBinding {
     return {status: http:STATUS_INTERNAL_SERVER_ERROR, reason: "INTERNAL_ERROR"};
 }
 
-# Serialises an `a2a:Error` into an `http:Response`: the mapped status and a
-# `google.rpc.Status` body with an `ErrorInfo` entry in `details`.
-#
-# The body shape matches what `extractRestErrorReason`/`extractRestErrorMessage`
-# on the client side read, so a round trip preserves the error type.
+# Builds the `google.rpc.Status` body for an `a2a:Error`: the shape both
+# `toRestErrorResponse` (a plain HTTP error response) and the SSE
+# framing layer's `event: error` frame (a mid-stream failure, framed as
+# data rather than an HTTP status) carry identically -- the client's
+# `extractRestErrorReason`/`extractRestErrorMessage` read either the same
+# way.
 #
 # + err - The error to serialise
-# + return - The HTTP response carrying it
-isolated function toRestErrorResponse(Error err) returns http:Response {
+# + return - The body, keyed the same regardless of transport
+isolated function restErrorBody(Error err) returns json {
     ErrorBinding binding = errorBindingFor(err);
-    http:Response response = new;
-    response.statusCode = binding.status;
     map<json> errorInfo = {
         "@type": "type.googleapis.com/google.rpc.ErrorInfo",
         "reason": binding.reason,
@@ -91,13 +90,26 @@ isolated function toRestErrorResponse(Error err) returns http:Response {
     if data != () {
         errorInfo["metadata"] = data;
     }
-    json body = {
+    return {
         "error": {
             "code": binding.status,
             "message": err.message(),
             "details": [errorInfo]
         }
     };
-    response.setJsonPayload(body);
+}
+
+# Serialises an `a2a:Error` into an `http:Response`: the mapped status and a
+# `google.rpc.Status` body with an `ErrorInfo` entry in `details`.
+#
+# The body shape matches what `extractRestErrorReason`/`extractRestErrorMessage`
+# on the client side read, so a round trip preserves the error type.
+#
+# + err - The error to serialise
+# + return - The HTTP response carrying it
+isolated function toRestErrorResponse(Error err) returns http:Response {
+    http:Response response = new;
+    response.statusCode = errorBindingFor(err).status;
+    response.setJsonPayload(restErrorBody(err));
     return response;
 }

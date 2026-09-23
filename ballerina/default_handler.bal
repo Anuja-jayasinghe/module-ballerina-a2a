@@ -42,14 +42,20 @@ isolated class DefaultHandler {
     private final (AgentCard & readonly)? extendedCard;
     private final PushNotificationSender pushSender;
     private final TaskExecutionRegistry registry;
+    // How long a live tap waits idle before ending its stream -- the
+    // backstop for a client that disconnects without the HTTP layer
+    // surfacing it as a clean stream close. See `ListenerConfiguration.
+    // streamIdleTimeout`.
+    private final decimal streamIdleTimeout;
 
     isolated function init(Service agentService, TaskStore store, (AgentCard & readonly)? extendedCard,
-            PushNotificationSender pushSender, TaskExecutionRegistry registry) {
+            PushNotificationSender pushSender, TaskExecutionRegistry registry, decimal streamIdleTimeout) {
         self.agentService = agentService;
         self.store = store;
         self.extendedCard = extendedCard;
         self.pushSender = pushSender;
         self.registry = registry;
+        self.streamIdleTimeout = streamIdleTimeout;
     }
 
     # Handles sendMessage: create a task, run the developer's `onMessage`
@@ -107,13 +113,22 @@ isolated class DefaultHandler {
         };
         final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster);
 
-        future<Task|Message|Error> f = start self.driveTask(taskId, owner, context.clone(), updater);
-        Task|Message result = check self.awaitDriveTask(f);
-        self.registry.release(taskId, true);
+        future<Task|Message|Error> f = start self.driveTask(taskId, owner, context.clone(), updater, broadcaster);
+        Task|Message|Error result = self.awaitDriveTask(f);
+        boolean stopped = resultStopped(result);
+        if stopped {
+            broadcaster.close();
+        }
+        self.registry.release(taskId, stopped);
         if result is Task {
             self.notifyPushConfigs(taskId, result);
+            return result;
+        } else if result is Message {
+            return result;
+        } else if result is Error {
+            return result;
         }
-        return result;
+        return invalidAgentResponse("driveTask returned an unexpected type");
     }
 
     # Runs `onMessage` for one task, detached from the request that started
@@ -134,15 +149,24 @@ isolated class DefaultHandler {
     # + owner - The caller's resolved owner scope, or `()`
     # + context - The message and request context to hand to `onMessage`
     # + updater - The bound updater; already carries the broadcaster and base
+    # + broadcaster - The task's broadcaster -- `updater` only ever
+    #                 broadcasts a `Task`-lifecycle event, so a direct
+    #                 `Message` reply (which never touches `updater`) is
+    #                 pushed here instead, the one event a live
+    #                 `sendStreamingMessage` subscriber must still see
     # + return - The direct `Message`, the finished `Task`, or an `Error`
-    private isolated function driveTask(string taskId, string? owner, RequestContext context, TaskUpdater updater)
-            returns Task|Message|Error {
+    private isolated function driveTask(string taskId, string? owner, RequestContext context, TaskUpdater updater,
+            EventBroadcaster broadcaster) returns Task|Message|Error {
         Message|Error?|error direct = trap self.agentService->onMessage(context, updater);
 
         if direct is Message {
             // A direct reply: the seeded task is not part of the
-            // conversation, so drop it and hand the Message back.
+            // conversation, so drop it and hand the Message back. Pushed
+            // to the broadcaster (not through updater -- a direct reply
+            // never touches it) so a live sendStreamingMessage subscriber
+            // sees exactly this one event, per specification 3.1.2.
             check self.store.remove(taskId, owner);
+            broadcaster.push(direct);
             return direct;
         }
 
@@ -202,24 +226,73 @@ isolated class DefaultHandler {
         return wrapTransportError(<error>waited);
     }
 
-    # Handles sendStreamingMessage: like `sendMessage`, but returns every
-    # event `onMessage` produced, in generation order, for the caller to
-    # frame as SSE.
+    # Runs `driveTask` to completion and closes out its driving turn, all
+    # on one detached strand -- `sendStreamingMessage`'s equivalent of
+    # `sendMessage`'s `start self.driveTask(...)` immediately followed by
+    # `wait`, except nothing here is a synchronous caller's response, so
+    # there is nothing to hand the result back to. `driveTask` runs
+    # directly rather than through its own further `start`/`wait` pair --
+    # this whole method is already the detached strand `sendStreamingMessage`
+    # started, so a second layer of detachment underneath it would add
+    # nothing except a second future nobody needs (and passing a `future`
+    # itself as a `start` argument is not an isolated expression, so it is
+    # not even available as an option here).
     #
-    # `onMessage` runs to completion before this returns -- there is no
-    # concurrent task execution in this release, so the stream this produces
-    # is a replay of what already happened, not a live feed. What the client
-    # sees on the wire is identical either way: per specification 3.1.2, the
-    # stream begins with the Task object (here, its just-seeded SUBMITTED
-    # state) followed by the status/artifact events `onMessage` drove the
-    # task through, or -- for a direct reply -- exactly one Message event.
+    # Order matters: the broadcaster only closes (or ends with an error)
+    # once every live subscriber has already received whatever
+    # `TaskStatusUpdateEvent` the store write produced, so a stream never
+    # ends silently one event short of what a concurrent `getTask` would
+    # already show.
+    #
+    # + taskId - The task being driven
+    # + owner - The caller's resolved owner scope, or `()`
+    # + context - The message and request context to hand to `onMessage`
+    # + updater - The bound updater; already carries the broadcaster and base
+    # + broadcaster - The task's broadcaster
+    private isolated function finishDrivenTask(string taskId, string? owner, RequestContext context,
+            TaskUpdater updater, EventBroadcaster broadcaster) {
+        Task|Message|Error result = self.driveTask(taskId, owner, context, updater, broadcaster);
+        boolean stopped = resultStopped(result);
+        if result is Error {
+            // driveTask already best-effort transitioned the task to
+            // FAILED (pushing that TaskStatusUpdateEvent through the
+            // broadcaster via `updater`) before returning this Error --
+            // except when that best-effort transition itself failed (see
+            // driveTask's own comment), in which case no event reached
+            // the broadcaster at all. Either way, end every live
+            // subscriber's stream with this Error as its completion,
+            // rather than a silent close that leaves them unable to tell
+            // "the task finished" from "the task's driver crashed".
+            broadcaster.endWithError(result);
+        } else if stopped {
+            broadcaster.close();
+        }
+        self.registry.release(taskId, stopped);
+        if result is Task {
+            self.notifyPushConfigs(taskId, result);
+        }
+    }
+
+    # Handles sendStreamingMessage: like `sendMessage`, but returns a live
+    # stream of every event the task produces, for the caller to frame as
+    # SSE.
+    #
+    # `driveTask` runs detached, exactly as `sendMessage`'s does; the
+    # difference is this returns as soon as a tap is attached to the
+    # task's broadcaster, instead of waiting for `driveTask` to finish.
+    # Per specification 3.1.2, what reaches the wire is: the just-seeded
+    # Task (emitted lazily by `updater`, only once the agent actually
+    # touches it -- see `TaskUpdater`) followed by the status/artifact
+    # events `onMessage` drives the task through, or -- for a direct
+    # reply, which never touches `updater` -- exactly one Message event,
+    # pushed by `driveTask` itself.
     #
     # + request - The decoded send request
     # + tenant - The tenant the request was routed under, or `()`
     # + owner - The caller's resolved owner scope, or `()`
-    # + return - The events to stream, in order, or an error
+    # + return - A live stream of the task's events, or an error
     isolated function sendStreamingMessage(SendMessageRequest request, string? tenant, string? owner)
-            returns StreamResponse[]|Error {
+            returns stream<StreamResponse, Error?>|Error {
         check validateOutboundMessage(request.message);
 
         string contextId = request.message?.contextId ?: uuid:createType4AsString();
@@ -246,6 +319,11 @@ isolated class DefaultHandler {
             return error UnsupportedOperationError(msg, message = msg, code = -32004);
         }
 
+        // Attached before driveTask starts, so nothing it broadcasts can
+        // be missed between claiming the driver slot and this tap
+        // existing.
+        EventTap tap = broadcaster.newTap(self.streamIdleTimeout);
+
         final RequestContext context = {
             message: request.message,
             tenant,
@@ -254,23 +332,10 @@ isolated class DefaultHandler {
         };
         final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster);
 
-        // TODO(live streaming): the array built below becomes a live read
-        // from the broadcaster instead -- see the plan. Detached execution
-        // itself, and driveTask's own untouched/error handling, already
-        // apply here exactly as they do in sendMessage.
-        future<Task|Message|Error> f = start self.driveTask(taskId, owner, context.clone(), updater);
-        Task|Message result = check self.awaitDriveTask(f);
-        self.registry.release(taskId, true);
+        future<()> _ = start self.finishDrivenTask(taskId, owner, context.clone(), updater, broadcaster);
 
-        if result is Message {
-            return [result];
-        } else if result is Task {
-            StreamResponse[] events = [seed];
-            events.push(...updater.drainEvents());
-            self.notifyPushConfigs(taskId, result);
-            return events;
-        }
-        return invalidAgentResponse("driveTask returned neither a Task nor a Message");
+        stream<StreamResponse, Error?> result = new (tap);
+        return result;
     }
 
     # Handles subscribeToTask: the task's current state, as a one-event
@@ -517,6 +582,27 @@ isolated class DefaultHandler {
         string msg = "no extended AgentCard is configured for this agent";
         return error ExtendedAgentCardNotConfiguredError(msg, message = msg, code = -32007);
     }
+}
+
+# Whether a driven task's result marks a stopping point for its
+# broadcaster and its registry driver slot.
+#
+# A direct `Message` (the task was removed from the store entirely) and an
+# `Error` (driveTask already best-effort transitioned the task to the
+# terminal FAILED state) always are; a `Task` is one only if its own
+# `status.state` is terminal -- an interrupted state (INPUT_REQUIRED/
+# AUTH_REQUIRED) is not, so the task keeps its broadcaster and its driver
+# slot frees up for a later continuation to reacquire.
+#
+# + result - `driveTask`'s already-`wait`ed, panic-normalized result
+# + return - Whether the broadcaster should close (or end with an error)
+#            and the registry should drop this task's driver-in-progress
+#            bookkeeping
+isolated function resultStopped(Task|Message|Error result) returns boolean {
+    if result is Task {
+        return isTerminalState(result.status.state);
+    }
+    return true;
 }
 
 # Builds a TaskNotFoundError for an unknown task id.

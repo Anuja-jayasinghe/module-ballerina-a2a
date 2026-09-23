@@ -29,7 +29,7 @@
 //
 // Verified against real, empirically-run scratch packages this session,
 // not just read: `start` on an isolated method genuinely detaches an HTTP
-// request from the work it starts; a blocking, poll-based next() delivers
+// request from the work it starts; a blocking, poll-based next delivers
 // values live as a separate detached producer pushes them, not pre-computed;
 // multiple taps on one broadcaster each receive the identical sequence.
 // Two isolation rules surfaced by that spike, both applied throughout this
@@ -54,6 +54,11 @@ const decimal EVENT_POLL_INTERVAL = 0.05;
 isolated class EventTap {
     private StreamResponse[] queue = [];
     private boolean closed = false;
+    // Set by `endWithError`, consumed by the first `next` call that reaches an
+    // empty queue after -- matches `stream<T, E>`'s completion semantics,
+    // where the generator's `next` yields the completion error exactly
+    // once, after every already-queued value.
+    private Error? pendingError = ();
     private final decimal idleTimeout;
 
     # + idleTimeout - Seconds of no events before `next` gives up and
@@ -84,9 +89,24 @@ isolated class EventTap {
     }
 
     # No more events will ever be pushed; `next` drains what remains,
-    # then ends.
-    isolated function close() {
+    # then ends. Called by the producer side (`EventBroadcaster`) -- see
+    # `close` for the consumer-side equivalent a stream's own caller uses.
+    isolated function signalDone() {
         lock {
+            self.closed = true;
+        }
+    }
+
+    # Ends the stream with an error completion instead of a clean close --
+    # once the queue drains, `next` returns `err` exactly once instead of
+    # `()`. Used when a task's driving turn itself failed in a way no
+    # `TaskStatusUpdateEvent` already communicates (see
+    # `DefaultHandler.finishDrivenTask`).
+    #
+    # + err - The error to complete the stream with
+    isolated function endWithError(Error err) {
+        lock {
+            self.pendingError = err;
             self.closed = true;
         }
     }
@@ -107,6 +127,11 @@ isolated class EventTap {
                     StreamResponse v = self.queue.shift();
                     return {value: v.clone()};
                 }
+                Error? pending = self.pendingError;
+                if pending is Error {
+                    self.pendingError = ();
+                    return pending;
+                }
                 if self.closed {
                     return ();
                 }
@@ -116,6 +141,20 @@ isolated class EventTap {
             }
             runtime:sleep(EVENT_POLL_INTERVAL);
             waited += EVENT_POLL_INTERVAL;
+        }
+    }
+
+    # Consumer-side close: the stream's own caller is done reading (e.g.
+    # the HTTP connection dropped) -- required so `EventTap` satisfies
+    # `stream<T,E>`'s generator interface. Functionally identical to
+    # `signalDone`; kept as a separate, `public` method because that
+    # interface requires `close` specifically, and reusing the name would
+    # blur which side (producer vs. consumer) is signalling.
+    #
+    # + return - Always `()`; there is nothing that can fail here
+    public isolated function close() returns error? {
+        lock {
+            self.closed = true;
         }
     }
 }
@@ -151,7 +190,20 @@ isolated class EventBroadcaster {
     isolated function close() {
         lock {
             foreach EventTap tap in self.taps {
-                tap.close();
+                tap.signalDone();
+            }
+            self.closed = true;
+        }
+    }
+
+    # Ends every currently-open tap with an error completion instead of a
+    # clean close -- see `EventTap.endWithError`.
+    #
+    # + err - The error to complete every tap with
+    isolated function endWithError(Error err) {
+        lock {
+            foreach EventTap tap in self.taps {
+                tap.endWithError(err);
             }
             self.closed = true;
         }
@@ -170,7 +222,7 @@ isolated class EventBroadcaster {
         final EventTap tap = new (idleTimeout);
         lock {
             if self.closed {
-                tap.close();
+                tap.signalDone();
                 return tap;
             }
             self.taps.push(tap);

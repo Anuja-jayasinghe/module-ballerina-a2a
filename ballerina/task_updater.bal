@@ -52,14 +52,6 @@ public isolated client class TaskUpdater {
     // is exactly the one Message event specification section 3.1.2
     // requires, never a spurious Task first.
     private boolean seedEmitted = false;
-    // Every transition and artifact, in call order -- what
-    // `sendStreamingMessage` replays as the stream body once `onMessage`
-    // returns. Recorded regardless of whether this call turns out to be
-    // streaming; the unary path simply never reads it. Package-private:
-    // an `onMessage` author drives the updater, they don't read its history.
-    // TODO(live streaming): retired once sendStreamingMessage reads live
-    // from the broadcaster instead of draining this after the fact.
-    private StreamResponse[] events = [];
 
     # Binds an updater to a task. Called by the library, not by agent code.
     #
@@ -134,7 +126,6 @@ public isolated client class TaskUpdater {
             }
             self.touchedFlag = true;
             self.artifacts.push(artifact.clone());
-            self.events.push(event.clone());
         }
         if seed is Task {
             self.broadcaster.push(seed);
@@ -224,7 +215,6 @@ public isolated client class TaskUpdater {
             }
             self.touchedFlag = true;
             self.base = task.clone();
-            self.events.push(event.clone());
         }
         if seed is Task {
             self.broadcaster.push(seed);
@@ -261,21 +251,4 @@ public isolated client class TaskUpdater {
         }
     }
 
-    # The events recorded so far, in call order: one `TaskArtifactUpdateEvent`
-    # per `addArtifact` call and one `TaskStatusUpdateEvent` per transition
-    # call, interleaved exactly as the `onMessage` author made them.
-    #
-    # Package-private -- `sendStreamingMessage` reads this after `onMessage`
-    # returns to build the stream body; an `onMessage` author has no reason
-    # to read their own updater's history back.
-    #
-    # TODO(live streaming): retired once `sendStreamingMessage` reads live
-    # from the broadcaster instead of draining this after the fact.
-    #
-    # + return - The recorded events
-    isolated function drainEvents() returns StreamResponse[] {
-        lock {
-            return self.events.clone();
-        }
-    }
 }
