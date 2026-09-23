@@ -751,14 +751,23 @@ isolated class DefaultHandler {
 
     # Handles getExtendedAgentCard.
     #
-    # + return - The configured extended card, or
-    #            ExtendedAgentCardNotConfiguredError if none was set up
+    # Per specification section 3.3.4, the two failure reasons are
+    # distinct: `capabilities.extendedAgentCard` false/absent is
+    # `UnsupportedOperationError`; declared `true` but no card actually
+    # configured is `ExtendedAgentCardNotConfiguredError`. This listener's
+    # `deriveServedCard` ties the capability flag 1:1 to whether a card
+    # was configured, so the second case can never actually happen here
+    # -- an unconfigured card always means the capability reads `false`
+    # too, which is the first case.
+    #
+    # + return - The configured extended card, or an UnsupportedOperationError
+    #            if none was set up
     isolated function getExtendedAgentCard() returns AgentCard|Error {
         if self.extendedCard is AgentCard {
             return <AgentCard>self.extendedCard;
         }
-        string msg = "no extended AgentCard is configured for this agent";
-        return error ExtendedAgentCardNotConfiguredError(msg, message = msg, code = -32007);
+        string msg = "capabilities.extendedAgentCard is false: no extended AgentCard is configured for this agent";
+        return error UnsupportedOperationError(msg, message = msg, code = -32004);
     }
 }
 

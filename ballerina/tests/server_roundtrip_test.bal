@@ -400,10 +400,13 @@ function testServerRoundTripErrorStatusCodesMatchSpecTable() returns error? {
     test:assertEquals(cancelResponse.statusCode, http:STATUS_BAD_REQUEST,
             "TaskNotCancelableError must be 400 Bad Request per the spec's error table");
 
-    // echoListener never configures an extended card.
+    // echoListener never configures an extended card, so
+    // capabilities.extendedAgentCard reads false and this is
+    // UnsupportedOperationError (see getExtendedAgentCard's own doc) --
+    // still 400, not 404, either way.
     http:Response cardResponse = check raw->get("/extendedAgentCard", headers);
     test:assertEquals(cardResponse.statusCode, http:STATUS_BAD_REQUEST,
-            "ExtendedAgentCardNotConfiguredError must be 400, not 404 -- it's the server's own " +
+            "an unconfigured extended card's rejection must be 400, not 404 -- it's the server's own " +
             "configuration, not a missing resource the request named");
 }
 
@@ -594,17 +597,19 @@ function testServerRoundTripGetExtendedAgentCardWhenConfigured() returns error? 
 function testDefaultHandlerGetExtendedAgentCardFailsWhenNoneConfigured() returns error? {
     // Direct unit test, not a wire round trip: deriveServedCard ties
     // capabilities.extendedAgentCard to whether a card was configured, so
-    // this error can never actually reach a Client through echoListener's
-    // own wiring (the capability would already be false, and the Client
-    // would have refused client-side, per the test above). The branch is
-    // still real code for a future server built directly against
-    // DefaultHandler without that same coupling, so it is exercised
-    // directly here rather than left untested.
+    // this request never actually reaches a Client through echoListener's
+    // own wiring -- the Client already refuses client-side with the same
+    // UnsupportedOperationError this asserts, per the test above. The
+    // branch is still real code for a future server built directly
+    // against DefaultHandler without that same coupling, so it is
+    // exercised directly here rather than left untested.
     TaskStore store = new InMemoryTaskStore();
     DefaultHandler handler = new (new EchoAgent(), store, (), new HttpPushNotificationSender(), new, 300);
     AgentCard|Error result = handler.getExtendedAgentCard();
-    test:assertTrue(result is ExtendedAgentCardNotConfiguredError,
-            "no extended card configured must fail this specific way, not just any error");
+    test:assertTrue(result is UnsupportedOperationError,
+            "capabilities.extendedAgentCard false must be UnsupportedOperationError per specification 3.3.4, " +
+            "not ExtendedAgentCardNotConfiguredError -- that's reserved for capability true but still unconfigured, " +
+            "a state this listener's own deriveServedCard never lets happen");
 }
 
 // ---- push-notification config CRUD --------------------------------------
