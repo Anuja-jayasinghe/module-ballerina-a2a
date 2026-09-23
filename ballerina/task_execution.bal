@@ -297,4 +297,28 @@ isolated class TaskExecutionRegistry {
             }
         }
     }
+
+    # Finds a task's broadcaster if one already exists, without creating
+    # one -- for `cancelTask`, which has nothing useful to broadcast to a
+    # task nobody has ever driven or subscribed to, and must not claim or
+    # touch the driver slot: a driver may genuinely still be running (a
+    # live `sendStreamingMessage` subscriber can learn a taskId, and race
+    # a `cancelTask` against it, before `onMessage` returns), and
+    # `release`-ing that slot early here would let a second, concurrent
+    # `acquire` for the same task id succeed while the first driver is
+    # still actually running -- exactly the two-`TaskUpdater`s-racing
+    # situation the interlock exists to prevent. `InMemoryTaskStore`'s own
+    # terminal-state guard is what actually stops a still-running
+    # `onMessage`'s further writes once `cancelTask`'s own `store.put`
+    # below lands; the driver's own eventual `finishDrivenTask` still
+    # releases the slot once it returns, whatever it returns.
+    #
+    # + taskId - The task to look up
+    # + return - The existing broadcaster, or `()` if none has been
+    #            created yet
+    isolated function peekBroadcaster(string taskId) returns EventBroadcaster? {
+        lock {
+            return self.broadcasters[taskId];
+        }
+    }
 }

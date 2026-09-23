@@ -568,6 +568,21 @@ isolated class DefaultHandler {
         }
         task.status = {state: TASK_STATE_CANCELED, timestamp: time:utcToString(time:utcNow())};
         check self.store.put(task, owner);
+
+        // Only after the store write lands -- broadcasting first could
+        // hand a live subscriber a phantom CANCELED event for a
+        // transition the store then rejects (e.g. a concurrent driver's
+        // own write already moved the task to a different terminal
+        // state first). Subscribers are latency-sensitive; webhooks
+        // aren't, so this runs before notifyPushConfigs below. No
+        // registry.release here -- see peekBroadcaster's own doc for why.
+        EventBroadcaster? broadcaster = self.registry.peekBroadcaster(request.id);
+        if broadcaster is EventBroadcaster {
+            TaskStatusUpdateEvent event = {taskId: request.id, contextId: task.contextId ?: "", status: task.status};
+            broadcaster.push(event);
+            broadcaster.close();
+        }
+
         self.notifyPushConfigs(request.id, task);
         return task;
     }

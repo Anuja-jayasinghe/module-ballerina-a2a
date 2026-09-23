@@ -710,6 +710,36 @@ function testServerRoundTripPushNotificationDeliveryOnCompletion() returns error
 }
 
 @test:Config {}
+function testServerRoundTripCancelClosesLiveSubscriberStream() returns error? {
+    // "pause" leaves the task genuinely parked at TASK_STATE_WORKING with
+    // no driver left running (onMessage already returned) -- a
+    // deterministic, non-racing way to get a non-terminal task a live
+    // subscriber can attach to and this test can then cancel out from
+    // under it.
+    HttpClient c = check new (pushNotificationServerUrl);
+    Task created = <Task>check c->sendMessage({
+        message: {messageId: "m3", role: ROLE_USER, parts: [{text: "pause"}]}
+    });
+    test:assertEquals(created.status.state, TASK_STATE_WORKING);
+
+    stream<StreamResponse, error?> events = check c->subscribeToTask({id: created.id});
+    StreamResponse first = check expectStreamValue(events);
+    test:assertTrue(first is Task, "subscribeToTask's first event must be the task's current state");
+    test:assertEquals((<Task>first).status.state, TASK_STATE_WORKING);
+
+    Task canceled = check c->cancelTask({id: created.id});
+    test:assertEquals(canceled.status.state, TASK_STATE_CANCELED);
+
+    StreamResponse second = check expectStreamValue(events);
+    test:assertTrue(second is TaskStatusUpdateEvent,
+            "the live subscriber must see the CANCELED transition as its own event");
+    test:assertEquals((<TaskStatusUpdateEvent>second).status.state, TASK_STATE_CANCELED);
+
+    record {| StreamResponse value; |}|error? third = events.next();
+    test:assertTrue(third is (), "the stream must close once the task is canceled, not hang open");
+}
+
+@test:Config {}
 function testServerRoundTripPushNotificationDeliveryOnCancel() returns error? {
     HttpClient c = check new (pushNotificationServerUrl);
     Task created = <Task>check c->sendMessage({
