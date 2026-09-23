@@ -198,6 +198,12 @@ public isolated class Listener {
 # the configured `a2a:PushNotificationSender`, `a2a:HttpPushNotificationSender`
 # by default); extended card on only when the developer configured one.
 #
+# `extensions` is left exactly as the developer declared it, not derived --
+# unlike the other three flags, this server has no way to know which
+# extensions the developer's `onMessage` actually implements, so it cannot
+# second-guess (or silently drop) that declaration the way it can for
+# capabilities it fully owns.
+#
 # + supplied - The card the developer passed
 # + extendedCardConfigured - Whether `ListenerConfiguration.extendedAgentCard`
 #                            was set
@@ -210,6 +216,7 @@ isolated function deriveServedCard(AgentCard supplied, boolean extendedCardConfi
     card.capabilities = {
         streaming: true,
         pushNotifications: true,
+        extensions: supplied.capabilities.extensions,
         extendedAgentCard: extendedCardConfigured
     };
     return card;

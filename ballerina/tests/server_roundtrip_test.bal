@@ -1003,6 +1003,59 @@ function testServerRoundTripSecurityRequirementsServedInV10WireShape() returns e
             "an empty scope list must still be a wrapped, empty StringList, not a bare []");
 }
 
+// Per specification 3.3.4/4.6.3: a client that has not declared support
+// (via the A2A-Extensions header) for an extension the card marks
+// required: true must be refused, not silently served as if the
+// extension didn't apply. A separate listener, since none of the others
+// above declare any extensions.
+
+const int EXTENSIONS_TEST_PORT = 19240;
+final string extensionsServerUrl = string `http://localhost:${EXTENSIONS_TEST_PORT}`;
+const string REQUIRED_EXTENSION_URI = "https://example.com/extensions/geolocation/v1";
+
+listener Listener extensionsListener = new (EXTENSIONS_TEST_PORT, agentCard = {
+    name: "Echo Agent",
+    description: "Echoes its input",
+    version: "1.0.0",
+    skills: [{id: "echo", name: "Echo", description: "Echoes text", tags: ["echo"]}],
+    defaultInputModes: ["text"],
+    defaultOutputModes: ["text"],
+    capabilities: {
+        extensions: [
+            {uri: REQUIRED_EXTENSION_URI, description: "Location-based search", required: true},
+            {uri: "https://standards.org/extensions/citations/v1", description: "Citations", required: false}
+        ]
+    },
+    supportedInterfaces: []
+});
+
+@test:BeforeSuite
+function startExtensionsServer() returns error? {
+    check extensionsListener.attach(new EchoAgent());
+}
+
+@test:Config {}
+function testServerRoundTripRequiredExtensionRejectsUndeclaredClient() returns error? {
+    HttpClient c = check new (extensionsServerUrl);
+    Task|Message|Error result = c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hello"}]}
+    });
+    test:assertTrue(result is ExtensionSupportRequiredError,
+            "a client that never declared the required extension must be refused");
+}
+
+@test:Config {}
+function testServerRoundTripRequiredExtensionAcceptsDeclaredClient() returns error? {
+    // The card also declares a second, non-required extension this
+    // client never declares support for -- only required: true is
+    // enforced, so that alone must not block the request either.
+    HttpClient c = check new (extensionsServerUrl, requestedExtensions = [REQUIRED_EXTENSION_URI]);
+    Task|Message|Error result = c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hello"}]}
+    });
+    test:assertTrue(result is Task, "declaring the required extension must let the request through normally");
+}
+
 @test:AfterSuite
 function stopEchoServer() returns error? {
     check echoListener.gracefulStop();
@@ -1010,4 +1063,5 @@ function stopEchoServer() returns error? {
     check ownerScopedListener.gracefulStop();
     check pushNotificationListener.gracefulStop();
     check securityRequirementsListener.gracefulStop();
+    check extensionsListener.gracefulStop();
 }

@@ -99,6 +99,11 @@ isolated service class DispatcherService {
             return toRestErrorResponse(versionError);
         }
 
+        Error? extensionsError = self.checkExtensions(req);
+        if extensionsError is Error {
+            return toRestErrorResponse(extensionsError);
+        }
+
         // Strip a leading /{tenant} segment. The tenant must match the card's
         // declared one; the untenanted form carries no tenant.
         [string, string?]|Error routed = self.stripTenant(rawPath);
@@ -171,6 +176,42 @@ isolated service class DispatcherService {
             string msg = string `A2A protocol version ${version} is not supported; `
                 + string `this interface serves v1.0`;
             return error VersionNotSupportedError(msg, message = msg);
+        }
+        return;
+    }
+
+    # Rejects a request that omits a required extension.
+    #
+    # Per specification section 3.3.4/4.6.3: an `AgentExtension` the card
+    # declares `required: true` is not optional the way an unrequired one
+    # is -- a client that has not declared support for it (via the
+    # A2A-Extensions header, section 14.2.2) must not have its request
+    # silently processed as if the extension's requirements did not
+    # apply. Extensions with no `uri` set are skipped -- nothing a client
+    # could ever declare support for.
+    #
+    # + req - The HTTP request
+    # + return - An ExtensionSupportRequiredError naming the first
+    #            undeclared required extension, or `()`
+    private isolated function checkExtensions(http:Request req) returns Error? {
+        AgentExtension[] extensions = self.card.capabilities.extensions ?: [];
+        boolean anyRequired = extensions.some(ext => ext.required);
+        if !anyRequired {
+            return;
+        }
+
+        string|http:HeaderNotFoundError header = req.getHeader("A2A-Extensions");
+        string[] declared = header is string
+            ? from string uri in re `,`.split(header) select uri.trim()
+            : [];
+
+        foreach AgentExtension ext in extensions {
+            string? uri = ext.uri;
+            if ext.required && uri is string && declared.indexOf(uri) is () {
+                string msg = string `extension ${uri} is required but was not declared `
+                    + "in the A2A-Extensions header";
+                return error ExtensionSupportRequiredError(msg, message = msg, code = -32008);
+            }
         }
         return;
     }
