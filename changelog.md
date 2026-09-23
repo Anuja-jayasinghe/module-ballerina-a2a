@@ -25,6 +25,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Stream `sendStreamingMessage` and `subscribeToTask` Live, with Correct Multi-Subscriber Fan-Out per Specification Section 3.5.2
 - Add Task Continuation via `message.taskId`, per Specification Sections 3.4.2 and 3.4.3
 - Honor `SendMessageConfiguration.returnImmediately`, Returning a Task Before `onMessage` Finishes
+- Enforce Required Extensions per Specification Sections 3.3.4/4.6.3, via the `A2A-Extensions` Header
+- Serve `securityRequirements` in the Correct v1.0 Wire Shape, and Add Agent Card `Cache-Control`/`ETag` Headers per Specification Section 8.6.1
+- Add `ListenerConfiguration.streamingCapability`/`pushNotificationsCapability`, Letting a Deployment Deliberately Withhold a Capability This Listener Otherwise Always Implements
 
 ### Fixed
 

@@ -49,6 +49,24 @@ public type ListenerConfiguration record {|
     # stretch (e.g. paused on `TASK_STATE_INPUT_REQUIRED`) with a
     # subscriber still attached.
     decimal streamIdleTimeout = 300;
+    # Whether the served card advertises `capabilities.streaming`. `true`
+    # by default, since `sendStreamingMessage`/`subscribeToTask` are
+    # always implemented by this listener regardless of what any
+    # individual `onMessage` actually does with the `TaskUpdater` it is
+    # handed. Set `false` only when a deployment deliberately wants to
+    # withhold the capability -- once `false`, both operations are
+    # rejected server-side with `a2a:UnsupportedOperationError`, per
+    # [specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation), the same as a card that never
+    # claimed to support them.
+    boolean streamingCapability = true;
+    # Whether the served card advertises `capabilities.pushNotifications`.
+    # `true` by default, since the push-notification-config operations
+    # and real webhook delivery are always implemented. Set `false` only
+    # when a deployment deliberately wants to withhold the capability --
+    # e.g. no outbound network access for webhooks, or an operator policy
+    # against it -- once `false`, the four config operations are rejected
+    # server-side with `a2a:PushNotificationNotSupportedError`.
+    boolean pushNotificationsCapability = true;
 |};
 
 # Serves an A2A agent over the HTTP+JSON binding.
@@ -71,10 +89,12 @@ public type ListenerConfiguration record {|
 #
 # The listener serves the card at `/.well-known/agent-card.json`, fills in its
 # `supportedInterfaces` with the HTTP+JSON entry at its own address, and
-# overrides the capability flags to match what is actually implemented — so a
-# card cannot advertise a capability the server does not provide. Pass
-# `capabilities: {}` and `supportedInterfaces: []` as placeholders; they are
-# replaced.
+# overrides the capability flags to what is implemented and enabled — so a
+# card cannot advertise a capability the server does not provide, or does not
+# accept (see `ListenerConfiguration.streamingCapability`/
+# `pushNotificationsCapability` for deliberately withholding one this listener
+# does implement). Pass `capabilities: {}` and `supportedInterfaces: []` as
+# placeholders; they are replaced.
 public isolated class Listener {
     private final http:Listener httpListener;
     private final AgentCard & readonly card;
@@ -110,7 +130,8 @@ public isolated class Listener {
         self.store = config.taskStore;
         AgentCard? extended = config.extendedAgentCard;
         self.extendedCard = extended is AgentCard ? extended.cloneReadOnly() : ();
-        self.card = deriveServedCard(agentCard, self.extendedCard is AgentCard).cloneReadOnly();
+        self.card = deriveServedCard(agentCard, self.extendedCard is AgentCard,
+                config.streamingCapability, config.pushNotificationsCapability).cloneReadOnly();
         self.ownerResolver = config.ownerResolver;
         self.pushSender = config.pushSender;
         self.streamIdleTimeout = config.streamIdleTimeout;
@@ -192,11 +213,17 @@ public isolated class Listener {
 # The developer gives identity, skills, and I/O modes. This forces the
 # `supportedInterfaces` to a single HTTP+JSON v1.0 entry — the only binding and
 # version this server speaks — and sets the capability flags to what is
-# implemented, so the card never claims a capability the server lacks. In this
-# release that is: streaming on (sendStreamingMessage/subscribeToTask); push
-# notifications on (the config CRUD operations plus real webhook delivery via
-# the configured `a2a:PushNotificationSender`, `a2a:HttpPushNotificationSender`
-# by default); extended card on only when the developer configured one.
+# implemented and enabled. In this release that is: streaming
+# (sendStreamingMessage/subscribeToTask) and push notifications (the config
+# CRUD operations plus real webhook delivery via the configured
+# `a2a:PushNotificationSender`, `a2a:HttpPushNotificationSender` by default)
+# are always *implemented*, but each is only *advertised* -- and, correspondingly,
+# only accepted server-side -- when its `ListenerConfiguration` flag is left at
+# its `true` default; a deployment that sets one `false` gets that capability
+# rejected server-side exactly as if this listener had never implemented it,
+# never a card that quietly claims something the server then refuses. Extended
+# card is on only when the developer configured one, which is itself already a
+# deliberate opt-in with nothing further to withhold.
 #
 # `extensions` is left exactly as the developer declared it, not derived --
 # unlike the other three flags, this server has no way to know which
@@ -207,15 +234,18 @@ public isolated class Listener {
 # + supplied - The card the developer passed
 # + extendedCardConfigured - Whether `ListenerConfiguration.extendedAgentCard`
 #                            was set
+# + streamingCapability - `ListenerConfiguration.streamingCapability`
+# + pushNotificationsCapability - `ListenerConfiguration.pushNotificationsCapability`
 # + return - The card to serve
-isolated function deriveServedCard(AgentCard supplied, boolean extendedCardConfigured) returns AgentCard {
+isolated function deriveServedCard(AgentCard supplied, boolean extendedCardConfigured,
+        boolean streamingCapability, boolean pushNotificationsCapability) returns AgentCard {
     AgentCard card = supplied.clone();
     card.supportedInterfaces = [
         {url: "", protocolBinding: HTTP_JSON, protocolVersion: A2A_PROTOCOL_VERSION}
     ];
     card.capabilities = {
-        streaming: true,
-        pushNotifications: true,
+        streaming: streamingCapability,
+        pushNotifications: pushNotificationsCapability,
         extensions: supplied.capabilities.extensions,
         extendedAgentCard: extendedCardConfigured
     };

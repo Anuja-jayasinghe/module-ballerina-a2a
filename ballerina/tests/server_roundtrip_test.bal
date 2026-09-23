@@ -1082,6 +1082,69 @@ function testServerRoundTripRequiredExtensionAcceptsDeclaredClient() returns err
     test:assertTrue(result is Task, "declaring the required extension must let the request through normally");
 }
 
+// A deployment can deliberately withhold a capability this listener
+// otherwise always implements -- e.g. no outbound network access for
+// webhooks -- via ListenerConfiguration.streamingCapability/
+// pushNotificationsCapability. Both false here, on a dedicated listener,
+// so the other listeners above (all left at the true default) keep
+// proving today's unchanged behavior.
+
+const int WITHHELD_CAPABILITIES_TEST_PORT = 19241;
+final string withheldCapabilitiesServerUrl = string `http://localhost:${WITHHELD_CAPABILITIES_TEST_PORT}`;
+
+listener Listener withheldCapabilitiesListener = new (WITHHELD_CAPABILITIES_TEST_PORT, agentCard = {
+    name: "Echo Agent",
+    description: "Echoes its input",
+    version: "1.0.0",
+    skills: [{id: "echo", name: "Echo", description: "Echoes text", tags: ["echo"]}],
+    defaultInputModes: ["text"],
+    defaultOutputModes: ["text"],
+    capabilities: {},
+    supportedInterfaces: []
+}, streamingCapability = false, pushNotificationsCapability = false);
+
+@test:BeforeSuite
+function startWithheldCapabilitiesServer() returns error? {
+    check withheldCapabilitiesListener.attach(new EchoAgent());
+}
+
+@test:Config {}
+function testServerRoundTripWithheldCapabilitiesReflectedOnCard() returns error? {
+    AgentCard card = check resolveAgentCard(withheldCapabilitiesServerUrl);
+    test:assertFalse(card.capabilities.streaming,
+            "streamingCapability: false must be reflected as capabilities.streaming: false on the served card");
+    test:assertFalse(card.capabilities.pushNotifications,
+            "pushNotificationsCapability: false must be reflected as capabilities.pushNotifications: false");
+}
+
+@test:Config {}
+function testServerRoundTripWithheldStreamingIsRejectedServerSide() returns error? {
+    // The typed Client would normally short-circuit client-side on a card
+    // that declares streaming unsupported -- go around it with a raw
+    // http:Client to prove the server itself also refuses, per
+    // specification 3.3.4, not just that the client happens not to try.
+    http:Client raw = check new (withheldCapabilitiesServerUrl);
+    json body = {"message": {"messageId": "m1", "role": "ROLE_USER", "parts": [{"text": "hello"}]}};
+    http:Response resp = check raw->post("/message:stream", body, {"A2A-Version": "1.0"});
+    test:assertEquals(resp.statusCode, http:STATUS_BAD_REQUEST,
+            "sendStreamingMessage on a listener with streamingCapability: false must be rejected server-side");
+}
+
+@test:Config {}
+function testServerRoundTripWithheldPushNotificationsIsRejectedServerSide() returns error? {
+    // The typed Client's createTaskPushNotificationConfig already refuses
+    // client-side on a card declaring pushNotifications unsupported (same
+    // short-circuit as streaming) -- go around it with a raw http:Client,
+    // per this codebase's own testing convention for exactly this case.
+    http:Client raw = check new (withheldCapabilitiesServerUrl);
+    json body = {"url": "https://example.com/webhook"};
+    http:Response resp = check raw->post("/tasks/does-not-matter/pushNotificationConfigs", body,
+            {"A2A-Version": "1.0"});
+    test:assertEquals(resp.statusCode, http:STATUS_BAD_REQUEST,
+            "push-notification-config operations on a listener with pushNotificationsCapability: false " +
+            "must be rejected server-side, even before any task-existence check");
+}
+
 @test:AfterSuite
 function stopEchoServer() returns error? {
     check echoListener.gracefulStop();
@@ -1090,4 +1153,5 @@ function stopEchoServer() returns error? {
     check pushNotificationListener.gracefulStop();
     check securityRequirementsListener.gracefulStop();
     check extensionsListener.gracefulStop();
+    check withheldCapabilitiesListener.gracefulStop();
 }

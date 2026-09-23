@@ -403,6 +403,15 @@ listener a2a:Listener agent = new (9090, agentCard = card,
 
 `validateUrl: false` is the escape hatch a deployment with a legitimately internal webhook host needs. The check is by URL form, not by resolving the hostname — a name that only resolves to a private address at connect time (DNS rebinding) is not caught; supply your own `a2a:PushNotificationSender` to close that gap with whatever resolution your deployment trusts.
 
+Streaming and push notifications are always *implemented* by this listener, but each is only *advertised* — and accepted — when its `ListenerConfiguration` flag is left at its `true` default:
+
+```ballerina
+listener a2a:Listener agent = new (9090, agentCard = card,
+    streamingCapability = false, pushNotificationsCapability = false);
+```
+
+Set one `false` when a deployment deliberately wants to withhold that capability — no outbound network access for webhooks, an operator policy against it, whatever the reason. The served card then declares `capabilities.streaming`/`capabilities.pushNotifications` as `false`, and the corresponding operations are rejected server-side (`UnsupportedOperationError` / `PushNotificationNotSupportedError`) exactly as if this listener had never implemented them — never a card that quietly claims something the server then refuses.
+
 ### 7.6 Task ownership and authorization scoping
 
 Specification section 13.1 requires that "clients can only access authorized tasks." By default this listener does not enforce that — every task is visible to every caller, in one shared pool. Supply a `TaskOwnerResolver` to change that:
