@@ -90,7 +90,7 @@ isolated service class DispatcherService {
         // client that resolves the card then gets a usable URL to call.
         if method == "GET" && rawPath == "/.well-known/agent-card.json" {
             http:Response cardResponse = new;
-            cardResponse.setJsonPayload(self.cardForHost(req).toJson());
+            cardResponse.setJsonPayload(encodeAgentCardForWire(self.cardForHost(req)));
             return cardResponse;
         }
 
@@ -231,7 +231,7 @@ isolated service class DispatcherService {
                 return self.onSendStreamingMessage(tenant, owner, req);
             }
             ["GET", "/extendedAgentCard"] => {
-                return jsonResponse((check self.handler.getExtendedAgentCard()).toJson());
+                return jsonResponse(encodeAgentCardForWire(check self.handler.getExtendedAgentCard()));
             }
             ["GET", "/tasks"] => {
                 ListTasksRequest filter = queryToListFilter(req);

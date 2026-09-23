@@ -946,10 +946,68 @@ function testServerRoundTripPushNotificationDeliveryOnCancel() returns error? {
     test:assertEquals(received.body.status.state, "TASK_STATE_CANCELED");
 }
 
+// This module's own SecurityRequirement type is internally flat
+// (v0.3-shaped, see security_scheme_codec.bal's own doc), but the actual
+// A2A v1.0 wire shape wraps each requirement's scheme map under
+// "schemes", with each scope list itself wrapped as StringList's
+// {"list": [...]}. A separate listener, since none of the others above
+// set securityRequirements on their card.
+
+const int SECURITY_REQUIREMENTS_TEST_PORT = 19239;
+final string securityRequirementsServerUrl = string `http://localhost:${SECURITY_REQUIREMENTS_TEST_PORT}`;
+
+listener Listener securityRequirementsListener = new (SECURITY_REQUIREMENTS_TEST_PORT, agentCard = {
+    name: "Echo Agent",
+    description: "Echoes its input",
+    version: "1.0.0",
+    skills: [{id: "echo", name: "Echo", description: "Echoes text", tags: ["echo"]}],
+    defaultInputModes: ["text"],
+    defaultOutputModes: ["text"],
+    capabilities: {},
+    supportedInterfaces: [],
+    securitySchemes: {
+        "bearerAuth": <HttpAuthSecurityScheme>{scheme: "bearer", bearerFormat: "JWT"}
+    },
+    securityRequirements: [{"bearerAuth": ["read", "write"]}, {"bearerAuth": []}]
+});
+
+@test:BeforeSuite
+function startSecurityRequirementsServer() returns error? {
+    check securityRequirementsListener.attach(new EchoAgent());
+}
+
+@test:Config {}
+function testServerRoundTripSecurityRequirementsServedInV10WireShape() returns error? {
+    // A raw http:Client, not this module's own tolerant Client, is the
+    // only way to catch a server that got the encode direction wrong --
+    // this module's own Client's parseSecurityRequirements already
+    // accepts both the flat and the wrapped shape.
+    http:Client raw = check new (securityRequirementsServerUrl);
+    json card = check raw->get("/.well-known/agent-card.json");
+    map<json> cardMap = check card.ensureType();
+    json[] requirements = check cardMap["securityRequirements"].ensureType();
+    test:assertEquals(requirements.length(), 2);
+
+    map<json> nonEmpty = check requirements[0].ensureType();
+    map<json> nonEmptySchemes = check nonEmpty["schemes"].ensureType();
+    map<json> nonEmptyEntry = check nonEmptySchemes["bearerAuth"].ensureType();
+    string[] scopes = check nonEmptyEntry["list"].cloneWithType();
+    test:assertEquals(scopes, ["read", "write"],
+            "a non-empty scope list must be wrapped as {\"list\": [...]}, the v1.0 StringList shape");
+
+    map<json> empty = check requirements[1].ensureType();
+    map<json> emptySchemes = check empty["schemes"].ensureType();
+    map<json> emptyEntry = check emptySchemes["bearerAuth"].ensureType();
+    string[] emptyScopes = check emptyEntry["list"].cloneWithType();
+    test:assertEquals(emptyScopes, [],
+            "an empty scope list must still be a wrapped, empty StringList, not a bare []");
+}
+
 @test:AfterSuite
 function stopEchoServer() returns error? {
     check echoListener.gracefulStop();
     check extendedCardListener.gracefulStop();
     check ownerScopedListener.gracefulStop();
     check pushNotificationListener.gracefulStop();
+    check securityRequirementsListener.gracefulStop();
 }

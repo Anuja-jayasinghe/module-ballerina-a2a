@@ -312,3 +312,82 @@ isolated function parseSecurityRequirements(json raw) returns SecurityRequiremen
 isolated function parseAgentCardSignatures(json raw) returns AgentCardSignature[]|error {
     return raw.cloneWithType();
 }
+
+// The mirror direction: serving this listener's own AgentCard needs
+// securityRequirements written back out in the v1.0 wire shape, since
+// this module's own SecurityRequirement type is the flat v0.3 one
+// parseSecurityRequirements normalizes onto (see its own doc above).
+// `AgentCard.toJson()`/`AgentSkill.toJson()` have no way to know this --
+// they convert a `map<string[]>` using default JSON conversion, which
+// produces the flat shape, not the wrapped one. Nothing else in this
+// module needs the reverse of parseSecuritySchemes/unwrapV10SecurityScheme:
+// a served card's `securitySchemes` map is `map<SecurityScheme>` keyed
+// by name already, exactly the v1.0 shape, so it round-trips through
+// plain toJson() correctly on its own.
+
+# Wraps one internal, flat `SecurityRequirement` into the v1.0 wire shape:
+# `{"schemes": {name: {"list": [...]}}}`. The encode-direction mirror of
+# `unwrapV10SecurityRequirement`.
+#
+# + requirement - The internal flat requirement
+# + return - The v1.0-shaped wire object
+isolated function wrapV10SecurityRequirement(SecurityRequirement requirement) returns json {
+    map<json> schemes = {};
+    foreach [string, string[]] [name, scopes] in requirement.entries() {
+        schemes[name] = {list: scopes.clone()};
+    }
+    return {schemes};
+}
+
+# Wraps a list of internal, flat `SecurityRequirement`s into the v1.0 wire
+# array shape.
+#
+# + requirements - The internal flat requirements
+# + return - The v1.0-shaped wire array
+isolated function wrapV10SecurityRequirements(SecurityRequirement[] requirements) returns json[] {
+    json[] result = [];
+    foreach SecurityRequirement requirement in requirements {
+        result.push(wrapV10SecurityRequirement(requirement));
+    }
+    return result;
+}
+
+# Encodes an `AgentCard` for the wire, rewriting its own
+# `securityRequirements` and each skill's from `toJson`'s default (flat,
+# v0.3-shaped) conversion into the v1.0 form every A2A v1.0 server actually
+# serves. Every other field round-trips through plain `toJson` correctly
+# already (see the note above `wrapV10SecurityRequirement`).
+#
+# + card - The card to serve
+# + return - The card's wire JSON, with conformant `securityRequirements`
+isolated function encodeAgentCardForWire(AgentCard card) returns json {
+    map<json>|error encoded = card.toJson().ensureType();
+    if encoded is error {
+        // AgentCard always converts to a JSON object; unreachable in
+        // practice, but keeps this function total rather than one more
+        // caller that has to `check` a JSON-object cast that cannot fail.
+        return card.toJson();
+    }
+
+    SecurityRequirement[]? cardRequirements = card.securityRequirements;
+    if cardRequirements is SecurityRequirement[] {
+        encoded["securityRequirements"] = wrapV10SecurityRequirements(cardRequirements);
+    }
+
+    json[]|error skillsJson = encoded["skills"].ensureType();
+    if skillsJson is json[] {
+        foreach int i in 0 ..< skillsJson.length() {
+            SecurityRequirement[]? skillRequirements = i < card.skills.length() ? card.skills[i].securityRequirements : ();
+            if skillRequirements is SecurityRequirement[] {
+                map<json>|error skillMap = skillsJson[i].ensureType();
+                if skillMap is map<json> {
+                    skillMap["securityRequirements"] = wrapV10SecurityRequirements(skillRequirements);
+                    skillsJson[i] = skillMap;
+                }
+            }
+        }
+        encoded["skills"] = skillsJson;
+    }
+
+    return encoded;
+}
