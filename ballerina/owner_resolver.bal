@@ -39,8 +39,9 @@ import ballerina/http;
 # looked up against a directory. This resolves identity; it does not
 # authenticate it. A resolver that trusts an unverified header is not a
 # security boundary, and satisfying [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping) requires
-# pairing this with real inbound authentication, which is deployment policy
-# this library does not prescribe.
+# pairing this with real inbound authentication: configure
+# `ListenerConfiguration.auth`, which also makes the authenticated identity the
+# owner when no resolver is given.
 public type TaskOwnerResolver isolated object {
 
     # Resolves the request's caller to an owner scope.
