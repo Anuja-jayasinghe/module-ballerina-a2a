@@ -89,6 +89,22 @@ isolated function invalidAgentResponse(string message) returns InvalidAgentRespo
     return error InvalidAgentResponseError(message, message = message, code = -32006);
 }
 
+# Builds the error for a request the server cannot accept as sent: a body that
+# is not JSON, does not match the operation's request type, or carries a
+# malformed part.
+#
+# Specification section 5.4 names no A2A error type for this, and this library
+# deliberately adds none (see `InternalError`). It is `InternalError` carrying
+# the standard JSON-RPC "invalid request" code (-32600), the same pairing
+# `toA2AErrorFromRest` decodes for the `INVALID_REQUEST` reason. On the wire it
+# is a 400, not a 500: the caller's request was the problem, not the agent.
+#
+# + message - What specifically was wrong with the request
+# + return - An `InternalError` with code -32600
+isolated function invalidRequest(string message) returns InternalError {
+    return error InternalError(message, message = message, code = -32600);
+}
+
 # Wraps a raw, untyped error (a connection failure from `ballerina/http`/
 # `ballerina/grpc`, a mime-parsing failure, an unencodable parameter
 # value, ...) into an InternalError, so no public method returns a

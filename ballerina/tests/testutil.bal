@@ -663,3 +663,64 @@ public isolated function extractArtifactText(Artifact artifact) returns string? 
     }
     return;
 }
+
+// ---- Deterministic pacing for live-streaming tests --------------------
+//
+// A step-counted gate lets a test drive an agent through its checkpoints
+// one at a time, reading whatever each checkpoint broadcasts before
+// releasing the next one -- instead of a runtime:sleep-timed guess at how
+// long "the agent has gotten far enough" takes, which flakes under load.
+// server_roundtrip_test.bal's EchoAgent blocks on one of these at each
+// checkpoint when its message text is "paced:<key>"; the test registers a
+// Gate under that same key before sending the message.
+
+# Blocks a paced agent at successive checkpoints until a test explicitly
+# releases each one.
+public isolated class Gate {
+    private int currentStep = 0;
+
+    # Blocks (polling) until the gate has been advanced to at least `step`.
+    #
+    # + step - The step to wait for
+    public isolated function awaitStep(int step) {
+        while true {
+            lock {
+                if self.currentStep >= step {
+                    return;
+                }
+            }
+            runtime:sleep(0.02);
+        }
+    }
+
+    # Releases every checkpoint up to and including `step`.
+    #
+    # + step - The step to advance to
+    public isolated function advanceTo(int step) {
+        lock {
+            self.currentStep = step;
+        }
+    }
+}
+
+isolated map<Gate> paceGates = {};
+
+# Registers the Gate a "paced:<key>" message's agent will block on.
+# Call before sending that message -- the agent looks the key up as soon
+# as it starts running, which can be immediately once the request lands.
+#
+# + key - The pacing key embedded in the message text after "paced:"
+# + gate - The gate to register
+public isolated function registerGate(string key, Gate gate) {
+    lock {
+        paceGates[key] = gate;
+    }
+}
+
+# + key - The pacing key to look up
+# + return - The registered gate, or `()` if none was registered
+public isolated function gateFor(string key) returns Gate? {
+    lock {
+        return paceGates[key];
+    }
+}

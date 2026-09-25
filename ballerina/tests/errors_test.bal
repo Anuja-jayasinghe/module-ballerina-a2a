@@ -118,3 +118,25 @@ function testToA2AErrorFromRestAttachesMetadataAsData() returns error? {
     Error err = toA2AErrorFromRest(404, body);
     test:assertEquals(err.detail()?.data, {"taskId": "abc-123"});
 }
+
+// A request the server cannot accept is the caller's fault: a 400 with its own
+// reason, and the client reads the same body back as an InternalError carrying
+// the same JSON-RPC code. An InternalError with any other code stays a 500.
+@test:Config {}
+function testInvalidRequestIsA400AndRoundTripsToTheSameCode() {
+    ErrorBinding binding = errorBindingFor(invalidRequest("body is not valid JSON"));
+    test:assertEquals(binding.status, 400);
+    test:assertEquals(binding.reason, "INVALID_REQUEST");
+
+    int? code = toA2AErrorFromRest(400, restErrorBody(invalidRequest("bad"))).detail()?.code;
+    test:assertEquals(code, -32600, "the client must decode the server's body back to the same code");
+
+    ErrorBinding invalidParams = errorBindingFor(error InternalError("x", message = "x", code = -32602));
+    test:assertEquals(invalidParams.status, 400);
+    test:assertEquals(invalidParams.reason, "INVALID_PARAMS");
+
+    ErrorBinding other = errorBindingFor(error InternalError("boom", message = "boom", code = -32603));
+    test:assertEquals(other.status, 500, "an ordinary internal failure must stay a 500");
+    ErrorBinding noCode = errorBindingFor(error InternalError("boom", message = "boom"));
+    test:assertEquals(noCode.status, 500);
+}
