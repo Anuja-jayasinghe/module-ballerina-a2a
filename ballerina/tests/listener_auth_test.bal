@@ -404,3 +404,21 @@ function testAuthEmptyEntryListIsRejectedAtStartup() {
     Listener|error created = new (EMPTY_AUTH_TEST_PORT, agentCard = authTestCard, auth = []);
     test:assertTrue(created is Error, "an empty auth list would admit nobody, which is a mistake, not a policy");
 }
+
+@test:Config {}
+function testAuthExtendedCardWithoutAuthIsRejectedAtStartup() {
+    Listener|error created = new (EMPTY_AUTH_TEST_PORT + 1, agentCard = authTestCard,
+            extendedAgentCard = authTestExtendedCard);
+    test:assertTrue(created is Error,
+            "a listener that would hand the extended card to anyone must not start (specification section 13.3)");
+    if created is error {
+        test:assertTrue(created.message().includes("13.3"), "the message must say why");
+    }
+}
+
+@test:Config {}
+function testAuthExtendedCardWithAuthStarts() returns error? {
+    Listener created = check new (EMPTY_AUTH_TEST_PORT + 2, agentCard = authTestCard,
+            extendedAgentCard = authTestExtendedCard, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
+    check created.gracefulStop();
+}

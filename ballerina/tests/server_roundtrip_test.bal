@@ -69,7 +69,7 @@ listener Listener extendedCardListener = new (EXTENDED_CARD_TEST_PORT, agentCard
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-});
+}, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
 
 // A minimal agent: echoes the inbound text back as a completed task's
 // artifact, with a handful of trigger texts for the checkpoints live
@@ -702,7 +702,10 @@ function testServerRoundTripGetExtendedAgentCardWhenNotConfigured() returns erro
 
 @test:Config {}
 function testServerRoundTripGetExtendedAgentCardWhenConfigured() returns error? {
-    HttpClient c = check new (extendedCardServerUrl);
+    // The extended card is for authenticated callers (section 13.3), so the
+    // listener carrying it is configured with `auth` and the client presents a token.
+    string token = check bearerToken("alice");
+    HttpClient c = check new (extendedCardServerUrl, headers = {"Authorization": "Bearer " + token});
     AgentCard extended = check c->getExtendedAgentCard();
     test:assertEquals(extended.name, "Echo Agent (extended)");
     test:assertEquals(extended.skills.length(), 2, "the extended card reveals the internal-only skill too");

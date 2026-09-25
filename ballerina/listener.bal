@@ -29,6 +29,10 @@ public type ListenerConfiguration record {|
     # it. Unset means the agent does not implement the operation: the
     # derived card declares `capabilities.extendedAgentCard` false, and a
     # request for it fails with `a2a:UnsupportedOperationError`.
+    #
+    # Requires `auth`: the operation is for authenticated callers, so a
+    # listener configured with an extended card and no `auth` refuses to start
+    # ([specification section 13.3](https://a2a-protocol.org/latest/specification/#133-extended-agent-card-access-control)).
     AgentCard? extendedAgentCard = ();
     # Resolves each request's caller to an owner scope, for task-visibility
     # scoping per [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping). Unset means every task is
@@ -174,6 +178,14 @@ public isolated class Listener {
     #            cannot be created
     public isolated function init(int|http:Listener listenTo, AgentCard agentCard,
             *ListenerConfiguration config) returns Error? {
+        // Refused before anything is bound: [specification section 13.3](https://a2a-protocol.org/latest/specification/#133-extended-agent-card-access-control)
+        // says `GetExtendedAgentCard` MUST require authentication, so a
+        // listener that would serve it to anyone must not start.
+        if config.extendedAgentCard is AgentCard && config.auth is () {
+            string msg = "ListenerConfiguration.extendedAgentCard requires ListenerConfiguration.auth: "
+                + "the extended agent card is for authenticated callers (specification section 13.3)";
+            return error InternalError(msg, message = msg);
+        }
         if listenTo is http:Listener {
             self.httpListener = listenTo;
         } else {
