@@ -510,7 +510,7 @@ public isolated client class HttpClient {
         }
         json|error errorBodyResult = resp.getJsonPayload();
         json? errorBody = errorBodyResult is json ? errorBodyResult : ();
-        return toA2AErrorFromRest(resp.statusCode, errorBody);
+        return toA2AErrorFromRest(resp.statusCode, errorBody, challengesOf(resp));
     }
 
     # Validates that a REST response is a real SSE stream and decodes it,
@@ -525,7 +525,7 @@ public isolated client class HttpClient {
     private isolated function finishSseResponse(http:Response resp) returns stream<StreamResponse, Error?>|Error {
         if !resp.getContentType().startsWith("text/event-stream") {
             json|error errBody = resp.getJsonPayload();
-            return toA2AErrorFromRest(resp.statusCode, errBody is json ? errBody : ());
+            return toA2AErrorFromRest(resp.statusCode, errBody is json ? errBody : (), challengesOf(resp));
         }
         return readSseStream(resp);
     }
@@ -888,4 +888,13 @@ public isolated client class HttpClient {
         }
         return fetched;
     }
+}
+
+# The `WWW-Authenticate` challenges a response carried, if any.
+#
+# + resp - The response
+# + return - The challenge values, empty when there were none
+isolated function challengesOf(http:Response resp) returns string[] {
+    string[]|http:HeaderNotFoundError challenges = resp.getHeaders("WWW-Authenticate");
+    return challenges is string[] ? challenges : [];
 }

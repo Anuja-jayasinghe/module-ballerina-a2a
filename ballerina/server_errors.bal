@@ -72,6 +72,14 @@ isolated function errorBindingFor(Error err) returns ErrorBinding {
     if err is VersionNotSupportedError {
         return {status: http:STATUS_BAD_REQUEST, reason: "VERSION_NOT_SUPPORTED"};
     }
+    // Not among the nine of section 5.4, but section 5.x gives 401 and 403 as the
+    // binding-specific forms of an authentication and an authorization error.
+    if err is AuthenticationError {
+        return {status: http:STATUS_UNAUTHORIZED, reason: "UNAUTHENTICATED"};
+    }
+    if err is AuthorizationError {
+        return {status: http:STATUS_FORBIDDEN, reason: "PERMISSION_DENIED"};
+    }
     // InternalError is also how this library carries the standard JSON-RPC
     // "the request itself was bad" codes (see `invalidRequest`); those are the
     // caller's fault, so they are a 400 with their own reason, not a 500.

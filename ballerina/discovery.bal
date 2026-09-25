@@ -207,6 +207,10 @@ isolated function fetchAgentCardBody(
     if resp is error {
         return wrapTransportError(resp);
     }
+    if resp.statusCode == 401 || resp.statusCode == 403 {
+        // A card behind authentication: say so, rather than a generic failure.
+        return toA2AErrorFromRest(resp.statusCode, (), challengesOf(resp));
+    }
     if resp.statusCode != 200 {
         return error InternalError(
             string `Agent Card fetch failed with HTTP ${resp.statusCode}`,
