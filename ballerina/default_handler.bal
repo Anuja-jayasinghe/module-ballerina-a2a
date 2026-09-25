@@ -89,6 +89,7 @@ isolated class DefaultHandler {
     isolated function sendMessage(SendMessageRequest request, string? tenant, string? owner)
             returns Task|Message|Error {
         check validateOutboundMessage(request.message);
+        check validatePushConfigId(request?.configuration?.taskPushNotificationConfig);
 
         ResolvedSendTarget target = check self.resolveTaskForSend(request, owner);
         string taskId = target.taskId;
@@ -434,6 +435,7 @@ isolated class DefaultHandler {
     isolated function sendStreamingMessage(SendMessageRequest request, string? tenant, string? owner)
             returns stream<StreamResponse, Error?>|Error {
         check validateOutboundMessage(request.message);
+        check validatePushConfigId(request?.configuration?.taskPushNotificationConfig);
 
         ResolvedSendTarget target = check self.resolveTaskForSend(request, owner);
         string taskId = target.taskId;
@@ -598,7 +600,8 @@ isolated class DefaultHandler {
     }
 
     # Handles createTaskPushNotificationConfig: registers a webhook config
-    # against an existing task, assigning it a server-generated id.
+    # against an existing task. The config's own `id` is kept when the caller
+    # chose one; otherwise the server assigns one.
     #
     # + request - The config to register; `taskId` must be set and name an
     #             existing task
@@ -608,6 +611,7 @@ isolated class DefaultHandler {
     #            `owner`
     isolated function createTaskPushNotificationConfig(TaskPushNotificationConfig request, string? owner)
             returns TaskPushNotificationConfig|Error {
+        check validatePushConfigId(request);
         string? taskId = request?.taskId;
         if taskId is () {
             string msg = "TaskPushNotificationConfig.taskId is required to register a config";
@@ -620,12 +624,18 @@ isolated class DefaultHandler {
         return self.registerPushConfig(taskId, request);
     }
 
-    # Registers a config against a task already known to exist, assigning
-    # it a server-generated id. Shared by `createTaskPushNotificationConfig`
-    # (after its own taskId-existence check) and `sendMessage`/
-    # `sendStreamingMessage`'s inline `SendMessageConfiguration.taskPushNotificationConfig`
-    # registration -- the seed `store.put` immediately above each call site
-    # already establishes the task exists, so neither needs the check again.
+    # Registers a config against a task already known to exist. Shared by
+    # `createTaskPushNotificationConfig` (after its own taskId-existence
+    # check) and `sendMessage`/`sendStreamingMessage`'s inline
+    # `SendMessageConfiguration.taskPushNotificationConfig` registration --
+    # the seed `store.put` immediately above each call site already
+    # establishes the task exists, so neither needs the check again.
+    #
+    # The caller's own `id` is kept when it chose one (an empty id counts as
+    # unset), so the config can later be fetched or deleted under the name
+    # the caller gave it; otherwise the server assigns a UUID. Registering the
+    # same id twice on one task replaces the earlier config. The id is checked
+    # by `validatePushConfigId` before any task is seeded, not here.
     #
     # + taskId - The task's id
     # + config - The config to register
@@ -634,7 +644,8 @@ isolated class DefaultHandler {
             returns TaskPushNotificationConfig {
         TaskPushNotificationConfig stored = config.clone();
         stored.taskId = taskId;
-        stored.id = uuid:createType4AsString();
+        string? chosen = config?.id;
+        stored.id = chosen is string && chosen != "" ? chosen : uuid:createType4AsString();
         lock {
             map<TaskPushNotificationConfig> forTask = self.pushConfigs[taskId] ?: {};
             forTask[<string>stored.id] = stored.clone();

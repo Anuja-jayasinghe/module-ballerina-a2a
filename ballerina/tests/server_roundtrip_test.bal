@@ -591,7 +591,9 @@ function testServerRoundTripListTasks() returns error? {
     Task|Message _ = check c->sendMessage({
         message: {messageId: "m2", role: ROLE_USER, parts: [{text: "two"}]}
     });
-    ListTasksResponse page = check c->listTasks({pageSize: 10});
+    // Far larger than however many tasks the other tests sharing this server
+    // have created, so this page holds all of them.
+    ListTasksResponse page = check c->listTasks({pageSize: 1000});
     test:assertTrue(page.totalSize >= 2, "listTasks must see the tasks that were created");
     test:assertEquals(page.nextPageToken, "", "a full page must end with an empty nextPageToken");
 }
@@ -695,6 +697,87 @@ function testServerRoundTripCreatePushNotificationConfigForUnknownTaskIsTyped() 
         c->createTaskPushNotificationConfig({taskId: "does-not-exist", url: "https://example.com/webhook"});
     test:assertTrue(result is TaskNotFoundError,
             "registering a config against an unknown task must be rejected, not silently accepted");
+}
+
+// A config's id is the caller's to choose: a webhook registered as "my-cfg"
+// must come back, and be fetchable and deletable, as "my-cfg". Only an unset
+// (or empty) id is the server's to assign.
+@test:Config {}
+function testServerRoundTripPushNotificationConfigKeepsTheCallersOwnId() returns error? {
+    Client c = check echoClient();
+    Task created = <Task>check c->sendMessage({
+        message: {messageId: "m-cfg-id", role: ROLE_USER, parts: [{text: "needs webhooks"}]}
+    });
+
+    TaskPushNotificationConfig mine = check c->createTaskPushNotificationConfig({
+        taskId: created.id, url: "https://example.com/a", id: "my-cfg", token: "first"
+    });
+    test:assertEquals(mine.id, "my-cfg", "the id the caller chose must be kept, not replaced");
+    TaskPushNotificationConfig fetched = check c->getTaskPushNotificationConfig({taskId: created.id, id: "my-cfg"});
+    test:assertEquals(fetched.token, "first");
+
+    // Same id again on the same task replaces the earlier config.
+    _ = check c->createTaskPushNotificationConfig({
+        taskId: created.id, url: "https://example.com/b", id: "my-cfg", token: "second"
+    });
+    TaskPushNotificationConfig replaced = check c->getTaskPushNotificationConfig({taskId: created.id, id: "my-cfg"});
+    test:assertEquals(replaced.token, "second", "registering the same id twice must replace, not duplicate");
+
+    // No id, and an empty id, both mean "server, choose one".
+    TaskPushNotificationConfig assigned = check c->createTaskPushNotificationConfig(
+            {taskId: created.id, url: "https://example.com/c"});
+    string? assignedId = assigned?.id;
+    test:assertTrue(assignedId is string && assignedId != "" && assignedId != "my-cfg");
+    TaskPushNotificationConfig fromEmpty = check c->createTaskPushNotificationConfig(
+            {taskId: created.id, url: "https://example.com/d", id: ""});
+    string? emptyBecame = fromEmpty?.id;
+    test:assertTrue(emptyBecame is string && emptyBecame != "", "an empty id must be treated as unset");
+
+    ListTaskPushNotificationConfigsResponse page = check c->listTaskPushNotificationConfigs({taskId: created.id});
+    test:assertEquals((page.configs ?: []).length(), 3, "my-cfg (replaced once), plus the two assigned ones");
+
+    check c->deleteTaskPushNotificationConfig({taskId: created.id, id: "my-cfg"});
+    TaskPushNotificationConfig|Error gone = c->getTaskPushNotificationConfig({taskId: created.id, id: "my-cfg"});
+    test:assertTrue(gone is TaskNotFoundError, "delete must work under the caller's own id");
+}
+
+// The id is a URL path segment, so one containing "/" could never be fetched
+// again. It is a bad request (400), rejected before any task is created.
+@test:Config {}
+function testServerRoundTripPushNotificationConfigIdWithASlashIsRejected() returns error? {
+    Client c = check echoClient();
+    Task created = <Task>check c->sendMessage({
+        message: {messageId: "m-cfg-slash", role: ROLE_USER, parts: [{text: "needs a webhook"}]}
+    });
+
+    TaskPushNotificationConfig|Error viaCreate = c->createTaskPushNotificationConfig(
+            {taskId: created.id, url: "https://example.com/a", id: "a/b"});
+    test:assertTrue(viaCreate is InternalError && viaCreate.detail()?.code == -32600,
+            "an unusable id must be an invalid-request error, not accepted");
+
+    ListTasksResponse listedBefore = check c->listTasks();
+    int before = listedBefore.totalSize;
+    Task|Message|Error viaSend = c->sendMessage({
+        message: {messageId: "m-cfg-slash-2", role: ROLE_USER, parts: [{text: "x"}]},
+        configuration: {taskPushNotificationConfig: {url: "https://example.com/a", id: "a/b"}}
+    });
+    test:assertTrue(viaSend is InternalError && viaSend.detail()?.code == -32600);
+    ListTasksResponse listedAfter = check c->listTasks();
+    test:assertEquals(listedAfter.totalSize, before,
+            "the bad id must be rejected before a task is created, not leave an orphan one behind");
+}
+
+// The same registration through the send request itself.
+@test:Config {}
+function testServerRoundTripInlinePushNotificationConfigKeepsTheCallersOwnId() returns error? {
+    Client c = check echoClient();
+    Task created = <Task>check c->sendMessage({
+        message: {messageId: "m-inline-id", role: ROLE_USER, parts: [{text: "inline webhook"}]},
+        configuration: {taskPushNotificationConfig: {url: "https://example.com/a", id: "inline-cfg"}}
+    });
+    TaskPushNotificationConfig fetched = check c->getTaskPushNotificationConfig(
+            {taskId: created.id, id: "inline-cfg"});
+    test:assertEquals(fetched.url, "https://example.com/a");
 }
 
 // ---- task-owner scoping --------------------------------------------------

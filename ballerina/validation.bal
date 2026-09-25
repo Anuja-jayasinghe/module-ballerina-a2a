@@ -73,6 +73,21 @@ isolated function validateOutboundMessage(Message message) returns Error? {
     }
 }
 
+# Validates the id a caller chose for a push-notification config.
+#
+# The id becomes a path segment (`/tasks/{id}/pushNotificationConfigs/{configId}`),
+# so one containing `/` could never be fetched or deleted again. An unset or
+# empty id is fine: the server assigns one.
+#
+# + config - The config the caller supplied, or `()` if none was
+# + return - An `invalidRequest` error if the id cannot be used as a path segment
+isolated function validatePushConfigId(TaskPushNotificationConfig? config) returns Error? {
+    string? id = config?.id;
+    if id is string && id.includes("/") {
+        return invalidRequest(string `push notification config id "${id}" must not contain '/'`);
+    }
+}
+
 # Validates a Task an agent sent us, and the artifacts and history it carries.
 #
 # + task - The decoded task
