@@ -527,6 +527,13 @@ class SseFramingGenerator {
             self.closed = true;
             return;
         }
+        if chunk is KeepAliveTick {
+            // An SSE comment frame (": keep-alive"): no event for the client
+            // to act on, but bytes on the connection, so neither side's idle
+            // timeout fires on a task that is simply taking a while. The
+            // client already skips a frame that carries no data.
+            return {value: {comment: "keep-alive"}};
+        }
         if chunk is Error {
             self.closed = true;
             return {value: {'event: "error", data: restErrorBody(chunk).toJsonString()}};

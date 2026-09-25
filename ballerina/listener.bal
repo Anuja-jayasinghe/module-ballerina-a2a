@@ -49,6 +49,16 @@ public type ListenerConfiguration record {|
     # stretch (e.g. paused on `TASK_STATE_INPUT_REQUIRED`) with a
     # subscriber still attached.
     decimal streamIdleTimeout = 300;
+    # Seconds a live `sendStreamingMessage`/`subscribeToTask` stream may go
+    # without an event before the server sends an SSE comment frame
+    # (`: keep-alive`), so a task that is simply taking a while does not lose
+    # its stream to an idle timeout. HTTP stacks close a connection that has
+    # been silent for too long -- Ballerina's defaults are 60 seconds for a
+    # listener and 30 for a client -- and a long-running agent can easily be
+    # quiet that long between updates. Keep this below the smallest idle
+    # timeout in play. `0` sends no keep-alives. Keep-alives are not activity:
+    # `streamIdleTimeout` still ends a stream nothing is being produced on.
+    decimal keepAliveInterval = 15;
     # Whether the served card advertises `capabilities.streaming`. `true`
     # by default, since `sendStreamingMessage`/`subscribeToTask` are
     # always implemented by this listener regardless of what any
@@ -82,7 +92,7 @@ public type ListenerConfiguration record {|
 # + return - The HTTP listener's own settings
 isolated function httpListenerConfigurationOf(ListenerConfiguration config) returns http:ListenerConfiguration {
     ListenerConfiguration {
-        taskStore: _, extendedAgentCard: _, ownerResolver: _, pushSender: _, streamIdleTimeout: _,
+        taskStore: _, extendedAgentCard: _, ownerResolver: _, pushSender: _, streamIdleTimeout: _, keepAliveInterval: _,
         streamingCapability: _, pushNotificationsCapability: _, ...httpConfig
     } = config;
     return {...httpConfig};
@@ -122,6 +132,7 @@ public isolated class Listener {
     private final TaskOwnerResolver? ownerResolver;
     private final PushNotificationSender pushSender;
     private final decimal streamIdleTimeout;
+    private final decimal keepAliveInterval;
     private DispatcherService? dispatcher = ();
 
     # Creates a Listener.
@@ -157,6 +168,7 @@ public isolated class Listener {
         self.ownerResolver = config.ownerResolver;
         self.pushSender = config.pushSender;
         self.streamIdleTimeout = config.streamIdleTimeout;
+        self.keepAliveInterval = config.keepAliveInterval;
     }
 
     # Attaches an `a2a:Service` to serve.
@@ -170,7 +182,7 @@ public isolated class Listener {
     public isolated function attach(Service a2aService, string[]|string? name = ()) returns error? {
         TaskExecutionRegistry registry = new;
         DefaultHandler handler = new (a2aService, self.store, self.extendedCard, self.pushSender, registry,
-                self.streamIdleTimeout);
+                self.streamIdleTimeout, self.keepAliveInterval);
         DispatcherService dispatcherService = new (self.card, handler, self.ownerResolver);
         lock {
             self.dispatcher = dispatcherService;

@@ -44,13 +44,28 @@ import ballerina/lang.runtime;
 # subscribers cost negligible CPU.
 const decimal EVENT_POLL_INTERVAL = 0.05;
 
+# What a tap's `next` returns, in place of an event, once `keepAliveInterval`
+# has passed with nothing to deliver: "still here, nothing to report".
+#
+# Not a failure. It travels in the error position of `stream<StreamResponse,
+# Error?>` only because that is the one channel the stream type leaves free, and
+# is never visible outside this package: the tap's only consumer is
+# `SseFramingGenerator`, which turns it into an SSE comment frame. A distinct
+# subtype so nothing can mistake it for a real `Error`.
+type KeepAliveTick distinct Error;
+
 # A single subscriber's queue of a task's events.
 #
 # `next` blocks (polling, since `ballerina/lang.runtime` has no condition
 # variable or semaphore) until an event is pushed, the tap is closed and
-# drained, or `idleTimeout` elapses with nothing happening -- the backstop
-# for a client that disconnects without the HTTP layer surfacing it as a
-# clean stream close.
+# drained, `idleTimeout` elapses with nothing happening -- the backstop for a
+# client that disconnects without the HTTP layer surfacing it as a clean
+# stream close -- or, when `keepAliveInterval` is set, that long passes with
+# nothing to deliver, in which case it returns a `KeepAliveTick`.
+#
+# The idle time is counted across ticks, not restarted by them: a keep-alive
+# is not activity, so a stream that produces nothing but keep-alives still
+# reaches `idleTimeout`.
 isolated class EventTap {
     private StreamResponse[] queue = [];
     private boolean closed = false;
@@ -60,11 +75,18 @@ isolated class EventTap {
     // once, after every already-queued value.
     private Error? pendingError = ();
     private final decimal idleTimeout;
+    private final decimal keepAliveInterval;
+    // Seconds since an event last reached a consumer; survives across `next`
+    // calls so a keep-alive tick does not reset it.
+    private decimal silentFor = 0d;
 
     # + idleTimeout - Seconds of no events before `next` gives up and
     #                 ends the stream; `0` disables the timeout
-    isolated function init(decimal idleTimeout = 0) {
+    # + keepAliveInterval - Seconds of no events before `next` returns a
+    #                       `KeepAliveTick`; `0` disables keep-alives
+    isolated function init(decimal idleTimeout = 0, decimal keepAliveInterval = 0) {
         self.idleTimeout = idleTimeout;
+        self.keepAliveInterval = keepAliveInterval;
     }
 
     # Queues an event for this subscriber.
@@ -117,14 +139,17 @@ isolated class EventTap {
         }
     }
 
-    # + return - The next event, `()` once closed and drained (or idle past
-    #            `idleTimeout`), or an error
+    # + return - The next event, a `KeepAliveTick` once `keepAliveInterval` has
+    #            passed with nothing to deliver, `()` once closed and drained
+    #            (or idle past `idleTimeout`), or an error
     public isolated function next() returns record {| StreamResponse value; |}|Error? {
-        decimal waited = 0;
+        decimal sinceLastTick = 0;
         while true {
+            decimal silent;
             lock {
                 if self.queue.length() > 0 {
                     StreamResponse v = self.queue.shift();
+                    self.silentFor = 0d;
                     return {value: v.clone()};
                 }
                 Error? pending = self.pendingError;
@@ -135,12 +160,19 @@ isolated class EventTap {
                 if self.closed {
                     return;
                 }
+                silent = self.silentFor;
             }
-            if self.idleTimeout > 0d && waited >= self.idleTimeout {
+            if self.idleTimeout > 0d && silent >= self.idleTimeout {
                 return;
             }
+            if self.keepAliveInterval > 0d && sinceLastTick >= self.keepAliveInterval {
+                return error KeepAliveTick("keep-alive");
+            }
             runtime:sleep(EVENT_POLL_INTERVAL);
-            waited += EVENT_POLL_INTERVAL;
+            lock {
+                self.silentFor += EVENT_POLL_INTERVAL;
+            }
+            sinceLastTick += EVENT_POLL_INTERVAL;
         }
     }
 
@@ -217,9 +249,10 @@ isolated class EventBroadcaster {
     # instead of polling forever.
     #
     # + idleTimeout - Forwarded to the new tap
+    # + keepAliveInterval - Forwarded to the new tap
     # + return - A tap that will receive every event broadcast from here on
-    isolated function newTap(decimal idleTimeout = 0) returns EventTap {
-        final EventTap tap = new (idleTimeout);
+    isolated function newTap(decimal idleTimeout = 0, decimal keepAliveInterval = 0) returns EventTap {
+        final EventTap tap = new (idleTimeout, keepAliveInterval);
         lock {
             if self.closed {
                 tap.signalDone();

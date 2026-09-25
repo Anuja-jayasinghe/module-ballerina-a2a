@@ -350,6 +350,8 @@ a2a:Task submitted = <a2a:Task>check agent->sendMessage({
 
 `streamIdleTimeout` on `ListenerConfiguration` (default 300 seconds) bounds how long a live stream may sit with no event before the server ends it -- the backstop for a client that disconnects without the transport surfacing it as a clean close.
 
+`keepAliveInterval` (default 15 seconds, `0` to disable) makes the server send an SSE comment frame (`: keep-alive`) whenever a stream has had nothing to deliver for that long. A long-running agent can easily be quiet for longer than an HTTP idle timeout -- Ballerina's defaults are 60 seconds for a listener and 30 for a client -- and without keep-alives its stream is cut mid-task even though the task carries on. Keep the interval below the smallest idle timeout in play. The client skips the frames, and they do not count as activity: `streamIdleTimeout` still ends a stream nothing is being produced on.
+
 Given a port, `ListenerConfiguration` also carries every `http:ListenerConfiguration` field (`timeout`, `secureSocket`, `host`, ...) and applies them to the HTTP listener it creates. Given an already-built `http:Listener` instead, configure that listener when you build it; those fields have nothing to apply to and are ignored.
 
 ### 7.3 Task storage

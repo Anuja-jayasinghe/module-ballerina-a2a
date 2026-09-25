@@ -63,15 +63,21 @@ isolated class DefaultHandler {
     // surfacing it as a clean stream close. See `ListenerConfiguration.
     // streamIdleTimeout`.
     private final decimal streamIdleTimeout;
+    // How long a live stream may go without an event before the server sends a
+    // keep-alive comment frame; `0` sends none. See `ListenerConfiguration.
+    // keepAliveInterval`.
+    private final decimal keepAliveInterval;
 
     isolated function init(Service agentService, TaskStore store, (AgentCard & readonly)? extendedCard,
-            PushNotificationSender pushSender, TaskExecutionRegistry registry, decimal streamIdleTimeout) {
+            PushNotificationSender pushSender, TaskExecutionRegistry registry, decimal streamIdleTimeout,
+            decimal keepAliveInterval = 0) {
         self.agentService = agentService;
         self.store = store;
         self.extendedCard = extendedCard;
         self.pushSender = pushSender;
         self.registry = registry;
         self.streamIdleTimeout = streamIdleTimeout;
+        self.keepAliveInterval = keepAliveInterval;
     }
 
     # Handles sendMessage: create a task (or continue an existing one named
@@ -498,7 +504,7 @@ isolated class DefaultHandler {
         // Attached before driveTask starts, so nothing it broadcasts can
         // be missed between claiming the driver slot and this tap
         // existing.
-        EventTap tap = broadcaster.newTap(self.streamIdleTimeout);
+        EventTap tap = broadcaster.newTap(self.streamIdleTimeout, self.keepAliveInterval);
 
         final RequestContext context = {
             message: request.message,
@@ -548,7 +554,7 @@ isolated class DefaultHandler {
         }
 
         EventBroadcaster broadcaster = self.registry.subscribe(request.id);
-        EventTap tap = broadcaster.newTap(self.streamIdleTimeout);
+        EventTap tap = broadcaster.newTap(self.streamIdleTimeout, self.keepAliveInterval);
 
         // Re-read after attaching, not the copy from the existence check
         // above -- a driver may have written between the two, and the

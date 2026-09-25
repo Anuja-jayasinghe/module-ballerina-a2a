@@ -39,16 +39,18 @@ listener Listener shortTimeoutListener = new (LISTENER_CONFIG_TEST_PORT, agentCa
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-}, timeout = 2);
+}, timeout = 2, keepAliveInterval = 0);
 
-// Reports WORKING, then holds on the Gate until a test releases it.
+// Reports WORKING, then holds on the Gate registered under the key in its
+// message ("hold:<key>") until a test releases it, then completes.
 isolated service class SilentAgent {
     *Service;
 
     isolated remote function onMessage(RequestContext context, TaskUpdater updater)
             returns Message|Error? {
+        string text = context.message.parts[0]?.text ?: "";
         check updater->working();
-        Gate? gate = gateFor("listener-config-silent");
+        Gate? gate = text.startsWith("hold:") ? gateFor(text.substring(5)) : ();
         if gate is Gate {
             gate.awaitStep(1);
         }
@@ -70,7 +72,7 @@ function testListenerAppliesTheCallersHttpTimeout() returns error? {
 
     time:Utc started = time:utcNow();
     stream<StreamResponse, Error?> events = check c->sendStreamingMessage({
-        message: {messageId: "silent-1", role: ROLE_USER, parts: [{text: "go"}]}
+        message: {messageId: "silent-1", role: ROLE_USER, parts: [{text: "hold:listener-config-silent"}]}
     });
     boolean sawCompleted = false;
     while true {
