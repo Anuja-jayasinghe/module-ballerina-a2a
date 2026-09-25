@@ -72,7 +72,17 @@ isolated function errorBindingFor(Error err) returns ErrorBinding {
     if err is VersionNotSupportedError {
         return {status: http:STATUS_BAD_REQUEST, reason: "VERSION_NOT_SUPPORTED"};
     }
-    // InternalError and anything else the protocol does not name.
+    // InternalError is also how this library carries the standard JSON-RPC
+    // "the request itself was bad" codes (see `invalidRequest`); those are the
+    // caller's fault, so they are a 400 with their own reason, not a 500.
+    int? code = err.detail()?.code;
+    if code == -32600 {
+        return {status: http:STATUS_BAD_REQUEST, reason: "INVALID_REQUEST"};
+    }
+    if code == -32602 {
+        return {status: http:STATUS_BAD_REQUEST, reason: "INVALID_PARAMS"};
+    }
+    // Anything else the protocol does not name.
     return {status: http:STATUS_INTERNAL_SERVER_ERROR, reason: "INTERNAL_ERROR"};
 }
 
