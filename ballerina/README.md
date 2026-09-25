@@ -370,7 +370,7 @@ Specification section 13.3 requires this operation specifically to require authe
 
 ### 7.5 Push notifications
 
-An agent can register, read, list and remove a task's webhook configuration, and this listener actually calls it: whenever a task it drives reaches a new state — including cancellation — every webhook registered for that task gets a POST of the task's current JSON. Delivery is fire-and-forget: a webhook that is unreachable or errors does not fail the operation that triggered it.
+An agent can register, read, list and remove a task's webhook configuration, and this listener actually calls it: whenever a task it drives reaches a new state — including cancellation — every webhook registered for that task gets a POST of the task's current state as a `StreamResponse` — `{"task": {...}}`, the same shape a stream carries (specification section 4.3.3), with media type `application/a2a+json`. Delivery is fire-and-forget: a webhook that is unreachable or errors does not fail the operation that triggered it.
 
 A client registers a webhook one of two ways. Inline, attached to a `sendMessage`/`sendStreamingMessage` call — the only channel that works before a task's id is even known, since a config normally has to name an existing `taskId`:
 

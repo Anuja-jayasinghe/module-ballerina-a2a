@@ -999,8 +999,10 @@ function testServerRoundTripPushNotificationDeliveryOnCompletion() returns error
     test:assertTrue(call is CapturedWebhookCall,
             "the webhook registered inline on the sendMessage request must have been called");
     CapturedWebhookCall received = <CapturedWebhookCall>call;
-    test:assertEquals(received.body.id, created.id);
-    test:assertEquals(received.body.status.state, "TASK_STATE_COMPLETED");
+    map<json> task = check webhookTask(received);
+    test:assertEquals(task["id"], created.id);
+    map<json> status = check task["status"].ensureType();
+    test:assertEquals(status["state"], "TASK_STATE_COMPLETED");
 }
 
 @test:Config {}
@@ -1052,7 +1054,9 @@ function testServerRoundTripPushNotificationDeliveryOnCancel() returns error? {
     CapturedWebhookCall? call = takeLastWebhookCall();
     test:assertTrue(call is CapturedWebhookCall, "cancelTask must also notify registered webhooks");
     CapturedWebhookCall received = <CapturedWebhookCall>call;
-    test:assertEquals(received.body.status.state, "TASK_STATE_CANCELED");
+    map<json> canceledTask = check webhookTask(received);
+    map<json> canceledStatus = check canceledTask["status"].ensureType();
+    test:assertEquals(canceledStatus["state"], "TASK_STATE_CANCELED");
 }
 
 // This module's own SecurityRequirement type is internally flat

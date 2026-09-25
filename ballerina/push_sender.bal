@@ -58,6 +58,12 @@ public type PushNotificationSenderConfiguration record {|
 
 # The default `a2a:PushNotificationSender`: an HTTP POST of the task to the
 # registered URL.
+#
+# The body is a `StreamResponse`, as [specification section 4.3.3](https://a2a-protocol.org/latest/specification/#433-push-notification-payload)
+# requires -- the task under its `task` key, `{"task": {...}}`, exactly the
+# shape a streaming client receives -- so a receiver can tell a task from a
+# status or artifact update by the key alone. The media type is
+# `application/a2a+json`.
 public isolated class HttpPushNotificationSender {
     *PushNotificationSender;
 
@@ -89,7 +95,16 @@ public isolated class HttpPushNotificationSender {
             return wrapTransportError(webhook);
         }
 
-        map<string> headers = {"Content-Type": "application/json"};
+        // The wire envelope, not a bare `task.toJson()`: it is the same
+        // StreamResponse shape a live stream carries, and it base64-encodes
+        // file bytes the way the rest of the wire does, which `toJson()` on a
+        // `byte[]` does not.
+        json|error body = wireEnvelopeFor(task);
+        if body is error {
+            return wrapTransportError(body);
+        }
+
+        map<string> headers = {"Content-Type": CONTENT_TYPE_A2A_JSON};
         string? token = config?.token;
         if token is string {
             headers["X-A2A-Notification-Token"] = token;
@@ -102,7 +117,7 @@ public isolated class HttpPushNotificationSender {
             }
         }
 
-        http:Response|error result = webhook->post("", task.toJson(), headers);
+        http:Response|error result = webhook->post("", body, headers);
         if result is error {
             return wrapTransportError(result);
         }

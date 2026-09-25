@@ -86,6 +86,13 @@ isolated function takeLastWebhookCall() returns CapturedWebhookCall? {
     }
 }
 
+// Unwraps the `task` arm of a captured webhook body: the body is a
+// StreamResponse (specification 4.3.3), never a bare task.
+isolated function webhookTask(CapturedWebhookCall call) returns map<json>|error {
+    map<json> envelope = check call.body.ensureType();
+    return envelope["task"].ensureType();
+}
+
 listener http:Listener webhookReceiver = new (PUSH_SENDER_TEST_PORT);
 
 service /webhook/receiver on webhookReceiver {
@@ -128,9 +135,39 @@ function testHttpPushNotificationSenderPostsTaskBody() returns error? {
     test:assertTrue(call is CapturedWebhookCall, "the receiver must have been called");
     CapturedWebhookCall received = <CapturedWebhookCall>call;
     test:assertEquals(received.rawPath, "/webhook/receiver", "the config's path must reach the receiver intact");
-    test:assertEquals(received.body.id, "task-1");
-    test:assertEquals(received.body.status.state, "TASK_STATE_COMPLETED");
-    test:assertEquals(received.headers["content-type"], "application/json");
+    // Specification 4.3.3: the body is a StreamResponse, so the task sits under
+    // its own key -- not bare at the top level, where a receiver could not
+    // tell it from a status or artifact update.
+    map<json> envelope = check received.body.ensureType();
+    test:assertEquals(envelope.keys(), ["task"], "the body must be a StreamResponse with exactly one arm");
+    map<json> task = check envelope["task"].ensureType();
+    test:assertEquals(task["id"], "task-1");
+    map<json> status = check task["status"].ensureType();
+    test:assertEquals(status["state"], "TASK_STATE_COMPLETED");
+    test:assertEquals(received.headers["content-type"], "application/a2a+json");
+}
+
+// File bytes must go out base64-encoded, as everywhere else on the wire; a
+// bare toJson() on a byte[] would send an array of integers instead.
+@test:Config {}
+function testHttpPushNotificationSenderEncodesFileBytesAsBase64() returns error? {
+    HttpPushNotificationSender sender = new ({validateUrl: false});
+    Task withFile = sampleTask();
+    withFile.artifacts = [{
+        artifactId: "a1",
+        parts: [{raw: "tck".toBytes(), mediaType: "text/plain", filename: "output.txt"}]
+    }];
+    Error? result = sender.send({url: string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`}, withFile);
+    test:assertTrue(result is (), "delivery to a real, reachable receiver must succeed");
+
+    CapturedWebhookCall received = <CapturedWebhookCall>takeLastWebhookCall();
+    map<json> envelope = check received.body.ensureType();
+    map<json> task = check envelope["task"].ensureType();
+    json[] artifacts = check task["artifacts"].ensureType();
+    map<json> artifact = check artifacts[0].ensureType();
+    json[] parts = check artifact["parts"].ensureType();
+    map<json> part = check parts[0].ensureType();
+    test:assertEquals(part["raw"], "dGNr", "\"tck\" must arrive as its base64 form, not as an integer array");
 }
 
 @test:Config {}
