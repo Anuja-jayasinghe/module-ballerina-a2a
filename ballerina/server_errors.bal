@@ -97,20 +97,31 @@ isolated function errorBindingFor(Error err) returns ErrorBinding {
 # + return - The body, keyed the same regardless of transport
 isolated function restErrorBody(Error err) returns json {
     ErrorBinding binding = errorBindingFor(err);
+    return rpcStatusBody(binding.status, err.message(), binding.reason, err.detail()?.data);
+}
+
+# Builds the `google.rpc.Status` body from its parts. The one place the
+# shape is written down, so an `a2a:Error` and an authentication rejection
+# (which is not an `a2a:Error`) cannot drift apart.
+#
+# + status - The HTTP status the response carries
+# + message - The human-readable message
+# + reason - The `ErrorInfo.reason` string
+# + data - Optional structured detail, carried as `ErrorInfo.metadata`
+# + return - The body
+isolated function rpcStatusBody(int status, string message, string reason, json? data = ()) returns json {
     map<json> errorInfo = {
         "@type": "type.googleapis.com/google.rpc.ErrorInfo",
-        "reason": binding.reason,
+        "reason": reason,
         "domain": "a2a-protocol.org"
     };
-    ErrorDetail detail = err.detail();
-    json? data = detail?.data;
     if data != () {
         errorInfo["metadata"] = data;
     }
     return {
         "error": {
-            "code": binding.status,
-            "message": err.message(),
+            "code": status,
+            "message": message,
             "details": [errorInfo]
         }
     };
@@ -128,5 +139,36 @@ isolated function toRestErrorResponse(Error err) returns http:Response {
     http:Response response = new;
     response.statusCode = errorBindingFor(err).status;
     response.setJsonPayload(restErrorBody(err), CONTENT_TYPE_A2A_JSON);
+    return response;
+}
+
+# Builds the response for a request that was not admitted.
+#
+# Not an `a2a:Error`: the specification has no A2A error type for it. Section
+# 5.4 names HTTP 401 and gRPC `UNAUTHENTICATED` for a missing or invalid
+# credential, and requires an authorization error when the caller lacks a
+# permission -- so the body is the same `google.rpc.Status` shape every other
+# error uses, with those reasons. The message is deliberately generic: it must
+# not reveal whether a resource exists ("MUST NOT reveal the existence of
+# resources the client is not authorized to access").
+#
+# + forbidden - True for a 403 (identified, lacks a scope), false for a 401
+# + challenges - The `WWW-Authenticate` values a 401 carries
+# + return - The response
+isolated function toAuthErrorResponse(boolean forbidden, string[] challenges) returns http:Response {
+    http:Response response = new;
+    if forbidden {
+        response.statusCode = http:STATUS_FORBIDDEN;
+        response.setJsonPayload(rpcStatusBody(http:STATUS_FORBIDDEN,
+                "The authenticated caller is not permitted to perform this operation", "PERMISSION_DENIED"),
+                CONTENT_TYPE_A2A_JSON);
+        return response;
+    }
+    response.statusCode = http:STATUS_UNAUTHORIZED;
+    foreach string challenge in challenges {
+        response.addHeader("WWW-Authenticate", challenge);
+    }
+    response.setJsonPayload(rpcStatusBody(http:STATUS_UNAUTHORIZED,
+            "Missing or invalid credentials", "UNAUTHENTICATED"), CONTENT_TYPE_A2A_JSON);
     return response;
 }

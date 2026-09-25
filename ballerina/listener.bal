@@ -35,6 +35,28 @@ public type ListenerConfiguration record {|
     # visible to every caller — this server's behavior before this field
     # existed. See `a2a:TaskOwnerResolver`.
     TaskOwnerResolver? ownerResolver = ();
+    # How callers authenticate, as the same `http:ListenerAuthConfig` entries a
+    # service's `@http:ServiceConfig` takes: JWT validation, OAuth2 token
+    # introspection, or Basic against a file or LDAP user store, each
+    # optionally requiring `scopes`. The entries are alternatives; a request
+    # that any one accepts is admitted.
+    #
+    # When set, every request except the public card
+    # (`/.well-known/agent-card.json`) must authenticate, per [specification
+    # section 7.4](https://a2a-protocol.org/latest/specification/#74-server-authentication-responsibilities):
+    # a missing or invalid credential is a 401 with a `WWW-Authenticate`
+    # challenge, and a valid one that lacks a required scope is a 403. Unset
+    # means the listener authenticates nothing, so put it behind something that
+    # does.
+    #
+    # The authenticated identity (a JWT's `sub`, the introspected `sub` or
+    # `username`, or the Basic username) becomes the task owner scope, so a
+    # caller sees only its own tasks ([section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping));
+    # an `ownerResolver`, if configured, takes precedence. Keep the card's
+    # `securitySchemes` in agreement with what is configured here.
+    #
+    # Applies whether `listenTo` is a port or an existing `http:Listener`.
+    http:ListenerAuthConfig[]? auth = ();
     # Delivers task updates to registered push-notification webhooks.
     # Defaults to `a2a:HttpPushNotificationSender`, a real HTTP POST — unlike
     # `ownerResolver`, delivery needs no identity this library cannot
@@ -92,7 +114,7 @@ public type ListenerConfiguration record {|
 # + return - The HTTP listener's own settings
 isolated function httpListenerConfigurationOf(ListenerConfiguration config) returns http:ListenerConfiguration {
     ListenerConfiguration {
-        taskStore: _, extendedAgentCard: _, ownerResolver: _, pushSender: _, streamIdleTimeout: _, keepAliveInterval: _,
+        taskStore: _, extendedAgentCard: _, ownerResolver: _, auth: _, pushSender: _, streamIdleTimeout: _, keepAliveInterval: _,
         streamingCapability: _, pushNotificationsCapability: _, ...httpConfig
     } = config;
     return {...httpConfig};
@@ -130,6 +152,7 @@ public isolated class Listener {
     private final TaskStore store;
     private final (AgentCard & readonly)? extendedCard;
     private final TaskOwnerResolver? ownerResolver;
+    private final ListenerAuthenticator? authenticator;
     private final PushNotificationSender pushSender;
     private final decimal streamIdleTimeout;
     private final decimal keepAliveInterval;
@@ -166,6 +189,16 @@ public isolated class Listener {
         self.card = deriveServedCard(agentCard, self.extendedCard is AgentCard,
                 config.streamingCapability, config.pushNotificationsCapability).cloneReadOnly();
         self.ownerResolver = config.ownerResolver;
+        http:ListenerAuthConfig[]? auth = config.auth;
+        if auth is http:ListenerAuthConfig[] {
+            if auth.length() == 0 {
+                string msg = "ListenerConfiguration.auth must contain at least one entry; leave it unset for no authentication";
+                return error InternalError(msg, message = msg);
+            }
+            self.authenticator = new (auth.cloneReadOnly());
+        } else {
+            self.authenticator = ();
+        }
         self.pushSender = config.pushSender;
         self.streamIdleTimeout = config.streamIdleTimeout;
         self.keepAliveInterval = config.keepAliveInterval;
@@ -183,7 +216,7 @@ public isolated class Listener {
         TaskExecutionRegistry registry = new;
         DefaultHandler handler = new (a2aService, self.store, self.extendedCard, self.pushSender, registry,
                 self.streamIdleTimeout, self.keepAliveInterval);
-        DispatcherService dispatcherService = new (self.card, handler, self.ownerResolver);
+        DispatcherService dispatcherService = new (self.card, handler, self.ownerResolver, self.authenticator);
         lock {
             self.dispatcher = dispatcherService;
         }

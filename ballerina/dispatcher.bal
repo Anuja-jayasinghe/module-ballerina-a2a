@@ -52,11 +52,14 @@ isolated service class DispatcherService {
     private final AgentCard & readonly card;
     private final DefaultHandler handler;
     private final TaskOwnerResolver? ownerResolver;
+    private final ListenerAuthenticator? authenticator;
 
-    isolated function init(AgentCard card, DefaultHandler handler, TaskOwnerResolver? ownerResolver) {
+    isolated function init(AgentCard card, DefaultHandler handler, TaskOwnerResolver? ownerResolver,
+            ListenerAuthenticator? authenticator = ()) {
         self.card = card.cloneReadOnly();
         self.handler = handler;
         self.ownerResolver = ownerResolver;
+        self.authenticator = authenticator;
     }
 
     isolated resource function get [string... path](http:Request req)
@@ -92,6 +95,19 @@ isolated service class DispatcherService {
             return cardHttpResponse(self.cardForHost(req));
         }
 
+        // Authentication comes before everything else, so a caller that has
+        // not proved who it is learns nothing about the server -- not even
+        // whether a path or a tenant exists (specification section 7.4).
+        string? identity = ();
+        ListenerAuthenticator? authenticator = self.authenticator;
+        if authenticator is ListenerAuthenticator {
+            string|AuthFailure authenticated = authenticator.authenticate(req);
+            if authenticated is AuthFailure {
+                return toAuthErrorResponse(authenticated.forbidden, authenticator.challengeHeaders());
+            }
+            identity = authenticated;
+        }
+
         Error? versionError = self.checkVersion(req);
         if versionError is Error {
             return toRestErrorResponse(versionError);
@@ -123,7 +139,9 @@ isolated service class DispatcherService {
             }
             owner = resolved;
         } else {
-            owner = ();
+            // No resolver: the authenticated identity, if there is one, is
+            // the owner (section 13.1); otherwise the one shared pool.
+            owner = identity;
         }
 
         http:Response|stream<http:SseEvent, error?>|Error result = self.route(method, path, tenant, owner, req);
