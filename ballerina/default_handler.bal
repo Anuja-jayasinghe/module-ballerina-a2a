@@ -88,7 +88,7 @@ isolated class DefaultHandler {
     # + return - The finished Task or a direct Message, or an error
     isolated function sendMessage(SendMessageRequest request, string? tenant, string? owner)
             returns Task|Message|Error {
-        check validateOutboundMessage(request.message);
+        check validateReceivedMessage(request.message);
         check validatePushConfigId(request?.configuration?.taskPushNotificationConfig);
 
         ResolvedSendTarget target = check self.resolveTaskForSend(request, owner);
@@ -211,7 +211,7 @@ isolated class DefaultHandler {
         if suppliedContextId is string && suppliedContextId != existingContextId {
             string msg = string `message.contextId "${suppliedContextId}" does not match task `
                 + string `${continuedTaskId}'s own contextId "${existingContextId}"`;
-            return invalidAgentResponse(msg);
+            return invalidRequest(msg);
         }
         if isTerminalState(existing.status.state) {
             string msg = string `task ${continuedTaskId} is in terminal state ${existing.status.state} `
@@ -473,7 +473,7 @@ isolated class DefaultHandler {
     # + return - A live stream of the task's events, or an error
     isolated function sendStreamingMessage(SendMessageRequest request, string? tenant, string? owner)
             returns stream<StreamResponse, Error?>|Error {
-        check validateOutboundMessage(request.message);
+        check validateReceivedMessage(request.message);
         check validatePushConfigId(request?.configuration?.taskPushNotificationConfig);
 
         ResolvedSendTarget target = check self.resolveTaskForSend(request, owner);
@@ -654,7 +654,7 @@ isolated class DefaultHandler {
         string? taskId = request?.taskId;
         if taskId is () {
             string msg = "TaskPushNotificationConfig.taskId is required to register a config";
-            return invalidAgentResponse(msg);
+            return invalidRequest(msg);
         }
         Task? task = check self.store.get(taskId, owner);
         if task is () {

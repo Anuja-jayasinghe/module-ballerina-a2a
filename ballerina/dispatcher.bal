@@ -318,15 +318,7 @@ isolated service class DispatcherService {
     # + return - The response, or an error
     private isolated function onSendMessage(string? tenant, string? owner, http:Request req)
             returns http:Response|Error {
-        json|error payload = req.getJsonPayload();
-        if payload is error {
-            return invalidAgentResponse(string `request body is not valid JSON: ${payload.message()}`);
-        }
-        SendMessageRequest|error request = payload.cloneWithType(SendMessageRequest);
-        if request is error {
-            return invalidAgentResponse(
-                    string `request body did not match SendMessageRequest: ${request.message()}`);
-        }
+        SendMessageRequest request = check decodeSendMessageRequest(req.getJsonPayload());
         Task|Message result = check self.handler.sendMessage(request, tenant, owner);
         // The wire wraps the result in its oneof arm, matching what the client
         // decodes: {"task": ...} or {"message": ...}.
@@ -350,15 +342,7 @@ isolated service class DispatcherService {
         if !self.card.capabilities.streaming {
             return serverStreamingUnsupportedError("sendStreamingMessage");
         }
-        json|error payload = req.getJsonPayload();
-        if payload is error {
-            return invalidAgentResponse(string `request body is not valid JSON: ${payload.message()}`);
-        }
-        SendMessageRequest|error request = payload.cloneWithType(SendMessageRequest);
-        if request is error {
-            return invalidAgentResponse(
-                    string `request body did not match SendMessageRequest: ${request.message()}`);
-        }
+        SendMessageRequest request = check decodeSendMessageRequest(req.getJsonPayload());
         stream<StreamResponse, Error?> events = check self.handler.sendStreamingMessage(request, tenant, owner);
         stream<http:SseEvent, error?> framed = new (new SseFramingGenerator(events));
         return framed;
@@ -434,20 +418,7 @@ isolated service class DispatcherService {
     # + return - The stored config, or an error
     private isolated function onCreateTaskPushNotificationConfig(string taskId, string? owner, http:Request req)
             returns http:Response|Error {
-        json|error payload = req.getJsonPayload();
-        if payload is error {
-            return invalidAgentResponse(string `request body is not valid JSON: ${payload.message()}`);
-        }
-        map<json>|error asMap = payload.ensureType();
-        if asMap is error {
-            return invalidAgentResponse("request body is not a JSON object");
-        }
-        asMap["taskId"] = taskId;
-        TaskPushNotificationConfig|error request = asMap.cloneWithType(TaskPushNotificationConfig);
-        if request is error {
-            return invalidAgentResponse(
-                    string `request body did not match TaskPushNotificationConfig: ${request.message()}`);
-        }
+        TaskPushNotificationConfig request = check decodePushConfigRequest(req.getJsonPayload(), taskId);
         return jsonResponse((check self.handler.createTaskPushNotificationConfig(request, owner)).toJson());
     }
 

@@ -74,6 +74,8 @@ listener Listener extendedCardListener = new (EXTENDED_CARD_TEST_PORT, agentCard
 // A minimal agent: echoes the inbound text back as a completed task's
 // artifact, with a handful of trigger texts for the checkpoints live
 // streaming and error handling need to test deterministically:
+// - a message with a file part (Part.raw): echoes the bytes it received back
+//   as text, "raw: <bytes>".
 // - "ping": a direct Message reply, no task at all.
 // - "ask": pauses at TASK_STATE_INPUT_REQUIRED, for continuation tests.
 // - "boom": onMessage returns an a2a:Error directly.
@@ -91,6 +93,18 @@ isolated service class EchoAgent {
             string? t = part?.text;
             if t is string {
                 text += t;
+            }
+        }
+        // A message carrying file bytes: echo them back as text, so a test can
+        // see exactly which bytes onMessage received.
+        foreach Part part in context.message.parts {
+            byte[]? raw = part?.raw;
+            if raw is byte[] {
+                string|error asText = string:fromBytes(raw);
+                check updater->working();
+                check updater->addArtifact([{text: string `raw: ${asText is string ? asText : "not utf-8"}`}]);
+                check updater->complete();
+                return;
             }
         }
         if text == "ping" {
@@ -177,6 +191,78 @@ function testServerResponsesUseA2AJsonContentType() returns error? {
     test:assertEquals(errorResp.getContentType(), "application/a2a+json");
 }
 
+// ---- inbound request bodies ----------------------------------------------
+
+// File bytes go over the wire as base64 in Part.raw. The server must decode
+// them, so onMessage receives the bytes, not a string that fails conversion
+// to byte[] (which used to be a 500 on every file part).
+@test:Config {}
+function testServerRoundTripFileBytesReachTheAgentAsBytes() returns error? {
+    // Through the typed client, which base64-encodes on the way out.
+    Client c = check echoClient();
+    Task viaClient = <Task>check c->sendMessage({
+        message: {messageId: "raw-1", role: ROLE_USER, parts: [{raw: "tck".toBytes(), mediaType: "text/plain"}]}
+    });
+    test:assertEquals(firstArtifactText(viaClient), "raw: tck");
+
+    // And the literal wire form, "dGNr" being base64 for "tck".
+    http:Client raw = check new (serverUrl);
+    json body = {"message": {"messageId": "raw-2", "role": "ROLE_USER",
+        "parts": [{"raw": "dGNr", "mediaType": "application/x-unsupported-tck-type"}]}};
+    http:Response resp = check raw->post("/message:send", body,
+            {"A2A-Version": "1.0", "Content-Type": "application/json"});
+    test:assertEquals(resp.statusCode, 200);
+    json payload = check resp.getJsonPayload();
+    map<json> envelope = check payload.ensureType();
+    Task viaWire = check envelope["task"].cloneWithType(Task);
+    test:assertEquals(firstArtifactText(viaWire), "raw: tck");
+}
+
+isolated function firstArtifactText(Task task) returns string? {
+    Artifact[] artifacts = task.artifacts ?: [];
+    if artifacts.length() == 0 {
+        return;
+    }
+    return artifacts[0].parts[0]?.text;
+}
+
+// A request the caller got wrong is a 400 with reason INVALID_REQUEST, never a
+// 500: a body that is not JSON, one that does not match the request type, and
+// one carrying a malformed part, on both send operations.
+@test:Config {}
+function testServerRejectsMalformedRequestBodiesWith400() returns error? {
+    http:Client raw = check new (serverUrl);
+    map<string> headers = {"A2A-Version": "1.0", "Content-Type": "application/json"};
+    string[] badBodies = [
+        "{not json",
+        "{\"nope\": 1}",
+        "{\"message\": {\"messageId\": \"m\", \"role\": \"ROLE_USER\", \"parts\": [{\"raw\": \"@@not base64@@\"}]}}",
+        "{\"message\": {\"messageId\": \"m\", \"role\": \"ROLE_USER\", \"parts\": [{\"text\": \"a\", \"url\": \"http://x\"}]}}",
+        "{\"message\": {\"messageId\": \"m\", \"role\": \"ROLE_USER\", \"parts\": []}}"
+    ];
+    foreach string path in ["/message:send", "/message:stream"] {
+        foreach string body in badBodies {
+            http:Response resp = check raw->post(path, body, headers);
+            test:assertEquals(resp.statusCode, 400, string `${path} with ${body}`);
+            json payload = check resp.getJsonPayload();
+            map<json> envelope = check payload.ensureType();
+            map<json> err = check envelope["error"].ensureType();
+            json[] details = check err["details"].ensureType();
+            map<json> info = check details[0].ensureType();
+            test:assertEquals(info["reason"], "INVALID_REQUEST", string `${path} with ${body}`);
+        }
+    }
+
+    // The push-config body too: not an object, and no url.
+    Task created = <Task>check (check echoClient())->sendMessage({
+        message: {messageId: "m-bad-cfg", role: ROLE_USER, parts: [{text: "x"}]}
+    });
+    foreach string body in ["[1, 2]", "{\"token\": \"t\"}"] {
+        http:Response resp = check raw->post(string `/tasks/${created.id}/pushNotificationConfigs`, body, headers);
+        test:assertEquals(resp.statusCode, 400, string `push config with ${body}`);
+    }
+}
+
 @test:Config {}
 function testServerRoundTripSendMessageReturnsTask() returns error? {
     Client c = check echoClient();
@@ -255,8 +341,9 @@ function testServerRoundTripContinueMismatchedContextIdIsRejected() returns erro
             parts: [{text: "again"}]
         }
     });
-    test:assertTrue(result is InvalidAgentResponseError,
-            "a message.contextId that disagrees with the continued task's own must be rejected");
+    test:assertTrue(result is InternalError && result.detail()?.code == -32600,
+            "a message.contextId that disagrees with the continued task's own is the caller's mistake: "
+            + "rejected as an invalid request (a 400), not as a bad agent response");
 }
 
 @test:Config {}
