@@ -199,6 +199,8 @@ final a2a:InMemoryCredentialStore store = new ({
 final a2a:HttpClient agent = check new ("https://agent.example.com", credentials = store);
 ```
 
+An agent built with this package's listener and `auth` publishes its schemes for you, named `bearerAuth` for JWT and OAuth2 entries and `basicAuth` for Basic ones ([section 7.7](#77-authenticating-callers)), so `new a2a:InMemoryCredentialStore({"bearerAuth": token})` is all such an agent needs.
+
 Implement `CredentialProvider` yourself to source credentials from wherever they actually live — a vault, a config file, a per-session store. Returning `()` is normal and not an error: the request is sent without that credential and the agent decides how to respond.
 
 ### 4.3 Skill-level requirements
@@ -221,6 +223,24 @@ if task.status.state == a2a:TASK_STATE_AUTH_REQUIRED {
     // surface the prompt to whoever can satisfy it, then resume
 }
 ```
+
+### 4.4 When the agent rejects the credentials
+
+A rejected request has two distinct causes, and each has its own error type:
+
+```ballerina
+a2a:Task|a2a:Error result = agent->getTask({id: "task-1"});
+
+if result is a2a:AuthenticationError {
+    // 401: the credential is missing, expired, or invalid
+} else if result is a2a:AuthorizationError {
+    // 403: the credential is valid but not permitted to do this, e.g. a missing scope
+}
+```
+
+An `AuthenticationError` carries the response's `WWW-Authenticate` challenges in `result.detail()?.data`, as `{"wwwAuthenticate": ["Bearer", ...]}`, which say which scheme the agent wants. Both types are recognised whether the agent answers with an A2A error body or, as a gateway or proxy does, with only the status. The same two types are what fails an `sendStreamingMessage` or `subscribeToTask` that is rejected before any event, and a card that itself sits behind authentication (`resolveAgentCard`).
+
+Specification section 5.x describes these two conditions without naming an error type, so these two names are this package's own.
 
 ## 5. Inspecting a card
 
@@ -260,6 +280,8 @@ if result is a2a:TaskNotFoundError {
 ```
 
 The nine are `TaskNotFoundError`, `TaskNotCancelableError`, `UnsupportedOperationError`, `ContentTypeNotSupportedError`, `InvalidAgentResponseError`, `VersionNotSupportedError`, `PushNotificationNotSupportedError`, `ExtendedAgentCardNotConfiguredError`, and `ExtensionSupportRequiredError`.
+
+Two more describe a rejected request rather than a failed operation: `AuthenticationError` (401) and `AuthorizationError` (403), see [section 4.4](#44-when-the-agent-rejects-the-credentials).
 
 Anything the protocol does not name — a dropped connection, a malformed body, a response that does not match its declared shape, or a precondition this client checks before sending — surfaces as `InternalError`. No operation returns a bare, unmatchable `error`.
 
@@ -468,7 +490,9 @@ With `auth` set:
 - the rejection happens before the agent runs and before a stream opens, so a rejected `sendStreamingMessage` is a plain `401`, not an event stream;
 - the authenticated identity is the task owner. That is a JWT's `sub` (or `username`) claim, the introspected `sub` (or `username`), or the Basic username. A caller sees only its own tasks ([section 7.6](#76-task-ownership-and-authorization-scoping)). A credential that validates but names no one is rejected, since there is no owner to scope to. A configured `ownerResolver` takes precedence.
 
-Keep the card's `securitySchemes` and `securityRequirements` in agreement with `auth`: the listener enforces `auth`, and the card only advertises. It does not derive one from the other.
+The card tells a client how to authenticate (specification section 7.3), so `auth` also fills it in. When the card you pass declares neither `securitySchemes` nor `securityRequirements`, both are derived: JWT and OAuth2 introspection entries become an HTTP `Bearer` scheme named `bearerAuth` (with `bearerFormat: "JWT"` only when every Bearer entry is a JWT), file and LDAP entries become an HTTP `Basic` scheme named `basicAuth`, and each entry is its own requirement, in order, carrying its `scopes`. The extended card gets the same. A client given only the agent's URL and `new a2a:InMemoryCredentialStore({"bearerAuth": token})` then authenticates with nothing else written by hand.
+
+If you declare either field yourself, nothing is derived and yours is served as written. That is the way to publish an `oauth2` or `openIdConnect` scheme, which needs your identity provider's URLs, or a scheme enforced by something in front of the listener. Keep what you declare in agreement with what `auth` enforces: the listener enforces `auth`, and the card only advertises.
 
 `auth` applies whether the listener is given a port or an existing `http:Listener`. Serve over HTTPS in production (specification section 7.1); credentials in the clear are only reasonable on localhost.
 

@@ -30,9 +30,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Add `ListenerConfiguration.streamingCapability`/`pushNotificationsCapability`, Letting a Deployment Deliberately Withhold a Capability This Listener Otherwise Always Implements
 - Add `ListenerConfiguration.keepAliveInterval`, Sending SSE Keep-Alive Comments so a Quiet, Long-Running Stream Survives HTTP Idle Timeouts
 - Add `ListenerConfiguration.auth`, Authenticating Every Request Except the Public Card with `ballerina/http`'s JWT, OAuth2 Introspection, and File/LDAP Basic Handlers per Specification Section 7.4, with the Authenticated Identity Scoping Tasks per Section 13.1
+- Derive the Served Agent Card's `securitySchemes` and `securityRequirements` from `ListenerConfiguration.auth` when the Card Declares Neither, per Specification Sections 7.3 and 13.3
+- Add `AuthenticationError` (401) and `AuthorizationError` (403), Typed from the `ErrorInfo` Reason or the Bare Status, with an `AuthenticationError` Carrying the `WWW-Authenticate` Challenges; the Server Maps Both to Their Statuses
 - Refuse to Start a `Listener` Configured with `extendedAgentCard` but No `auth`, per Specification Section 13.3 (a Breaking Change for Any Such Configuration)
 
 ### Fixed
 
+- Serve the Agent Card's `securitySchemes` in the Specification's Wrapped Shape (`{"httpAuthSecurityScheme": {...}}`, with `location` for an API Key), Instead of the Flat Shape with a `type` Discriminator, per Specification Section 4.5
+- A 401 or 403 Is Now an `AuthenticationError` or `AuthorizationError` Instead of an `InternalError` Carrying That Status as Its Code
 - `subscribeToTask` on an Already-Terminal Task Now Correctly Answers `UnsupportedOperationError` per Specification Section 3.1.6, Instead of a One-Event Snapshot
 - A Panic or Returned `Error` from `onMessage` Now Transitions the Task to `TASK_STATE_FAILED` Instead of Leaving It at Whatever State It Was Left In
