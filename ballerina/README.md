@@ -350,6 +350,8 @@ a2a:Task submitted = <a2a:Task>check agent->sendMessage({
 
 `streamIdleTimeout` on `ListenerConfiguration` (default 300 seconds) bounds how long a live stream may sit with no event before the server ends it -- the backstop for a client that disconnects without the transport surfacing it as a clean close.
 
+Given a port, `ListenerConfiguration` also carries every `http:ListenerConfiguration` field (`timeout`, `secureSocket`, `host`, ...) and applies them to the HTTP listener it creates. Given an already-built `http:Listener` instead, configure that listener when you build it; those fields have nothing to apply to and are ignored.
+
 ### 7.3 Task storage
 
 ```ballerina

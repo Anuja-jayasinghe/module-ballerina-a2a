@@ -69,6 +69,25 @@ public type ListenerConfiguration record {|
     boolean pushNotificationsCapability = true;
 |};
 
+# The `http:ListenerConfiguration` half of a `ListenerConfiguration`: everything
+# left once this package's own fields are taken out.
+#
+# `ListenerConfiguration` includes `http:ListenerConfiguration`, so a caller can
+# write `new a2a:Listener(9090, agentCard = ..., timeout = 120)`. The listener
+# built for a port used to be created from an empty configuration, silently
+# dropping every one of those fields -- a `timeout`, or a `secureSocket`, had no
+# effect at all.
+#
+# + config - The full configuration
+# + return - The HTTP listener's own settings
+isolated function httpListenerConfigurationOf(ListenerConfiguration config) returns http:ListenerConfiguration {
+    ListenerConfiguration {
+        taskStore: _, extendedAgentCard: _, ownerResolver: _, pushSender: _, streamIdleTimeout: _,
+        streamingCapability: _, pushNotificationsCapability: _, ...httpConfig
+    } = config;
+    return {...httpConfig};
+}
+
 # Serves an A2A agent over the HTTP+JSON binding.
 #
 # Construct it with the agent's `a2a:AgentCard` and a port (or an existing
@@ -112,7 +131,11 @@ public isolated class Listener {
     #               are derived, so a caller supplies identity, skills, and I/O
     #               modes
     # + config - Listener configuration, including the task store and the
-    #            extended card
+    #            extended card. Given a port, its `http:ListenerConfiguration`
+    #            fields (`timeout`, `secureSocket`, `host`, ...) configure the
+    #            listener that is created; given an existing `http:Listener`,
+    #            that listener was configured when it was built, so they have
+    #            nothing to apply to and are ignored.
     # + return - An `a2a:Error` if the card is invalid or the HTTP listener
     #            cannot be created
     public isolated function init(int|http:Listener listenTo, AgentCard agentCard,
@@ -120,8 +143,7 @@ public isolated class Listener {
         if listenTo is http:Listener {
             self.httpListener = listenTo;
         } else {
-            http:ListenerConfiguration httpConfig = {};
-            http:Listener|error created = new (listenTo, httpConfig);
+            http:Listener|error created = new (listenTo, httpListenerConfigurationOf(config));
             if created is error {
                 return wrapTransportError(created);
             }
