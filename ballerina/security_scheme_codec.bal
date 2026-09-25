@@ -319,11 +319,14 @@ isolated function parseAgentCardSignatures(json raw) returns AgentCardSignature[
 // parseSecurityRequirements normalizes onto (see its own doc above).
 // `AgentCard.toJson()`/`AgentSkill.toJson()` have no way to know this --
 // they convert a `map<string[]>` using default JSON conversion, which
-// produces the flat shape, not the wrapped one. Nothing else in this
-// module needs the reverse of parseSecuritySchemes/unwrapV10SecurityScheme:
-// a served card's `securitySchemes` map is `map<SecurityScheme>` keyed
-// by name already, exactly the v1.0 shape, so it round-trips through
-// plain toJson() correctly on its own.
+// produces the flat shape, not the wrapped one.
+//
+// `securitySchemes` needs the same treatment, for the same reason: a
+// `SecurityScheme` record carries a flat `type` discriminator, and plain
+// `toJson` emits it as is, but the v1.0 wire form wraps each scheme in the
+// one oneof arm it belongs to (`{"httpAuthSecurityScheme": {...}}`) and spells an
+// API key's location `location`, not `in`. `wrapV10SecurityScheme` is the
+// encode-direction mirror of `unwrapV10SecurityScheme`.
 
 # Wraps one internal, flat `SecurityRequirement` into the v1.0 wire shape:
 # `{"schemes": {name: {"list": [...]}}}`. The encode-direction mirror of
@@ -339,6 +342,39 @@ isolated function wrapV10SecurityRequirement(SecurityRequirement requirement) re
     return {schemes};
 }
 
+# Wraps one `SecurityScheme` into its v1.0 wire shape: the scheme's own
+# fields, minus the flat `type` discriminator, under the oneof arm key the
+# specification's `SecurityScheme` message names for it.
+#
+# + scheme - The scheme to encode
+# + return - The v1.0-shaped wire object, e.g. `{"httpAuthSecurityScheme": {...}}`
+isolated function wrapV10SecurityScheme(SecurityScheme scheme) returns json {
+    map<json>|error converted = scheme.toJson().ensureType();
+    map<json> fields = converted is map<json> ? converted : {};
+    _ = fields.removeIfHasKey("type");
+    string arm;
+    match scheme.'type {
+        "apiKey" => {
+            arm = "apiKeySecurityScheme";
+            // OpenAPI spells it `in`; the proto field is `location`.
+            renameJsonField(fields, "in", "location");
+        }
+        "http" => {
+            arm = "httpAuthSecurityScheme";
+        }
+        "oauth2" => {
+            arm = "oauth2SecurityScheme";
+        }
+        "openIdConnect" => {
+            arm = "openIdConnectSecurityScheme";
+        }
+        _ => {
+            arm = "mtlsSecurityScheme";
+        }
+    }
+    return {[arm]: fields};
+}
+
 # Wraps a list of internal, flat `SecurityRequirement`s into the v1.0 wire
 # array shape.
 #
@@ -352,14 +388,14 @@ isolated function wrapV10SecurityRequirements(SecurityRequirement[] requirements
     return result;
 }
 
-# Encodes an `AgentCard` for the wire, rewriting its own
-# `securityRequirements` and each skill's from `toJson`'s default (flat,
+# Encodes an `AgentCard` for the wire, rewriting its own `securitySchemes` and
+# `securityRequirements` and each skill's requirements from `toJson`'s default (flat,
 # v0.3-shaped) conversion into the v1.0 form every A2A v1.0 server actually
 # serves. Every other field round-trips through plain `toJson` correctly
 # already (see the note above `wrapV10SecurityRequirement`).
 #
 # + card - The card to serve
-# + return - The card's wire JSON, with conformant `securityRequirements`
+# + return - The card's wire JSON, with conformant `securitySchemes` and `securityRequirements`
 isolated function encodeAgentCardForWire(AgentCard card) returns json {
     map<json>|error encoded = card.toJson().ensureType();
     if encoded is error {
@@ -372,6 +408,15 @@ isolated function encodeAgentCardForWire(AgentCard card) returns json {
     SecurityRequirement[]? cardRequirements = card.securityRequirements;
     if cardRequirements is SecurityRequirement[] {
         encoded["securityRequirements"] = wrapV10SecurityRequirements(cardRequirements);
+    }
+
+    map<SecurityScheme>? schemes = card.securitySchemes;
+    if schemes is map<SecurityScheme> {
+        map<json> wrappedSchemes = {};
+        foreach [string, SecurityScheme] [name, scheme] in schemes.entries() {
+            wrappedSchemes[name] = wrapV10SecurityScheme(scheme);
+        }
+        encoded["securitySchemes"] = wrappedSchemes;
     }
 
     json[]|error skillsJson = encoded["skills"].ensureType();
