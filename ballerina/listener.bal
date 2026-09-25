@@ -57,7 +57,12 @@ public type ListenerConfiguration record {|
     # `username`, or the Basic username) becomes the task owner scope, so a
     # caller sees only its own tasks ([section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping));
     # an `ownerResolver`, if configured, takes precedence. Keep the card's
-    # `securitySchemes` in agreement with what is configured here.
+    # `securitySchemes` in agreement with what is configured here. A card that
+    # declares neither `securitySchemes` nor `securityRequirements` gets both
+    # derived from `auth`: `Bearer` for JWT and OAuth2 entries, `Basic` for file
+    # and LDAP ones, one requirement per entry. Declare them yourself -- for
+    # example an `openIdConnect` scheme with your provider's discovery URL --
+    # and nothing is derived.
     #
     # Applies whether `listenTo` is a port or an existing `http:Listener`.
     http:ListenerAuthConfig[]? auth = ();
@@ -197,8 +202,8 @@ public isolated class Listener {
         }
         self.store = config.taskStore;
         AgentCard? extended = config.extendedAgentCard;
-        self.extendedCard = extended is AgentCard ? extended.cloneReadOnly() : ();
-        self.card = deriveServedCard(agentCard, self.extendedCard is AgentCard,
+        self.extendedCard = extended is AgentCard ? withDerivedSecurity(extended, config.auth).cloneReadOnly() : ();
+        self.card = deriveServedCard(withDerivedSecurity(agentCard, config.auth), self.extendedCard is AgentCard,
                 config.streamingCapability, config.pushNotificationsCapability).cloneReadOnly();
         self.ownerResolver = config.ownerResolver;
         http:ListenerAuthConfig[]? auth = config.auth;

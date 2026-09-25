@@ -256,3 +256,73 @@ isolated function schemeOf(string header) returns string {
     int? space = header.indexOf(" ");
     return (space is int ? header.substring(0, space) : header).toLowerAscii();
 }
+
+# The scheme name a derived card uses for Bearer credentials.
+const DERIVED_BEARER_SCHEME = "bearerAuth";
+
+# The scheme name a derived card uses for Basic credentials.
+const DERIVED_BASIC_SCHEME = "basicAuth";
+
+# Fills in a card's security declaration from the `auth` entries that enforce it.
+#
+# [Specification section 7.3](https://a2a-protocol.org/latest/specification/#73-client-authentication-process)
+# has a client learn what to send from the card's `securitySchemes`, and
+# section 13.3 has the server authenticate with "one of the schemes declared
+# in the public `AgentCard.securitySchemes`". Left to the developer, the card
+# and `auth` describe the same thing twice and nothing keeps them in step.
+#
+# Only a card that declares neither `securitySchemes` nor `securityRequirements`
+# is touched: a developer who wrote either knows something this cannot -- the
+# identity provider's URLs for an `oauth2` or `openIdConnect` scheme, or a
+# scheme enforced by something in front of the listener -- and their
+# declaration stands.
+#
+# What is derived is what the handlers read off the wire: JWT and OAuth2
+# introspection entries accept `Authorization: Bearer ...`, file and LDAP
+# entries accept `Authorization: Basic ...`. Entries are alternatives, so each
+# becomes its own requirement (an OR), carrying that entry's scopes.
+#
+# + card - The card the developer supplied
+# + auth - `ListenerConfiguration.auth`
+# + return - The card, with `securitySchemes` and `securityRequirements` derived
+#            when they were not declared and `auth` is set; otherwise unchanged
+isolated function withDerivedSecurity(AgentCard card, http:ListenerAuthConfig[]? auth) returns AgentCard {
+    if auth is () || card.securitySchemes is map<SecurityScheme> || card.securityRequirements is SecurityRequirement[] {
+        return card;
+    }
+    boolean bearerIsAlwaysJwt = true;
+    foreach http:ListenerAuthConfig entry in auth {
+        if entry is http:OAuth2IntrospectionConfigWithScopes {
+            bearerIsAlwaysJwt = false;
+        }
+    }
+
+    map<SecurityScheme> schemes = {};
+    SecurityRequirement[] requirements = [];
+    foreach http:ListenerAuthConfig entry in auth {
+        boolean bearer = entry is http:JwtValidatorConfigWithScopes|http:OAuth2IntrospectionConfigWithScopes;
+        string name = bearer ? DERIVED_BEARER_SCHEME : DERIVED_BASIC_SCHEME;
+        if !schemes.hasKey(name) {
+            HttpAuthSecurityScheme scheme = bearer
+                ? {scheme: "Bearer", bearerFormat: bearerIsAlwaysJwt ? "JWT" : ()}
+                : {scheme: "Basic"};
+            schemes[name] = scheme;
+        }
+        (string|string[])? configured = entry?.scopes;
+        string[] scopes = [];
+        if configured is string {
+            scopes.push(configured);
+        } else if configured is string[] {
+            scopes.push(...configured);
+        }
+        SecurityRequirement requirement = {[name]: scopes.clone()};
+        if requirements.indexOf(requirement) is () {
+            requirements.push(requirement);
+        }
+    }
+
+    AgentCard derived = card.clone();
+    derived.securitySchemes = schemes;
+    derived.securityRequirements = requirements;
+    return derived;
+}

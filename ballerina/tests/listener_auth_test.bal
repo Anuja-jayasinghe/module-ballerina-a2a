@@ -30,6 +30,8 @@ const int RESOLVER_AUTH_TEST_PORT = 19249;
 const int INTROSPECTION_STUB_PORT = 19250;
 const int OAUTH2_AUTH_TEST_PORT = 19251;
 const int EMPTY_AUTH_TEST_PORT = 19252;
+const int EXTENDED_WITHOUT_AUTH_TEST_PORT = 19260;
+const int EXTENDED_WITH_AUTH_TEST_PORT = 19261;
 
 const string AUTH_TEST_SECRET = "a2a-auth-test-shared-secret-0123456789";
 
@@ -407,7 +409,7 @@ function testAuthEmptyEntryListIsRejectedAtStartup() {
 
 @test:Config {}
 function testAuthExtendedCardWithoutAuthIsRejectedAtStartup() {
-    Listener|error created = new (EMPTY_AUTH_TEST_PORT + 1, agentCard = authTestCard,
+    Listener|error created = new (EXTENDED_WITHOUT_AUTH_TEST_PORT, agentCard = authTestCard,
             extendedAgentCard = authTestExtendedCard);
     test:assertTrue(created is Error,
             "a listener that would hand the extended card to anyone must not start (specification section 13.3)");
@@ -418,7 +420,7 @@ function testAuthExtendedCardWithoutAuthIsRejectedAtStartup() {
 
 @test:Config {}
 function testAuthExtendedCardWithAuthStarts() returns error? {
-    Listener created = check new (EMPTY_AUTH_TEST_PORT + 2, agentCard = authTestCard,
+    Listener created = check new (EXTENDED_WITH_AUTH_TEST_PORT, agentCard = authTestCard,
             extendedAgentCard = authTestExtendedCard, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
     check created.gracefulStop();
 }
