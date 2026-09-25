@@ -139,14 +139,17 @@ isolated class DefaultHandler {
 
         future<Task|Message|Error> f =
             start self.driveTask(taskId, owner, context.clone(), updater, broadcaster, target.isNewTask, false);
-        Task|Message|Error result = self.awaitDriveTask(f);
+        [Task|Message|Error, boolean] [result, drivenToThisState] =
+            self.settledResult(taskId, owner, self.awaitDriveTask(f));
         boolean stopped = resultStopped(result);
         if stopped {
             broadcaster.close();
         }
         self.registry.release(taskId, stopped);
         if result is Task {
-            self.notifyPushConfigs(taskId, result);
+            if drivenToThisState {
+                self.notifyPushConfigs(taskId, result);
+            }
             return result;
         } else if result is Message {
             return result;
@@ -391,8 +394,8 @@ isolated class DefaultHandler {
     # + returnImmediately - Forwarded to `driveTask`
     private isolated function finishDrivenTask(string taskId, string? owner, RequestContext context,
             TaskUpdater updater, EventBroadcaster broadcaster, boolean isNewTask, boolean returnImmediately) {
-        Task|Message|Error result =
-            self.driveTask(taskId, owner, context, updater, broadcaster, isNewTask, returnImmediately);
+        [Task|Message|Error, boolean] [result, drivenToThisState] = self.settledResult(taskId, owner,
+            self.driveTask(taskId, owner, context, updater, broadcaster, isNewTask, returnImmediately));
         boolean stopped = resultStopped(result);
         if result is Error {
             // driveTask already best-effort transitioned the task to
@@ -409,9 +412,45 @@ isolated class DefaultHandler {
             broadcaster.close();
         }
         self.registry.release(taskId, stopped);
-        if result is Task {
+        if result is Task && drivenToThisState {
             self.notifyPushConfigs(taskId, result);
         }
+    }
+
+    # What a drive that has just ended actually left behind, read from the
+    # store rather than taken from the drive's own report.
+    #
+    # `driveTask` reports the `TaskUpdater`'s last-written copy of the task,
+    # but the store is the truth: `cancelTask` (or any other writer) may have
+    # moved the task since the updater last wrote it, and the store then
+    # refuses the updater's later writes -- so its copy stays behind. A task
+    # canceled while its `onMessage` was still running would otherwise be
+    # reported, and webhooked, as whatever state the agent last reached
+    # (say WORKING), after the CANCELED that `cancelTask` already announced.
+    #
+    # The boolean says whether the drive itself produced the stored state. It
+    # did not when someone else moved the task, and that someone already
+    # notified the webhooks, so the caller must not do so again.
+    #
+    # + taskId - The task that was driven
+    # + owner - The caller's resolved owner scope, or `()`
+    # + result - `driveTask`'s already-`wait`ed result
+    # + return - The result to act on, with the stored task in place of a
+    #            stale one, and whether the drive itself produced it. A
+    #            `Message` or `Error` result, or an unreadable store, passes
+    #            through unchanged.
+    private isolated function settledResult(string taskId, string? owner, Task|Message|Error result)
+            returns [Task|Message|Error, boolean] {
+        if result !is Task {
+            return [result, true];
+        }
+        Task|Error? stored = self.store.get(taskId, owner);
+        if stored is Task {
+            boolean produced = stored.status.state == result.status.state
+                && stored.status?.timestamp == result.status?.timestamp;
+            return [stored, produced];
+        }
+        return [result, true];
     }
 
     # Handles sendStreamingMessage: like `sendMessage`, but returns a live

@@ -72,9 +72,24 @@ type CapturedWebhookCall record {|
 
 isolated CapturedWebhookCall? lastWebhookCall = ();
 
+// Every call, in arrival order -- for tests that must prove a webhook was
+// called exactly once, or not again, rather than only look at the last one.
+isolated CapturedWebhookCall[] webhookHistory = [];
+
+isolated function takeWebhookHistory() returns CapturedWebhookCall[] {
+    lock {
+        CapturedWebhookCall[] all = webhookHistory.clone();
+        webhookHistory.removeAll();
+        return all.clone();
+    }
+}
+
 isolated function recordWebhookCall(CapturedWebhookCall call) {
     lock {
         lastWebhookCall = call.clone();
+    }
+    lock {
+        webhookHistory.push(call.clone());
     }
 }
 

@@ -957,8 +957,13 @@ listener Listener pushNotificationListener = new (PUSH_NOTIFICATION_TEST_PORT, a
     supportedInterfaces: []
 }, pushSender = new HttpPushNotificationSender({validateUrl: false}));
 
-// Completes normally, except for "pause", which leaves the task at
-// TASK_STATE_WORKING -- non-terminal, so cancelTask can legally act on it.
+// Completes normally, except for:
+// - "pause": leaves the task at TASK_STATE_WORKING -- non-terminal, so
+//   cancelTask can legally act on it.
+// - "hold:<key>": works, then blocks on the Gate registered under <key>, then
+//   tries one more write and simply finishes whether or not it was accepted --
+//   what an agent does when it does not check the result of every update. A
+//   test cancels the task while the agent is held, so that write is refused.
 isolated service class PushNotificationAgent {
     *Service;
 
@@ -973,6 +978,15 @@ isolated service class PushNotificationAgent {
         }
         check updater->working();
         if text == "pause" {
+            return ();
+        }
+        if text.startsWith("hold:") {
+            Gate? gate = gateFor(text.substring(5));
+            if gate is Gate {
+                gate.awaitStep(1);
+                Error? refused = updater->working();
+                gate.advanceTo(refused is Error ? 2 : 3);
+            }
             return ();
         }
         check updater->addArtifact([{text: string `echo: ${text}`}]);
@@ -1003,6 +1017,93 @@ function testServerRoundTripPushNotificationDeliveryOnCompletion() returns error
     test:assertEquals(task["id"], created.id);
     map<json> status = check task["status"].ensureType();
     test:assertEquals(status["state"], "TASK_STATE_COMPLETED");
+}
+
+// Polls until the task in `contextId` reaches `want`, and returns its id.
+isolated function awaitTaskInState(HttpClient c, string contextId, TaskState want) returns string|error {
+    foreach int _ in 0 ..< 250 {
+        ListTasksResponse page = check c->listTasks({contextId});
+        foreach Task t in page.tasks {
+            if t.status.state == want {
+                return t.id;
+            }
+        }
+        runtime:sleep(0.02);
+    }
+    return error(string `no task in context ${contextId} reached ${want}`);
+}
+
+// A task canceled while its agent code is still running: cancelTask has
+// already announced CANCELED, the store refuses the agent's later writes, and
+// the agent -- which does not check every update -- simply finishes. Neither
+// what a blocking sendMessage reports nor what the webhooks receive may then
+// go back to the state the agent last reached (WORKING): the caller must see
+// CANCELED, and the webhook must have received exactly one notification, the
+// CANCELED one.
+@test:Config {}
+function testServerRoundTripCancelDuringABlockingSendReportsCanceledAndNotifiesOnce() returns error? {
+    HttpClient c = check new (pushNotificationServerUrl);
+    Gate gate = new;
+    registerGate("hold-blocking", gate);
+    _ = takeWebhookHistory();
+
+    string contextId = "ctx-hold-blocking";
+    future<Task|Message|Error> sent = start c->sendMessage({
+        message: {messageId: "hold-b", contextId, role: ROLE_USER, parts: [{text: "hold:hold-blocking"}]},
+        configuration: {taskPushNotificationConfig: {url: testWebhookUrl}}
+    });
+    string taskId = check awaitTaskInState(c, contextId, TASK_STATE_WORKING);
+
+    Task canceled = check c->cancelTask({id: taskId});
+    test:assertEquals(canceled.status.state, TASK_STATE_CANCELED);
+
+    gate.advanceTo(1);
+    gate.awaitStep(2);
+    Task|Message reply = check wait sent;
+    test:assertTrue(reply is Task, "the blocking send must still return a task");
+    Task returned = <Task>reply;
+    test:assertEquals(returned.status.state, TASK_STATE_CANCELED,
+            "the caller must be told the real state, not the WORKING the agent last reached");
+
+    CapturedWebhookCall[] calls = takeWebhookHistory();
+    test:assertEquals(calls.length(), 1, "cancelTask already notified; the agent finishing must not notify again");
+    map<json> task = check webhookTask(calls[0]);
+    map<json> status = check task["status"].ensureType();
+    test:assertEquals(status["state"], "TASK_STATE_CANCELED");
+}
+
+// The same race on the detached path (returnImmediately), where nothing waits
+// on the drive: the webhook must still receive one CANCELED and nothing after.
+@test:Config {}
+function testServerRoundTripCancelDuringADetachedDriveNeverSendsAStaleWebhook() returns error? {
+    HttpClient c = check new (pushNotificationServerUrl);
+    Gate gate = new;
+    registerGate("hold-detached", gate);
+    _ = takeWebhookHistory();
+
+    string contextId = "ctx-hold-detached";
+    Task seeded = <Task>check c->sendMessage({
+        message: {messageId: "hold-d", contextId, role: ROLE_USER, parts: [{text: "hold:hold-detached"}]},
+        configuration: {returnImmediately: true, taskPushNotificationConfig: {url: testWebhookUrl}}
+    });
+    _ = check awaitTaskInState(c, contextId, TASK_STATE_WORKING);
+
+    Task canceled = check c->cancelTask({id: seeded.id});
+    test:assertEquals(canceled.status.state, TASK_STATE_CANCELED);
+
+    gate.advanceTo(1);
+    gate.awaitStep(2);
+    // The drive's own follow-up runs just after onMessage returns; a stale
+    // notification, if the bug were present, would follow within moments.
+    runtime:sleep(0.5);
+
+    CapturedWebhookCall[] calls = takeWebhookHistory();
+    test:assertEquals(calls.length(), 1, "exactly the one notification cancelTask sent");
+    map<json> task = check webhookTask(calls[0]);
+    map<json> status = check task["status"].ensureType();
+    test:assertEquals(status["state"], "TASK_STATE_CANCELED");
+    Task stored = check c->getTask({id: seeded.id});
+    test:assertEquals(stored.status.state, TASK_STATE_CANCELED, "and the stored state stays canceled");
 }
 
 @test:Config {}
