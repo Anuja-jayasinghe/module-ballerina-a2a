@@ -29,6 +29,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Serve `securityRequirements` in the Correct v1.0 Wire Shape, and Add Agent Card `Cache-Control`/`ETag` Headers per Specification Section 8.6.1
 - Add `ListenerConfiguration.streamingCapability`/`pushNotificationsCapability`, Letting a Deployment Deliberately Withhold a Capability This Listener Otherwise Always Implements
 - Add `ListenerConfiguration.keepAliveInterval`, Sending SSE Keep-Alive Comments so a Quiet, Long-Running Stream Survives HTTP Idle Timeouts
+- Add `ListenerConfiguration.auth`, Authenticating Every Request Except the Public Card with `ballerina/http`'s JWT, OAuth2 Introspection, and File/LDAP Basic Handlers per Specification Section 7.4, with the Authenticated Identity Scoping Tasks per Section 13.1
+- Refuse to Start a `Listener` Configured with `extendedAgentCard` but No `auth`, per Specification Section 13.3 (a Breaking Change for Any Such Configuration)
 
 ### Fixed
 

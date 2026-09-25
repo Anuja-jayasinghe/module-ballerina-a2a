@@ -370,7 +370,7 @@ listener a2a:Listener agent = new (9090, agentCard = publicCard, extendedAgentCa
 
 Left unset, `capabilities.extendedAgentCard` is `false` and a request for it fails with `UnsupportedOperationError`. Configuring one flips the capability on and serves the card from `GET /extendedAgentCard`.
 
-Specification section 13.3 requires this operation specifically to require authentication — more pointedly than the general punt in [section 7.6](#76-task-ownership-and-authorization-scoping): an extended card exists to reveal information the *public* card deliberately doesn't, so an unauthenticated deployment of this endpoint defeats its own purpose, not just the general authorization scoping other operations lose without a resolver. This listener has no request-time authentication mechanism of its own — same as every other operation — so putting one in front of `GET /extendedAgentCard` specifically (not just gating who can *see* which tasks, which `TaskOwnerResolver` already does) is the deploying operator's responsibility.
+Specification section 13.3 requires this operation to require authentication: an extended card exists to reveal what the *public* card deliberately doesn't. So a listener configured with `extendedAgentCard` must also be configured with `auth` ([section 7.7](#77-authenticating-callers)); without it, `new a2a:Listener(...)` returns an error and nothing is served.
 
 ### 7.5 Push notifications
 
@@ -440,4 +440,36 @@ listener a2a:Listener agent = new (9090, agentCard = card, ownerResolver = new B
 
 Once configured, `getTask`, `cancelTask`, `listTasks`, `subscribeToTask`, and the four push-notification config operations all become owner-scoped: a task, or a task's push configs, created under one resolved owner are invisible to every other owner — indistinguishable from not existing at all, per the same section's requirement that a server "MUST NOT reveal the existence of resources the client is not authorized to access." `TaskUpdater` stamps every write with the owner the task was created under, so an agent's own driven updates stay in the right scope automatically.
 
-`()` — an unauthenticated caller, or simply no resolver configured — is its own scope, not a wildcard: every caller a resolver maps to `()` shares one pool, isolated from every named owner but not from each other. A resolver alone does not make an agent safe against anonymous traffic; pair it with real inbound authentication, which is deployment policy this module does not prescribe.
+`()` — an unauthenticated caller, or simply no resolver configured — is its own scope, not a wildcard: every caller a resolver maps to `()` shares one pool, isolated from every named owner but not from each other. A resolver alone does not authenticate anyone: it maps a request to an owner, and trusts whatever it reads. Pair it with `auth` ([section 7.7](#77-authenticating-callers)); when `auth` is configured and no resolver is, the authenticated identity is the owner, so most agents need no resolver at all.
+
+### 7.7 Authenticating callers
+
+Specification section 7.4 requires a server to authenticate every incoming request. Configure `auth` with the same entries a service's `@http:ServiceConfig` takes; the listener runs the `ballerina/http` listener auth handlers for you:
+
+```ballerina
+listener a2a:Listener agent = new (9090, agentCard = card, auth = [
+    {
+        jwtValidatorConfig: {
+            issuer: "https://idp.example.com",
+            audience: "my-agent",
+            signatureConfig: {jwksConfig: {url: "https://idp.example.com/.well-known/jwks.json"}}
+        },
+        scopes: ["a2a:invoke"]
+    }
+]);
+```
+
+The four kinds of entry are JWT validation (`jwtValidatorConfig`), OAuth2 token introspection (`oauth2IntrospectionConfig`), and Basic authentication against a file (`fileUserStoreConfig`) or an LDAP (`ldapUserStoreConfig`) user store, each with optional `scopes`. Entries are alternatives: a request that any one accepts is admitted. API-key and mutual-TLS authentication are not covered here; mutual TLS is a `secureSocket` setting on the HTTP listener.
+
+With `auth` set:
+
+- every request except the public card at `/.well-known/agent-card.json` must authenticate, including requests for paths that do not exist, so an unauthenticated caller learns nothing about the server;
+- a missing or invalid credential is a `401` with a `WWW-Authenticate` challenge for each scheme the entries accept, and a valid one that lacks a required scope is a `403`. Both carry the same `google.rpc.Status` body as any other error, with `ErrorInfo.reason` `UNAUTHENTICATED` or `PERMISSION_DENIED`, and a message that names no resource;
+- the rejection happens before the agent runs and before a stream opens, so a rejected `sendStreamingMessage` is a plain `401`, not an event stream;
+- the authenticated identity is the task owner. That is a JWT's `sub` (or `username`) claim, the introspected `sub` (or `username`), or the Basic username. A caller sees only its own tasks ([section 7.6](#76-task-ownership-and-authorization-scoping)). A credential that validates but names no one is rejected, since there is no owner to scope to. A configured `ownerResolver` takes precedence.
+
+Keep the card's `securitySchemes` and `securityRequirements` in agreement with `auth`: the listener enforces `auth`, and the card only advertises. It does not derive one from the other.
+
+`auth` applies whether the listener is given a port or an existing `http:Listener`. Serve over HTTPS in production (specification section 7.1); credentials in the clear are only reasonable on localhost.
+
+LDAP is passed through to `ballerina/http` and is not covered by this package's tests, which have no LDAP server.
