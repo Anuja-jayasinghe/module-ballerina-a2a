@@ -186,6 +186,8 @@ final a2a:HttpClient agent = check new ("https://agent.example.com", clientConfi
 });
 ```
 
+`ballerina/oauth2` fetches the first token while the client is being built, so a wrong client secret or an unreachable token endpoint surfaces from `new a2a:HttpClient(...)` (and from `a2a:resolveAgentCard`) as an `a2a:InternalError` whose message names the agent and carries the token endpoint's response. It is a returned error, not a panic. A token that cannot be refreshed later fails the call that needed it.
+
 ### 4.2 Credentials by security-scheme name
 
 An agent can declare several schemes, and a client may hold a different credential for each — two bearer tokens on one agent, say, which a single `headers` map cannot express. For schemes that reduce to one header value, supply a `CredentialProvider`. It is consulted per request and keyed by the scheme name the Agent Card uses:
@@ -376,6 +378,14 @@ a2a:Task submitted = <a2a:Task>check agent->sendMessage({
 
 Given a port, `ListenerConfiguration` also carries every `http:ListenerConfiguration` field (`timeout`, `secureSocket`, `host`, ...) and applies them to the HTTP listener it creates. Given an already-built `http:Listener` instead, configure that listener when you build it; those fields have nothing to apply to and are ignored.
 
+The interface URL the served card gives clients is built from the request's `Host` header and the scheme the listener really serves: `https` when `secureSocket` is configured, `http` otherwise. When clients do not reach the listener directly, say where they do with `publicUrl`, for a proxy or gateway that terminates TLS or rewrites the host, or for an `http:Listener` passed in whose public address the package cannot know:
+
+```ballerina
+listener a2a:Listener agent = new (9090, agentCard = card, publicUrl = "https://agents.example.com/travel");
+```
+
+`publicUrl` must start with `http://` or `https://` and carry no query or fragment; a trailing `/` is dropped. `X-Forwarded-*` headers are not consulted, since any caller can send them.
+
 ### 7.3 Task storage
 
 ```ballerina
@@ -495,5 +505,9 @@ The card tells a client how to authenticate (specification section 7.3), so `aut
 If you declare either field yourself, nothing is derived and yours is served as written. That is the way to publish an `oauth2` or `openIdConnect` scheme, which needs your identity provider's URLs, or a scheme enforced by something in front of the listener. Keep what you declare in agreement with what `auth` enforces: the listener enforces `auth`, and the card only advertises.
 
 `auth` applies whether the listener is given a port or an existing `http:Listener`. Serve over HTTPS in production (specification section 7.1); credentials in the clear are only reasonable on localhost.
+
+An `auth` entry that cannot be set up is an error returned from `new a2a:Listener(...)`, naming the entry (`ListenerConfiguration.auth[1] (jwtValidatorConfig) could not be initialised: ...`), before anything is bound. That includes an identity provider that cannot be reached at start-up when the entry needs it then: a JWT entry whose `jwksConfig` has a `cacheConfig` preloads the keys, and an LDAP entry connects to the server.
+
+Mind how the JWKS is fetched. Without `jwksConfig.cacheConfig` the identity provider is asked for its keys on every authenticated request, which costs a round trip per call and turns an identity-provider outage into a `401` for every caller. Setting `cacheConfig` avoids that for the keys present at start-up, but `ballerina/jwt` fills that cache once, when the listener starts: a key the provider rotates in later is fetched on every request that uses it, and once `defaultMaxAge` passes the cached keys are gone and the cache is not refilled. Until that is fixed upstream, size `capacity` and `defaultMaxAge` for the life of the process, and expect a per-request fetch for keys rotated in after start-up; restarting the listener refills the cache.
 
 LDAP is passed through to `ballerina/http` and is not covered by this package's tests, which have no LDAP server.

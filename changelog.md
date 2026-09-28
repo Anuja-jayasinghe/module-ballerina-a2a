@@ -33,9 +33,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Derive the Served Agent Card's `securitySchemes` and `securityRequirements` from `ListenerConfiguration.auth` when the Card Declares Neither, per Specification Sections 7.3 and 13.3
 - Add `AuthenticationError` (401) and `AuthorizationError` (403), Typed from the `ErrorInfo` Reason or the Bare Status, with an `AuthenticationError` Carrying the `WWW-Authenticate` Challenges; the Server Maps Both to Their Statuses
 - Refuse to Start a `Listener` Configured with `extendedAgentCard` but No `auth`, per Specification Section 13.3 (a Breaking Change for Any Such Configuration)
+- Add `ListenerConfiguration.publicUrl`, the Base URL Served as the Card's Interface URL, for a Listener Behind a Proxy or Gateway That Terminates TLS or Rewrites the Host
 
 ### Fixed
 
+- Return an `InternalError`, Not a Panic, from `HttpClient` and `resolveAgentCard` When the Initial OAuth2 Token Cannot Be Obtained (a Wrong Client Secret, an Unreachable Token Endpoint)
+- Return an `InternalError` Naming the Entry, Not a Panic, from `Listener` When an `auth` Entry Cannot Be Initialised (a JWKS That Cannot Be Preloaded, an Unreachable LDAP Server); the Authenticator Is Now Built Before the HTTP Listener
+- A `Listener` Serving TLS Now Advertises an `https` Interface URL in Its Card, Instead of `http`, Which Sent Clients to Plain HTTP on a TLS Port (Specification Section 7.1)
 - Serve the Agent Card's `securitySchemes` in the Specification's Wrapped Shape (`{"httpAuthSecurityScheme": {...}}`, with `location` for an API Key), Instead of the Flat Shape with a `type` Discriminator, per Specification Section 4.5
 - A Request to a Path That Is No A2A Operation Is Now a 404 (`METHOD_NOT_FOUND`), and a Request Naming a Tenant the Agent Does Not Serve Is Now a 400 (`INVALID_PARAMS`), Instead of a 500 for Both; the Specification Reserves 5xx for System Failures and an Agent's Own Malformed Response
 - A 401 or 403 Is Now an `AuthenticationError` or `AuthorizationError` Instead of an `InternalError` Carrying That Status as Its Code
