@@ -108,6 +108,20 @@ public type ListenerConfiguration record {|
     # against it -- once `false`, the four config operations are rejected
     # server-side with `a2a:PushNotificationNotSupportedError`.
     boolean pushNotificationsCapability = true;
+    # The base URL clients reach this agent at, served as the card's HTTP+JSON
+    # interface URL, e.g. `https://agents.example.com/travel`. Unset, the URL is
+    # built from the request's `Host` header and the scheme this listener really
+    # serves (`https` when `secureSocket` is configured, otherwise `http`), which
+    # is right when clients reach the listener directly.
+    #
+    # Set it when they do not: behind a proxy or gateway that terminates TLS or
+    # rewrites the host or path, or when `listenTo` is an existing
+    # `http:Listener` whose public address this package cannot know. It must
+    # start with `http://` or `https://`, and have no query or fragment. A
+    # trailing `/` is dropped. `X-Forwarded-*` headers are deliberately not
+    # consulted: any caller can send them, and this setting is the explicit
+    # answer.
+    string? publicUrl = ();
 |};
 
 # The `http:ListenerConfiguration` half of a `ListenerConfiguration`: everything
@@ -124,7 +138,7 @@ public type ListenerConfiguration record {|
 isolated function httpListenerConfigurationOf(ListenerConfiguration config) returns http:ListenerConfiguration {
     ListenerConfiguration {
         taskStore: _, extendedAgentCard: _, ownerResolver: _, auth: _, pushSender: _, streamIdleTimeout: _, keepAliveInterval: _,
-        streamingCapability: _, pushNotificationsCapability: _, ...httpConfig
+        streamingCapability: _, pushNotificationsCapability: _, publicUrl: _, ...httpConfig
     } = config;
     return {...httpConfig};
 }
@@ -165,6 +179,10 @@ public isolated class Listener {
     private final PushNotificationSender pushSender;
     private final decimal streamIdleTimeout;
     private final decimal keepAliveInterval;
+    // What the served card's interface URL is built from: the scheme this
+    // listener really serves, and the explicit public URL if one was configured.
+    private final string interfaceScheme;
+    private final string? publicUrl;
     private DispatcherService? dispatcher = ();
 
     # Creates a Listener.
@@ -193,6 +211,12 @@ public isolated class Listener {
                 + "the extended agent card is for authenticated callers (specification section 13.3)";
             return error InternalError(msg, message = msg);
         }
+        string? publicUrl = config.publicUrl;
+        if publicUrl is string {
+            self.publicUrl = check normalisePublicUrl(publicUrl);
+        } else {
+            self.publicUrl = ();
+        }
         // The auth handlers are built first, and their failure returned first: some
         // of them reach the identity provider while being built (a JWKS cache is
         // preloaded, an LDAP server is connected to), so a listener that cannot
@@ -216,6 +240,9 @@ public isolated class Listener {
             }
             self.httpListener = created;
         }
+        // The scheme comes from the HTTP listener itself, so it is right for a
+        // port and for an `http:Listener` passed in.
+        self.interfaceScheme = self.httpListener.getConfig().secureSocket is () ? "http" : "https";
         self.store = config.taskStore;
         AgentCard? extended = config.extendedAgentCard;
         self.extendedCard = extended is AgentCard ? withDerivedSecurity(extended, config.auth).cloneReadOnly() : ();
@@ -239,7 +266,8 @@ public isolated class Listener {
         TaskExecutionRegistry registry = new;
         DefaultHandler handler = new (a2aService, self.store, self.extendedCard, self.pushSender, registry,
                 self.streamIdleTimeout, self.keepAliveInterval);
-        DispatcherService dispatcherService = new (self.card, handler, self.ownerResolver, self.authenticator);
+        DispatcherService dispatcherService = new (self.card, handler, self.ownerResolver, self.authenticator,
+                self.interfaceScheme, self.publicUrl);
         lock {
             self.dispatcher = dispatcherService;
         }
@@ -340,4 +368,35 @@ isolated function deriveServedCard(AgentCard supplied, boolean extendedCardConfi
         extendedAgentCard: extendedCardConfigured
     };
     return card;
+}
+
+# Checks a configured public URL and puts it in the form the card serves.
+#
+# + url - `ListenerConfiguration.publicUrl`
+# + return - The URL without a trailing slash, or an `a2a:InternalError` if it
+#            is not an absolute `http://` or `https://` URL with a host and no
+#            query or fragment
+isolated function normalisePublicUrl(string url) returns string|Error {
+    string rest;
+    if url.startsWith("https://") {
+        rest = url.substring(8);
+    } else if url.startsWith("http://") {
+        rest = url.substring(7);
+    } else {
+        return invalidPublicUrl(url, "it must start with http:// or https://");
+    }
+    if url.includes("?") || url.includes("#") {
+        return invalidPublicUrl(url, "it must not have a query or a fragment");
+    }
+    int? slash = rest.indexOf("/");
+    string host = slash is int ? rest.substring(0, slash) : rest;
+    if host == "" {
+        return invalidPublicUrl(url, "it has no host");
+    }
+    return stripTrailingSlash(url);
+}
+
+isolated function invalidPublicUrl(string url, string reason) returns Error {
+    string msg = string `ListenerConfiguration.publicUrl "${url}" is not usable: ${reason}`;
+    return error InternalError(msg, message = msg);
 }

@@ -53,13 +53,17 @@ isolated service class DispatcherService {
     private final DefaultHandler handler;
     private final TaskOwnerResolver? ownerResolver;
     private final ListenerAuthenticator? authenticator;
+    private final string interfaceScheme;
+    private final string? publicUrl;
 
     isolated function init(AgentCard card, DefaultHandler handler, TaskOwnerResolver? ownerResolver,
-            ListenerAuthenticator? authenticator = ()) {
+            ListenerAuthenticator? authenticator = (), string interfaceScheme = "http", string? publicUrl = ()) {
         self.card = card.cloneReadOnly();
         self.handler = handler;
         self.ownerResolver = ownerResolver;
         self.authenticator = authenticator;
+        self.interfaceScheme = interfaceScheme;
+        self.publicUrl = publicUrl;
     }
 
     isolated resource function get [string... path](http:Request req)
@@ -151,16 +155,19 @@ isolated service class DispatcherService {
         return result;
     }
 
-    # The served card with its HTTP+JSON interface URL filled from the
-    # request's Host header.
+    # The served card with its HTTP+JSON interface URL filled in: the configured
+    # public URL if there is one, otherwise the scheme this listener serves and
+    # the request's Host header.
     #
     # + req - The discovery request
     # + return - A copy of the card with a usable interface URL
     private isolated function cardForHost(http:Request req) returns AgentCard {
         string|http:HeaderNotFoundError host = req.getHeader("Host");
-        if host !is string {
+        string? publicUrl = self.publicUrl;
+        if host !is string && publicUrl is () {
             return self.card;
         }
+        string url = interfaceUrlFor(publicUrl, self.interfaceScheme, host is string ? host : "");
         // The held card is readonly, so round-trip through JSON for a fresh
         // mutable copy, then fill the HTTP+JSON interface's URL.
         // `deriveServedCard` put a single such entry there.
@@ -170,7 +177,7 @@ isolated service class DispatcherService {
         }
         foreach int i in 0 ..< served.supportedInterfaces.length() {
             if served.supportedInterfaces[i].protocolBinding == HTTP_JSON {
-                served.supportedInterfaces[i].url = string `http://${host}`;
+                served.supportedInterfaces[i].url = url;
             }
         }
         return served;
@@ -664,4 +671,14 @@ isolated function queryToListFilter(http:Request req) returns ListTasksRequest {
         filter.includeArtifacts = includeArtifacts == "true";
     }
     return filter;
+}
+
+# The URL the served card gives clients for this listener.
+#
+# + publicUrl - `ListenerConfiguration.publicUrl`, already normalised, if set
+# + scheme - `http` or `https`, from what the HTTP listener really serves
+# + host - The request's `Host` header
+# + return - The public URL when configured, otherwise `scheme://host`
+isolated function interfaceUrlFor(string? publicUrl, string scheme, string host) returns string {
+    return publicUrl ?: string `${scheme}://${host}`;
 }
