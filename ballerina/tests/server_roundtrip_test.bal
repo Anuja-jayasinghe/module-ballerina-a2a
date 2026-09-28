@@ -1433,3 +1433,65 @@ function stopEchoServer() returns error? {
     check extensionsListener.gracefulStop();
     check withheldCapabilitiesListener.gracefulStop();
 }
+
+// ---- a caller's mistake is a 4xx, never a 5xx ----------------------------
+//
+// Found by the real-SDK interop pass (a2a-library-testing, I14): a path that
+// is no A2A operation, and a tenant the agent does not serve, were both
+// answered 500. The specification is silent on both cases; what it fixes is
+// the category -- 5xx is for system failures and an agent's own malformed
+// response, and neither is what a caller's typo is.
+
+isolated function reasonOf(http:Response resp) returns string?|error {
+    json payload = check resp.getJsonPayload();
+    map<json> envelope = check payload.ensureType();
+    map<json> err = check envelope["error"].ensureType();
+    json[] details = check err["details"].ensureType();
+    map<json> info = check details[0].ensureType();
+    json? reason = info["reason"];
+    return reason is string ? reason : ();
+}
+
+@test:Config {}
+function testUnknownPathIs404NotFound() returns error? {
+    http:Client raw = check new (serverUrl);
+    http:Response resp = check raw->get("/nope", {"A2A-Version": "1.0"});
+    test:assertEquals(resp.statusCode, 404, "a path that is no A2A operation is not a server fault");
+    test:assertEquals(check reasonOf(resp), "METHOD_NOT_FOUND");
+    test:assertTrue(resp.getContentType().startsWith("application/a2a+json"));
+}
+
+@test:Config {}
+function testUnknownPushConfigSubRouteIs404() returns error? {
+    // The second place a path can fall through: under a task's push-config
+    // collection, with a method the collection does not offer (it has POST and
+    // GET; DELETE is only for an item). Not PUT: the HTTP layer answers that
+    // 405 itself, before the dispatcher is reached.
+    http:Client raw = check new (serverUrl);
+    http:Response resp = check raw->delete("/tasks/t1/pushNotificationConfigs",
+            headers = {"A2A-Version": "1.0"});
+    test:assertEquals(resp.statusCode, 404);
+    test:assertEquals(check reasonOf(resp), "METHOD_NOT_FOUND");
+}
+
+@test:Config {}
+function testUnservedTenantIs400InvalidParams() returns error? {
+    http:Client raw = check new (serverUrl);
+    http:Response resp = check raw->get("/acme-corp/tasks", {"A2A-Version": "1.0"});
+    test:assertEquals(resp.statusCode, 400, "naming a tenant the agent does not serve is the caller's mistake");
+    test:assertEquals(check reasonOf(resp), "INVALID_PARAMS");
+    test:assertNotEquals(check reasonOf(resp), "INVALID_AGENT_RESPONSE",
+            "that reason is for an agent's own malformed response");
+}
+
+@test:Config {}
+function testUnknownRouteAndUnknownTaskStayDistinguishable() returns error? {
+    // Both are 404, but they mean different things and must say so.
+    http:Client raw = check new (serverUrl);
+    http:Response route = check raw->get("/nope", {"A2A-Version": "1.0"});
+    http:Response task = check raw->get("/tasks/does-not-exist", {"A2A-Version": "1.0"});
+    test:assertEquals(route.statusCode, 404);
+    test:assertEquals(task.statusCode, 404);
+    test:assertEquals(check reasonOf(route), "METHOD_NOT_FOUND");
+    test:assertEquals(check reasonOf(task), "TASK_NOT_FOUND");
+}

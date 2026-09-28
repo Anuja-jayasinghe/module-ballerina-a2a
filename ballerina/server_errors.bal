@@ -81,14 +81,18 @@ isolated function errorBindingFor(Error err) returns ErrorBinding {
         return {status: http:STATUS_FORBIDDEN, reason: "PERMISSION_DENIED"};
     }
     // InternalError is also how this library carries the standard JSON-RPC
-    // "the request itself was bad" codes (see `invalidRequest`); those are the
-    // caller's fault, so they are a 400 with their own reason, not a 500.
+    // "the request itself was bad" codes (see `invalidRequest`, `invalidParams`,
+    // `methodNotFound`); those are the caller's fault, so they are a 4xx with
+    // their own reason, not a 500.
     int? code = err.detail()?.code;
     if code == -32600 {
         return {status: http:STATUS_BAD_REQUEST, reason: "INVALID_REQUEST"};
     }
     if code == -32602 {
         return {status: http:STATUS_BAD_REQUEST, reason: "INVALID_PARAMS"};
+    }
+    if code == -32601 {
+        return {status: http:STATUS_NOT_FOUND, reason: "METHOD_NOT_FOUND"};
     }
     // Anything else the protocol does not name.
     return {status: http:STATUS_INTERNAL_SERVER_ERROR, reason: "INTERNAL_ERROR"};

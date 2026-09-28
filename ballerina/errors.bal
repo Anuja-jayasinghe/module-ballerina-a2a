@@ -128,6 +128,35 @@ isolated function invalidRequest(string message) returns InternalError {
     return error InternalError(message, message = message, code = -32600);
 }
 
+# Builds the error for a request that names something this server does not
+# serve: a parameter (such as a tenant) whose value is not one it accepts.
+#
+# Like `invalidRequest`, this is `InternalError` carrying a standard JSON-RPC
+# code (-32602, "invalid params"), which `errorBindingFor` serves as a 400 and
+# `toA2AErrorFromRest` decodes for the `INVALID_PARAMS` reason. The
+# specification's validation errors are 400 (section 3.3.2); a 500 would say the
+# agent failed when the caller's input was the problem.
+#
+# + message - What specifically was wrong with the parameter
+# + return - An `InternalError` with code -32602
+isolated function invalidParams(string message) returns InternalError {
+    return error InternalError(message, message = message, code = -32602);
+}
+
+# Builds the error for a request to a path that is no A2A operation.
+#
+# `InternalError` carrying the JSON-RPC "method not found" code (-32601), which
+# `errorBindingFor` serves as a 404 and `toA2AErrorFromRest` already decodes for
+# the `METHOD_NOT_FOUND` reason. The specification names no error for an unknown
+# route; what it does fix is that a 5xx is for system failures, and a caller's
+# own mistake is not one.
+#
+# + message - Which method and path had no operation
+# + return - An `InternalError` with code -32601
+isolated function methodNotFound(string message) returns InternalError {
+    return error InternalError(message, message = message, code = -32601);
+}
+
 # Wraps a raw, untyped error (a connection failure from `ballerina/http`/
 # `ballerina/grpc`, a mime-parsing failure, an unencodable parameter
 # value, ...) into an InternalError, so no public method returns a

@@ -257,8 +257,10 @@ isolated service class DispatcherService {
             string rest = rawPath.substring(secondSlash);
             string? declared = declaredTenant(self.card);
             if declared is () || declared != tenant {
-                string msg = string `request routed under tenant "${tenant}", which the agent does not serve`;
-                return error InvalidAgentResponseError(msg, message = msg);
+                // The caller named a tenant this agent does not serve: its
+                // own mistake, so a 400 -- not InvalidAgentResponseError, which
+                // is for an *agent's* malformed response and is a 500.
+                return invalidParams(string `request routed under tenant "${tenant}", which the agent does not serve`);
             }
             return [rest, tenant];
         }
@@ -269,7 +271,7 @@ isolated service class DispatcherService {
     #
     # The unary operations and the two streaming ones are wired in this
     # release; the push-config store and the extended card are added in
-    # later changes, and an unmatched path is a 404-shaped InternalError.
+    # later changes, and an unmatched path is a 404 (`methodNotFound`).
     #
     # + method - The HTTP method
     # + path - The path with no tenant prefix
@@ -323,8 +325,7 @@ isolated service class DispatcherService {
             int? historyLength = queryInt(req, "historyLength");
             return jsonResponse((check self.handler.getTask({id, historyLength}, owner)).toJson());
         }
-        string msg = string `no A2A operation at ${method} ${path}`;
-        return error InternalError(msg, message = msg, code = http:STATUS_NOT_FOUND);
+        return methodNotFound(string `no A2A operation at ${method} ${path}`);
     }
 
     # Handles POST /message:send: decode the request, run onMessage through
@@ -423,8 +424,7 @@ isolated service class DispatcherService {
             check self.handler.deleteTaskPushNotificationConfig({taskId, id: rest.substring(1)}, owner);
             return jsonResponse({});
         }
-        string msg = string `no A2A operation at ${method} ${path}`;
-        return error InternalError(msg, message = msg, code = http:STATUS_NOT_FOUND);
+        return methodNotFound(string `no A2A operation at ${method} ${path}`);
     }
 
     # Handles POST /tasks/{taskId}/pushNotificationConfigs: decode the

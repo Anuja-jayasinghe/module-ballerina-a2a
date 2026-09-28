@@ -131,9 +131,20 @@ function testInvalidRequestIsA400AndRoundTripsToTheSameCode() {
     int? code = toA2AErrorFromRest(400, restErrorBody(invalidRequest("bad"))).detail()?.code;
     test:assertEquals(code, -32600, "the client must decode the server's body back to the same code");
 
-    ErrorBinding invalidParams = errorBindingFor(error InternalError("x", message = "x", code = -32602));
-    test:assertEquals(invalidParams.status, 400);
-    test:assertEquals(invalidParams.reason, "INVALID_PARAMS");
+    ErrorBinding invalidParamsBinding = errorBindingFor(error InternalError("x", message = "x", code = -32602));
+    test:assertEquals(invalidParamsBinding.status, 400);
+    test:assertEquals(invalidParamsBinding.reason, "INVALID_PARAMS");
+
+    // An unknown route is the caller's mistake too: a 404, decoded back by the client.
+    ErrorBinding notFound = errorBindingFor(methodNotFound("no A2A operation at GET /nope"));
+    test:assertEquals(notFound.status, 404);
+    test:assertEquals(notFound.reason, "METHOD_NOT_FOUND");
+    int? notFoundCode = toA2AErrorFromRest(404, restErrorBody(methodNotFound("x"))).detail()?.code;
+    test:assertEquals(notFoundCode, -32601, "the client must decode the server's body back to the same code");
+
+    ErrorBinding badParams = errorBindingFor(invalidParams("bad tenant"));
+    test:assertEquals(badParams.status, 400);
+    test:assertEquals(badParams.reason, "INVALID_PARAMS");
 
     ErrorBinding other = errorBindingFor(error InternalError("boom", message = "boom", code = -32603));
     test:assertEquals(other.status, 500, "an ordinary internal failure must stay a 500");
