@@ -188,15 +188,13 @@ isolated function stripTrailingSlash(string url) returns string {
 # + clientConfig - Optional HTTP configuration for auth, TLS, or proxy
 # + headers - Optional default headers
 # + return - The raw JSON AgentCard body exactly as received, or an
-#            `a2a:InternalError` for a connection failure or malformed JSON
+#            `a2a:InternalError` for a connection failure, malformed JSON, or
+#            an OAuth2 token that cannot be obtained
 isolated function fetchAgentCardBody(
         string agentBaseUrl,
         http:ClientConfiguration clientConfig = {},
         map<string> headers = {}) returns json|Error {
-    http:Client|error discoveryClient = new (stripTrailingSlash(agentBaseUrl), clientConfig);
-    if discoveryClient is error {
-        return wrapTransportError(discoveryClient);
-    }
+    http:Client discoveryClient = check newHttpClient(stripTrailingSlash(agentBaseUrl), clientConfig);
     map<string> reqHeaders = {[A2A_VERSION_HEADER]: A2A_VERSION};
     foreach [string, string] [k, v] in headers.entries() {
         reqHeaders[k] = v;
@@ -235,7 +233,8 @@ isolated function fetchAgentCardBody(
 # + clientConfig - Optional HTTP configuration for auth, TLS, or proxy
 # + headers - Optional default headers
 # + return - The parsed card, or an `a2a:InternalError` for a connection
-#            failure or malformed JSON
+#            failure, malformed JSON, or an OAuth2 token that cannot be
+#            obtained (a wrong client secret, an unreachable token endpoint)
 public isolated function resolveAgentCard(
         string agentBaseUrl,
         http:ClientConfiguration clientConfig = {},

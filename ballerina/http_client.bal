@@ -353,7 +353,9 @@ public isolated client class HttpClient {
     #            derivation when the card declares no HTTP+JSON
     #            interface, a VersionNotSupportedError if the card
     #            resolves to A2A v0.3, or an InternalError if the
-    #            http:Client cannot be created
+    #            http:Client cannot be created -- including when the initial
+    #            OAuth2 token cannot be obtained (a wrong client secret, an
+    #            unreachable token endpoint)
     public isolated function init(AgentCard|string agent, *ClientConfiguration config) returns Error? {
         AgentCard card = agent is string
             ? check resolveAgentCard(agent, config.clientConfig, config.headers)
@@ -372,11 +374,7 @@ public isolated client class HttpClient {
         // instead of .clone() to shallow-copy it — otherwise this could
         // mutate the caller's own clientConfig in place.
         http:ClientConfiguration effectiveClientConfig = {...config.clientConfig};
-        http:Client|error newHttpClient = new (serviceUrl, effectiveClientConfig);
-        if newHttpClient is error {
-            return wrapTransportError(newHttpClient);
-        }
-        self.httpClient = newHttpClient;
+        self.httpClient = check newHttpClient(serviceUrl, effectiveClientConfig);
         self.defaultHeaders = config.headers.clone().cloneReadOnly();
         self.credentials = config.credentials;
         self.authCard = card.cloneReadOnly();
@@ -897,4 +895,27 @@ public isolated client class HttpClient {
 isolated function challengesOf(http:Response resp) returns string[] {
     string[]|http:HeaderNotFoundError challenges = resp.getHeaders("WWW-Authenticate");
     return challenges is string[] ? challenges : [];
+}
+
+# Creates the `http:Client` for one agent URL, returning a typed error where
+# `ballerina/http` panics.
+#
+# `new http:Client` has no error return for a failure inside an auth handler,
+# so it panics: `ballerina/oauth2` fetches the first token while the client is
+# being built and panics when the token endpoint refuses the client or cannot
+# be reached. A caller of `a2a:HttpClient` or `a2a:resolveAgentCard` is
+# promised a typed `a2a:Error` for that, so the panic is trapped here, at the
+# one place it can occur. The upstream message is folded into the new one,
+# which is where the token endpoint's response is reported.
+#
+# + url - The agent's base URL
+# + config - The HTTP client configuration, auth included
+# + return - The client, or an `a2a:InternalError` if it could not be created
+isolated function newHttpClient(string url, http:ClientConfiguration config) returns http:Client|Error {
+    http:Client|error created = trap new (url, config);
+    if created is http:Client {
+        return created;
+    }
+    string msg = string `could not create the HTTP client for ${url}: ${created.message()}`;
+    return error InternalError(msg, message = msg);
 }
