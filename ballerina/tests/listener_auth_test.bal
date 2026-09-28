@@ -407,6 +407,77 @@ function testAuthEmptyEntryListIsRejectedAtStartup() {
     test:assertTrue(created is Error, "an empty auth list would admit nobody, which is a mistake, not a policy");
 }
 
+// ---- an identity provider that cannot be reached while the listener starts ----
+//
+// `ballerina/jwt` preloads the JWKS when `jwksConfig.cacheConfig` is set, and
+// `ballerina/auth` connects to the LDAP server; both panic when that fails.
+// The listener returns the error instead of ending the process, and names the
+// entry. If a panic escaped, it would abort the test run.
+
+const int UNREACHABLE_IDP_TEST_PORT = 19262;
+
+final http:JwtValidatorConfig unreachableJwksValidator = {
+    issuer: "https://idp.example.com",
+    audience: "a2a",
+    signatureConfig: {jwksConfig: {url: "http://localhost:1/jwks", cacheConfig: {capacity: 10}}}
+};
+
+@test:Config {}
+function testAuthUnreachableJwksWithACacheIsAnErrorNotAPanic() {
+    Listener|Error created = new (UNREACHABLE_IDP_TEST_PORT, agentCard = authTestCard,
+            auth = [{jwtValidatorConfig: unreachableJwksValidator}]);
+    test:assertTrue(created is InternalError, "an unreachable IdP at startup must be a returned error");
+    if created is Error {
+        test:assertTrue(created.message().includes("auth[0] (jwtValidatorConfig)"), created.message());
+    }
+}
+
+@test:Config {}
+function testAuthFailingEntryIsNamedByItsPosition() {
+    Listener|Error created = new (UNREACHABLE_IDP_TEST_PORT, agentCard = authTestCard,
+            auth = [{fileUserStoreConfig: {}}, {jwtValidatorConfig: unreachableJwksValidator}]);
+    test:assertTrue(created is InternalError);
+    if created is Error {
+        test:assertTrue(created.message().includes("auth[1] (jwtValidatorConfig)"),
+                "the working first entry must not be blamed: " + created.message());
+    }
+}
+
+@test:Config {}
+function testAuthUnreachableLdapIsAnErrorNotAPanic() {
+    Listener|Error created = new (UNREACHABLE_IDP_TEST_PORT, agentCard = authTestCard, auth = [{
+        ldapUserStoreConfig: {
+            domainName: "example.com", connectionUrl: "ldap://localhost:1", connectionName: "cn=admin",
+            connectionPassword: "x", userSearchBase: "ou=Users,dc=example,dc=com", userEntryObjectClass: "person",
+            userNameAttribute: "uid", userNameSearchFilter: "(&(objectClass=person)(uid=?))",
+            userNameListFilter: "(objectClass=person)", groupSearchBase: ["ou=Groups,dc=example,dc=com"],
+            groupEntryObjectClass: "groupOfNames", groupNameAttribute: "cn",
+            groupNameSearchFilter: "(&(objectClass=groupOfNames)(cn=?))",
+            groupNameListFilter: "(objectClass=groupOfNames)", membershipAttribute: "member",
+            connectionTimeout: 1
+        }
+    }]);
+    test:assertTrue(created is InternalError, "an unreachable LDAP server at startup must be a returned error");
+    if created is Error {
+        test:assertTrue(created.message().includes("auth[0] (ldapUserStoreConfig)"), created.message());
+    }
+}
+
+@test:Config {}
+function testAuthJwksWithoutACacheStillConstructsWhenTheIdpIsDown() {
+    // No preload without a cache: the keys are only fetched per request, so
+    // there is nothing to fail at startup. Guards against the trap turning a
+    // working configuration into an error.
+    Listener|Error created = new (UNREACHABLE_IDP_TEST_PORT, agentCard = authTestCard, auth = [{
+        jwtValidatorConfig: {
+            issuer: "https://idp.example.com",
+            audience: "a2a",
+            signatureConfig: {jwksConfig: {url: "http://localhost:1/jwks"}}
+        }
+    }]);
+    test:assertTrue(created is Listener, created is Error ? created.message() : "");
+}
+
 @test:Config {}
 function testAuthExtendedCardWithoutAuthIsRejectedAtStartup() {
     Listener|error created = new (EXTENDED_WITHOUT_AUTH_TEST_PORT, agentCard = authTestCard,

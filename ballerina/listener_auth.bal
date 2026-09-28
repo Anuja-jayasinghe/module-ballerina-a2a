@@ -64,27 +64,55 @@ isolated class AuthEntry {
     # + configs - `ListenerConfiguration.auth`
     # + index - The position of the entry this one is built from; it builds
     #           the rest of the chain behind it
-    isolated function init(http:ListenerAuthConfig[] & readonly configs, int index = 0) {
+    # + return - An `a2a:InternalError` naming the entry, if its handler could
+    #            not be initialised
+    isolated function init(http:ListenerAuthConfig[] & readonly configs, int index = 0) returns Error? {
         http:ListenerAuthConfig config = configs[index];
         http:ListenerJwtAuthHandler? jwtHandler = ();
         http:ListenerOAuth2Handler? oauth2Handler = ();
         http:ListenerFileUserStoreBasicAuthHandler? fileHandler = ();
         http:ListenerLdapUserStoreBasicAuthHandler? ldapHandler = ();
         string scheme;
+        // Each handler is built under `trap`: these constructors have no error
+        // return, and some reach out while being built -- `ballerina/jwt` preloads
+        // the JWKS when `jwksConfig.cacheConfig` is set, `ballerina/auth` connects
+        // to the LDAP server -- and panic when that fails. A listener that cannot
+        // reach its identity provider at start-up returns an error like any other
+        // bad configuration, instead of ending the process.
         if config is http:JwtValidatorConfigWithScopes {
-            jwtHandler = new (config.jwtValidatorConfig.cloneReadOnly());
+            http:ListenerJwtAuthHandler|error created = trap new (config.jwtValidatorConfig.cloneReadOnly());
+            if created is error {
+                return authEntryFailure(index, "jwtValidatorConfig", created);
+            }
+            jwtHandler = created;
             scheme = AUTH_SCHEME_BEARER;
         } else if config is http:OAuth2IntrospectionConfigWithScopes {
-            oauth2Handler = new (config.oauth2IntrospectionConfig.cloneReadOnly());
+            http:ListenerOAuth2Handler|error created = trap new (config.oauth2IntrospectionConfig.cloneReadOnly());
+            if created is error {
+                return authEntryFailure(index, "oauth2IntrospectionConfig", created);
+            }
+            oauth2Handler = created;
             scheme = AUTH_SCHEME_BEARER;
         } else if config is http:FileUserStoreConfigWithScopes {
-            fileHandler = new (config.fileUserStoreConfig.cloneReadOnly());
+            http:ListenerFileUserStoreBasicAuthHandler|error created = trap new (config.fileUserStoreConfig.cloneReadOnly());
+            if created is error {
+                return authEntryFailure(index, "fileUserStoreConfig", created);
+            }
+            fileHandler = created;
             scheme = AUTH_SCHEME_BASIC;
         } else {
-            ldapHandler = new (config.ldapUserStoreConfig.cloneReadOnly());
+            http:ListenerLdapUserStoreBasicAuthHandler|error created = trap new (config.ldapUserStoreConfig.cloneReadOnly());
+            if created is error {
+                return authEntryFailure(index, "ldapUserStoreConfig", created);
+            }
+            ldapHandler = created;
             scheme = AUTH_SCHEME_BASIC;
         }
-        self.next = index + 1 < configs.length() ? new AuthEntry(configs, index + 1) : ();
+        AuthEntry? next = ();
+        if index + 1 < configs.length() {
+            next = check new AuthEntry(configs, index + 1);
+        }
+        self.next = next;
         self.scheme = scheme;
         self.scopes = config?.scopes.cloneReadOnly();
         self.jwtHandler = jwtHandler;
@@ -211,7 +239,8 @@ isolated class ListenerAuthenticator {
     private final string[] & readonly challenges;
 
     # + configs - `ListenerConfiguration.auth`, non-empty
-    isolated function init(http:ListenerAuthConfig[] & readonly configs) {
+    # + return - An `a2a:InternalError` if an entry's handler could not be initialised
+    isolated function init(http:ListenerAuthConfig[] & readonly configs) returns Error? {
         string[] challenges = [];
         foreach http:ListenerAuthConfig config in configs {
             string challenge = config is http:JwtValidatorConfigWithScopes|http:OAuth2IntrospectionConfigWithScopes
@@ -221,7 +250,7 @@ isolated class ListenerAuthenticator {
             }
         }
         self.challenges = challenges.cloneReadOnly();
-        self.first = new (configs);
+        self.first = check new (configs);
     }
 
     # The `WWW-Authenticate` challenges to send with a 401, one per accepted
@@ -325,4 +354,15 @@ isolated function withDerivedSecurity(AgentCard card, http:ListenerAuthConfig[]?
     derived.securitySchemes = schemes;
     derived.securityRequirements = requirements;
     return derived;
+}
+
+# The error for an `auth` entry whose handler could not be initialised.
+#
+# + index - The entry's position in `ListenerConfiguration.auth`
+# + kind - The field of the entry that configures its handler
+# + cause - What the handler's constructor panicked or returned with
+# + return - An `a2a:InternalError` naming the entry, with the cause's message
+isolated function authEntryFailure(int index, string kind, error cause) returns Error {
+    string msg = string `ListenerConfiguration.auth[${index}] (${kind}) could not be initialised: ${cause.message()}`;
+    return error InternalError(msg, message = msg);
 }

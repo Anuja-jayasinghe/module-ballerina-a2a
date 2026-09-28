@@ -179,8 +179,10 @@ public isolated class Listener {
     #            listener that is created; given an existing `http:Listener`,
     #            that listener was configured when it was built, so they have
     #            nothing to apply to and are ignored.
-    # + return - An `a2a:Error` if the card is invalid or the HTTP listener
-    #            cannot be created
+    # + return - An `a2a:Error` if the card is invalid, the HTTP listener
+    #            cannot be created, or an `auth` entry cannot be initialised
+    #            (for example a JWKS that cannot be preloaded, or an LDAP
+    #            server that cannot be reached)
     public isolated function init(int|http:Listener listenTo, AgentCard agentCard,
             *ListenerConfiguration config) returns Error? {
         // Refused before anything is bound: [specification section 13.3](https://a2a-protocol.org/latest/specification/#133-extended-agent-card-access-control)
@@ -190,6 +192,20 @@ public isolated class Listener {
             string msg = "ListenerConfiguration.extendedAgentCard requires ListenerConfiguration.auth: "
                 + "the extended agent card is for authenticated callers (specification section 13.3)";
             return error InternalError(msg, message = msg);
+        }
+        // The auth handlers are built first, and their failure returned first: some
+        // of them reach the identity provider while being built (a JWKS cache is
+        // preloaded, an LDAP server is connected to), so a listener that cannot
+        // reach it must fail before anything is bound.
+        http:ListenerAuthConfig[]? auth = config.auth;
+        if auth is http:ListenerAuthConfig[] {
+            if auth.length() == 0 {
+                string msg = "ListenerConfiguration.auth must contain at least one entry; leave it unset for no authentication";
+                return error InternalError(msg, message = msg);
+            }
+            self.authenticator = check new (auth.cloneReadOnly());
+        } else {
+            self.authenticator = ();
         }
         if listenTo is http:Listener {
             self.httpListener = listenTo;
@@ -206,16 +222,6 @@ public isolated class Listener {
         self.card = deriveServedCard(withDerivedSecurity(agentCard, config.auth), self.extendedCard is AgentCard,
                 config.streamingCapability, config.pushNotificationsCapability).cloneReadOnly();
         self.ownerResolver = config.ownerResolver;
-        http:ListenerAuthConfig[]? auth = config.auth;
-        if auth is http:ListenerAuthConfig[] {
-            if auth.length() == 0 {
-                string msg = "ListenerConfiguration.auth must contain at least one entry; leave it unset for no authentication";
-                return error InternalError(msg, message = msg);
-            }
-            self.authenticator = new (auth.cloneReadOnly());
-        } else {
-            self.authenticator = ();
-        }
         self.pushSender = config.pushSender;
         self.streamIdleTimeout = config.streamIdleTimeout;
         self.keepAliveInterval = config.keepAliveInterval;
