@@ -67,10 +67,21 @@ isolated class DefaultHandler {
     // keep-alive comment frame; `0` sends none. See `ListenerConfiguration.
     // keepAliveInterval`.
     private final decimal keepAliveInterval;
+    // Whether the served card's capabilities.pushNotifications is true --
+    // the same gate dispatcher.bal's onPushNotificationConfigs already
+    // applies to the four dedicated config operations (specification
+    // 3.3.4 names Create/Get/List/Delete). The inline config on a
+    // sendMessage/sendStreamingMessage request is functionally a Create
+    // (this library's own design already treats it that way -- "the
+    // spec's own registration channel for this case is inline on the send
+    // request itself"), so it needs the same gate; defaults `true` so
+    // constructing a `DefaultHandler` directly, as several tests already
+    // do, doesn't need updating just to keep working.
+    private final boolean pushNotificationsCapability;
 
     isolated function init(Service agentService, TaskStore store, (AgentCard & readonly)? extendedCard,
             PushNotificationSender pushSender, TaskExecutionRegistry registry, decimal streamIdleTimeout,
-            decimal keepAliveInterval = 0) {
+            decimal keepAliveInterval = 0, boolean pushNotificationsCapability = true) {
         self.agentService = agentService;
         self.store = store;
         self.extendedCard = extendedCard;
@@ -78,6 +89,7 @@ isolated class DefaultHandler {
         self.registry = registry;
         self.streamIdleTimeout = streamIdleTimeout;
         self.keepAliveInterval = keepAliveInterval;
+        self.pushNotificationsCapability = pushNotificationsCapability;
     }
 
     # Handles sendMessage: create a task (or continue an existing one named
@@ -96,11 +108,38 @@ isolated class DefaultHandler {
             returns Task|Message|Error {
         check validateReceivedMessage(request.message);
         check validatePushConfigId(request?.configuration?.taskPushNotificationConfig);
+        if request?.configuration?.taskPushNotificationConfig is TaskPushNotificationConfig
+                && !self.pushNotificationsCapability {
+            return serverPushNotificationsUnsupportedError("sendMessage");
+        }
 
-        ResolvedSendTarget target = check self.resolveTaskForSend(request, owner);
+        ResolvedSendTarget target = check self.resolveSendTarget(request, owner);
         string taskId = target.taskId;
         string contextId = target.contextId;
         Task seed = target.seed;
+
+        // Claimed before anything about this request is persisted: a
+        // second concurrent message to a task already being driven --
+        // only reachable via continuation, since a fresh taskId is always
+        // unique -- must be rejected with no trace, not after this
+        // request's message has already been written into the task's
+        // history and its inline push config already registered. See
+        // resolveSendTarget's own doc comment.
+        EventBroadcaster? broadcaster = self.registry.acquire(taskId);
+        if broadcaster is () {
+            string msg = string `task ${taskId} is already being processed`;
+            return error UnsupportedOperationError(msg, message = msg, code = -32004);
+        }
+        Error? committed = self.commitSendTarget(target, owner);
+        if committed is Error {
+            // The driving slot was claimed on the strength of a store write
+            // that then failed -- release it (not as "stopped": nothing was
+            // ever driven or broadcast, so there is no terminal event to
+            // account for, just a claim to give back) rather than leave the
+            // task stuck as permanently "being processed".
+            self.registry.release(taskId, false);
+            return committed;
+        }
 
         // A client cannot name a taskId that doesn't exist yet, so the
         // spec's own registration channel for this case is inline on the
@@ -112,16 +151,6 @@ isolated class DefaultHandler {
         TaskPushNotificationConfig? inlineConfig = request?.configuration?.taskPushNotificationConfig;
         if inlineConfig is TaskPushNotificationConfig {
             TaskPushNotificationConfig _ = self.registerPushConfig(taskId, inlineConfig);
-        }
-
-        EventBroadcaster? broadcaster = self.registry.acquire(taskId);
-        if broadcaster is () {
-            // A second concurrent message to a task already being driven
-            // -- only reachable via continuation, since a fresh taskId is
-            // always unique. A clean rejection rather than two
-            // TaskUpdaters racing each other.
-            string msg = string `task ${taskId} is already being processed`;
-            return error UnsupportedOperationError(msg, message = msg, code = -32004);
         }
 
         final RequestContext context = {
@@ -147,29 +176,63 @@ isolated class DefaultHandler {
             start self.driveTask(taskId, owner, context.clone(), updater, broadcaster, target.isNewTask, false);
         [Task|Message|Error, boolean] [result, drivenToThisState] =
             self.settledResult(taskId, owner, self.awaitDriveTask(f));
-        boolean stopped = resultStopped(result);
+        boolean stopped = resultStopped(result, target.isNewTask);
         if stopped {
             broadcaster.close();
         }
         self.registry.release(taskId, stopped);
         if result is Task {
             if drivenToThisState {
-                self.notifyPushConfigs(taskId, result);
+                future<()> _ = start self.notifyPushConfigs(taskId, result.clone());
             }
             return result;
         } else if result is Message {
             return result;
         } else if result is Error {
+            // driveTask's own failure branch always returns the original
+            // Error, even when its best-effort updater->failed(...)
+            // transition succeeded and genuinely left the task FAILED in
+            // the store -- notifyPushConfigs's own doc comment says it
+            // fires "unconditional on the state reached", matching every
+            // reference SDK read last session (confirmed again here: the
+            // Python a2a-sdk's own event consumer fires a push notification
+            // for a FAILED TaskStatusUpdateEvent the same way it does for
+            // any other one -- PushNotificationEvent is a type alias
+            // covering it, not a distinct wrapper). updater.currentTask()
+            // -- "the last value written via transition" -- is exactly
+            // right here: it only reflects a transition whose own store
+            // write succeeded, so it correctly stays non-terminal (and
+            // this stays silent) when that best-effort failed() transition
+            // itself lost a race to a concurrent writer -- a case
+            // cancelTask's own notifyPushConfigs call already covers, so
+            // this can't double-notify for it.
+            Task current = updater.currentTask();
+            if isTerminalState(current.status.state) {
+                future<()> _ = start self.notifyPushConfigs(taskId, current.clone());
+            }
             return result;
         }
         return invalidAgentResponse("driveTask returned an unexpected type");
     }
 
-    # Resolves the task a sendMessage/sendStreamingMessage call drives: a
-    # fresh `TASK_STATE_SUBMITTED` task, already stored; or, when
-    # `message.taskId` names one, that task continued -- not yet
-    # re-stored (the caller's own store write, via `TaskUpdater`, is what
-    # actually persists the appended history).
+    # Resolves the task a sendMessage/sendStreamingMessage call would drive: a
+    # fresh `TASK_STATE_SUBMITTED` task, or, when `message.taskId` names one,
+    # that task continued with `request.message` appended to its history.
+    # Read-only -- neither branch writes to the store. The caller commits the
+    # result with `commitSendTarget`, once it holds `registry.acquire`'s
+    # exclusive driving claim for the task, so a request this call resolves
+    # but the caller then rejects (a second concurrent message to a task
+    # already being driven) leaves no trace: no history entry, no inline push
+    # config registered. Before this split, both were written here,
+    # unconditionally, ahead of that check.
+    #
+    # The fresh task's `history` seeds with the triggering message itself --
+    # matching the reference `a2a-sdk`'s own `new_task_from_user_message`
+    # helper, and this function's own continuation branch, which has always
+    # appended the triggering message to an existing task's history.
+    # Specification 3.7 leaves this agent-defined ("the agent is responsible
+    # to determine which Messages are persisted in the Task History"), so
+    # this is a consistency choice, not a spec requirement.
     #
     # Per specification 3.4.2, an unrecognized `taskId` is never treated
     # as "create a new task with this id" -- a client cannot name a task
@@ -186,21 +249,19 @@ isolated class DefaultHandler {
     #
     # + request - The decoded send request
     # + owner - The caller's resolved owner scope, or `()`
-    # + return - The resolved target, or an error
-    private isolated function resolveTaskForSend(SendMessageRequest request, string? owner)
+    # + return - The resolved target, not yet persisted, or an error
+    private isolated function resolveSendTarget(SendMessageRequest request, string? owner)
             returns ResolvedSendTarget|Error {
         string? continuedTaskId = request.message?.taskId;
         if continuedTaskId is () {
             string contextId = request.message?.contextId ?: uuid:createType4AsString();
             string taskId = uuid:createType4AsString();
-            // Seed the task as submitted before handing control to the
-            // agent, so a concurrent getTask sees it exists.
             Task seed = {
                 id: taskId,
                 contextId,
-                status: {state: TASK_STATE_SUBMITTED, timestamp: time:utcToString(time:utcNow())}
+                status: {state: TASK_STATE_SUBMITTED, timestamp: time:utcToString(time:utcNow())},
+                history: [request.message.clone()]
             };
-            check self.store.put(seed, owner);
             return {taskId, contextId, seed, isNewTask: true};
         }
 
@@ -209,7 +270,7 @@ isolated class DefaultHandler {
             return taskNotFound(continuedTaskId);
         }
         // Every task this library creates has a contextId -- it is set
-        // unconditionally by resolveTaskForSend's own fresh-task branch
+        // unconditionally by resolveSendTarget's own fresh-task branch
         // above -- so an empty fallback here is unreachable in practice;
         // the field is merely optional in the wire type itself.
         string existingContextId = existing.contextId ?: "";
@@ -228,13 +289,20 @@ isolated class DefaultHandler {
         Message[] history = existing?.history is Message[] ? (<Message[]>existing?.history).clone() : [];
         history.push(request.message.clone());
         existing.history = history;
-        // Persisted immediately, like the fresh-task branch's own seed
-        // write above -- otherwise a concurrent getTask, arriving before
-        // onMessage's first TaskUpdater call, would see this message
-        // missing from history until the agent happens to touch the
-        // updater for an unrelated reason.
-        check self.store.put(existing, owner);
         return {taskId: continuedTaskId, contextId: existingContextId, seed: existing, isNewTask: false};
+    }
+
+    # Persists a target `resolveSendTarget` resolved, once the caller holds
+    # `registry.acquire`'s exclusive claim on driving it -- so this is the
+    # only write to the task between the claim being taken and `onMessage`
+    # starting, and nothing else can be concurrently writing the same task
+    # underneath it (a running driver would itself hold that same claim).
+    #
+    # + target - The resolved target to persist
+    # + owner - The caller's resolved owner scope, or `()`
+    # + return - An error if the store write failed
+    private isolated function commitSendTarget(ResolvedSendTarget target, string? owner) returns Error? {
+        check self.store.put(target.seed, owner);
     }
 
     # Runs `onMessage` for one task, detached from the request that started
@@ -402,7 +470,7 @@ isolated class DefaultHandler {
             TaskUpdater updater, EventBroadcaster broadcaster, boolean isNewTask, boolean returnImmediately) {
         [Task|Message|Error, boolean] [result, drivenToThisState] = self.settledResult(taskId, owner,
             self.driveTask(taskId, owner, context, updater, broadcaster, isNewTask, returnImmediately));
-        boolean stopped = resultStopped(result);
+        boolean stopped = resultStopped(result, isNewTask);
         if result is Error {
             // driveTask already best-effort transitioned the task to
             // FAILED (pushing that TaskStatusUpdateEvent through the
@@ -419,7 +487,16 @@ isolated class DefaultHandler {
         }
         self.registry.release(taskId, stopped);
         if result is Task && drivenToThisState {
-            self.notifyPushConfigs(taskId, result);
+            future<()> _ = start self.notifyPushConfigs(taskId, result.clone());
+        } else if result is Error {
+            // Same reasoning as sendMessage's own identical check: driveTask
+            // returns the original Error even when its best-effort failed()
+            // transition succeeded, so a FAILED task otherwise never
+            // notifies. See that comment for the full rationale.
+            Task current = updater.currentTask();
+            if isTerminalState(current.status.state) {
+                future<()> _ = start self.notifyPushConfigs(taskId, current.clone());
+            }
         }
     }
 
@@ -481,24 +558,32 @@ isolated class DefaultHandler {
             returns stream<StreamResponse, Error?>|Error {
         check validateReceivedMessage(request.message);
         check validatePushConfigId(request?.configuration?.taskPushNotificationConfig);
+        if request?.configuration?.taskPushNotificationConfig is TaskPushNotificationConfig
+                && !self.pushNotificationsCapability {
+            return serverPushNotificationsUnsupportedError("sendStreamingMessage");
+        }
 
-        ResolvedSendTarget target = check self.resolveTaskForSend(request, owner);
+        ResolvedSendTarget target = check self.resolveSendTarget(request, owner);
         string taskId = target.taskId;
         string contextId = target.contextId;
         Task seed = target.seed;
 
-        // See sendMessage's identical block: the task now exists, so an
-        // inline config can be registered without an existence check.
+        // See sendMessage's identical block: claimed, then committed, before
+        // anything about this request is persisted or registered.
+        EventBroadcaster? broadcaster = self.registry.acquire(taskId);
+        if broadcaster is () {
+            string msg = string `task ${taskId} is already being processed`;
+            return error UnsupportedOperationError(msg, message = msg, code = -32004);
+        }
+        Error? committed = self.commitSendTarget(target, owner);
+        if committed is Error {
+            self.registry.release(taskId, false);
+            return committed;
+        }
+
         TaskPushNotificationConfig? inlineConfig = request?.configuration?.taskPushNotificationConfig;
         if inlineConfig is TaskPushNotificationConfig {
             TaskPushNotificationConfig _ = self.registerPushConfig(taskId, inlineConfig);
-        }
-
-        EventBroadcaster? broadcaster = self.registry.acquire(taskId);
-        if broadcaster is () {
-            // See sendMessage's identical branch.
-            string msg = string `task ${taskId} is already being processed`;
-            return error UnsupportedOperationError(msg, message = msg, code = -32004);
         }
 
         // Attached before driveTask starts, so nothing it broadcasts can
@@ -570,6 +655,25 @@ isolated class DefaultHandler {
             return taskNotFound(request.id);
         }
         tap.prependSnapshot(fresh);
+        if isTerminalState(fresh.status.state) {
+            // Lost the race: the task reached a terminal state, and its
+            // driver already closed and released the broadcaster that
+            // existed for it -- registry.subscribe above, finding none, just
+            // created a fresh one, which nothing will ever push to or close.
+            // Specification 3.1.6 is still satisfied on the wire ("MUST
+            // return a Task object as the first event... representing the
+            // current state at the time of subscription", "the stream MUST
+            // terminate when the task reaches a terminal state"): the
+            // caller gets exactly that Task, then a clean end. What's fixed
+            // here is what happens after: without this, the just-created
+            // broadcaster stayed in the registry forever (nothing but
+            // `release` ever removes a `broadcasters` entry, and nothing
+            // else calls `release` for one `subscribe` alone created), and
+            // the tap itself sat idle until `streamIdleTimeout` (5 minutes
+            // by default) instead of ending with this call.
+            tap.signalDone();
+            self.registry.release(request.id, true);
+        }
 
         stream<StreamResponse, Error?> result = new (tap);
         return result;
@@ -615,7 +719,25 @@ isolated class DefaultHandler {
             return error TaskNotCancelableError(msg, message = msg, code = -32002);
         }
         task.status = {state: TASK_STATE_CANCELED, timestamp: time:utcToString(time:utcNow())};
-        check self.store.put(task, owner);
+        Error? putResult = self.store.put(task, owner);
+        if putResult is Error {
+            // The task the check above read is no longer the task the store
+            // holds -- a concurrent driver reached a (different) terminal
+            // state first, and the store's own terminal-transition guard
+            // (undocumented on the TaskStore interface itself, so not
+            // something to pattern-match by type or message) refused this
+            // write. Re-read to find out which: if the task is terminal now,
+            // this is the same "cannot be canceled" case the check above
+            // handles, just lost to a race instead of caught up front; any
+            // other failure is a genuine storage fault, reported as-is.
+            Task? nowTask = check self.store.get(request.id, owner);
+            if nowTask is Task && isTerminalState(nowTask.status.state) {
+                string msg = string `task ${request.id} is in terminal state ${nowTask.status.state} `
+                    + string `and cannot be canceled`;
+                return error TaskNotCancelableError(msg, message = msg, code = -32002);
+            }
+            return putResult;
+        }
 
         // Only after the store write lands -- broadcasting first could
         // hand a live subscriber a phantom CANCELED event for a
@@ -631,7 +753,7 @@ isolated class DefaultHandler {
             broadcaster.close();
         }
 
-        self.notifyPushConfigs(request.id, task);
+        future<()> _ = start self.notifyPushConfigs(request.id, task.clone());
         return task;
     }
 
@@ -748,7 +870,18 @@ isolated class DefaultHandler {
         }
         TaskPushNotificationConfig[] configs;
         lock {
-            configs = (self.pushConfigs[request.taskId] ?: {}).toArray().clone();
+            // Not `(self.pushConfigs[request.taskId] ?: {}).toArray().clone()`, chained
+            // in one expression: confirmed by a standalone repro to panic with a JVM
+            // NullPointerException ("this.originalMemberTypes is null") specifically for
+            // a task with no registered configs, where the map<T> the elvis operator
+            // supplies is an anonymous `{}` immediately chained into `.toArray()` --
+            // `ballerina/lang.value:clone`'s native implementation doesn't get that
+            // array's member-type metadata in this one shape. Binding the map to an
+            // explicitly-typed local first avoids it -- confirmed by the same repro --
+            // and matches the pattern already used a few lines up in
+            // getTaskPushNotificationConfig.
+            map<TaskPushNotificationConfig> forTask = self.pushConfigs[request.taskId] ?: {};
+            configs = forTask.toArray().clone();
         }
         return {configs, nextPageToken: ""};
     }
@@ -838,13 +971,29 @@ isolated class DefaultHandler {
 # AUTH_REQUIRED) is not, so the task keeps its broadcaster and its driver
 # slot frees up for a later continuation to reacquire.
 #
+# A direct `Message` result only stops the task when the task it replied to
+# no longer exists: `driveTask`'s own doc comment ties that removal 1:1 to
+# `isNewTask && !returnImmediately`, so `isNewTask` here is exactly that
+# condition, not an approximation. A `Message` reply on a *continued* task
+# leaves the task's own stored state untouched -- still whatever non-terminal
+# state it was in -- so closing its broadcaster would end every live
+# subscriber's stream for an event unrelated to the task itself reaching a
+# terminal state, which specification 3.5.2 forbids ("closing one stream
+# MUST NOT affect other active streams for the same task").
+#
 # + result - `driveTask`'s already-`wait`ed, panic-normalized result
+# + isNewTask - Whether the task `result` answers for was freshly seeded for
+#               this call, forwarded from the same `ResolvedSendTarget` `result`
+#               came from
 # + return - Whether the broadcaster should close (or end with an error)
 #            and the registry should drop this task's driver-in-progress
 #            bookkeeping
-isolated function resultStopped(Task|Message|Error result) returns boolean {
+isolated function resultStopped(Task|Message|Error result, boolean isNewTask) returns boolean {
     if result is Task {
         return isTerminalState(result.status.state);
+    }
+    if result is Message {
+        return isNewTask;
     }
     return true;
 }

@@ -24,6 +24,7 @@
 import ballerina/http;
 import ballerina/lang.runtime;
 import ballerina/test;
+import ballerina/time;
 
 const int SERVER_TEST_PORT = 19234;
 final string serverUrl = string `http://localhost:${SERVER_TEST_PORT}`;
@@ -214,7 +215,13 @@ function testServerRoundTripFileBytesReachTheAgentAsBytes() returns error? {
     test:assertEquals(resp.statusCode, 200);
     json payload = check resp.getJsonPayload();
     map<json> envelope = check payload.ensureType();
-    Task viaWire = check envelope["task"].cloneWithType(Task);
+    // The wire form's history now legitimately holds "raw-2"'s own message
+    // (seeded on creation, same as any fresh task's), whose Part.raw is
+    // base64 on the wire -- decodeRawBytesFromWire is what a real client
+    // runs before typing a response for exactly this reason; a bare
+    // cloneWithType, as a shortcut, is not a substitute for it.
+    json decoded = check decodeRawBytesFromWire(envelope["task"]);
+    Task viaWire = check decoded.cloneWithType(Task);
     test:assertEquals(firstArtifactText(viaWire), "raw: tck");
 }
 
@@ -433,9 +440,14 @@ function testServerRoundTripContinuePausedTaskSucceeds() returns error? {
     test:assertEquals(completed.status.state, TASK_STATE_COMPLETED,
             "the continuation text isn't a trigger, so the echo agent completes it normally");
 
+    // The fresh task's own triggering message ("m1") is now seeded into
+    // history too, matching the reference a2a-sdk's own
+    // new_task_from_user_message default -- so a continuation's history
+    // holds both, not just the continuation's own message.
     Message[] history = completed?.history ?: [];
-    test:assertEquals(history.length(), 1, "the continuation message must be appended to the task's history");
-    test:assertEquals(history[0].messageId, "m2");
+    test:assertEquals(history.length(), 2, "the triggering message and the continuation message must both be in history");
+    test:assertEquals(history[0].messageId, "m1");
+    test:assertEquals(history[1].messageId, "m2");
 }
 
 @test:Config {}
@@ -658,6 +670,284 @@ function testServerRoundTripMultiSubscriberFanOut() returns error? {
     test:assertTrue(secondaryEnd is (), "the secondary stream must close once the task completes");
 }
 
+@test:Config {}
+function testServerRoundTripConcurrentMessageToRunningTaskLeavesNoTrace() returns error? {
+    // A second message naming a task that is already being driven must be
+    // rejected -- and, unlike before this fix, without first writing its
+    // text into the task's history or registering its inline push config.
+    // Deterministic: the first message's "paced:<key>" trigger blocks it at
+    // WORKING (checkpoint 1) on the gate below, so the rejection is raced
+    // against a driver genuinely still running, not a runtime:sleep guess.
+    Client c = check echoClient();
+    Gate gate = new;
+    string key = "concurrent-1";
+    registerGate(key, gate);
+
+    future<()> _ = start gate.advanceTo(1);
+    stream<StreamResponse, error?> primary = check c->sendStreamingMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "paced:" + key}]}
+    });
+    StreamResponse seed = check expectStreamValue(primary);
+    test:assertTrue(seed is Task);
+    string taskId = (<Task>seed).id;
+    string contextId = (<Task>seed).contextId ?: "";
+    StreamResponse working = check expectStreamValue(primary);
+    test:assertTrue(working is TaskStatusUpdateEvent
+            && (<TaskStatusUpdateEvent>working).status.state == TASK_STATE_WORKING);
+
+    // A caller-chosen id, so its absence can be checked directly by id
+    // afterward -- getTaskPushNotificationConfig on an id that was never
+    // registered is TaskNotFoundError, the plain, direct way to ask "did
+    // this get registered", with no dependency on webhook delivery
+    // actually reaching anywhere.
+    Task|Message|Error rejected = c->sendMessage({
+        message: {messageId: "m2", role: ROLE_USER, taskId, contextId, parts: [{text: "must not land"}]},
+        configuration: {taskPushNotificationConfig: {url: "https://example.com/never-reached", id: "rejected-cfg"}}
+    });
+    test:assertTrue(rejected is UnsupportedOperationError,
+            "a second concurrent message to a task already being driven must be rejected");
+
+    // Read the store's state now, while m1 is still gated at WORKING and has
+    // not yet run its own later transitions -- not after m1 finishes. m1's
+    // own updater always overwrites the whole task record from its own
+    // internal state on every transition (working/addArtifact/complete),
+    // which would silently clobber a leaked m2 history entry right back out
+    // regardless of whether the fix is in place, masking exactly the bug
+    // this test exists to catch.
+    Task midFlight = <Task>check c->getTask({id: taskId});
+    Message[] historyDuring = midFlight?.history ?: [];
+    foreach Message m in historyDuring {
+        test:assertNotEquals(m.messageId, "m2", "the rejected message must never have reached the store");
+    }
+    test:assertEquals(historyDuring.length(), 1, "only m1's own seeded history entry -- nothing from the rejected m2");
+
+    gate.advanceTo(2);
+    gate.advanceTo(3);
+    Task done = check pollUntilTerminal(c, taskId);
+    test:assertEquals(done.status.state, TASK_STATE_COMPLETED, "m1 itself must still complete normally");
+
+    TaskPushNotificationConfig|Error leaked = c->getTaskPushNotificationConfig({taskId, id: "rejected-cfg"});
+    test:assertTrue(leaked is TaskNotFoundError,
+            "the rejected message's inline push config must never have been registered");
+}
+
+@test:Config {}
+function testServerRoundTripSubscribeRacingCompletionEndsCleanly() returns error? {
+    // Between subscribeToTask's existence/terminal-state check and the tap
+    // actually attaching, the task can finish -- its driver has by then
+    // already closed and released the broadcaster that existed for it, so
+    // registry.subscribe, finding none, creates a fresh one nothing will
+    // ever push to. Specification 3.1.6 still requires the stream to open
+    // with the task's current (now terminal) snapshot and then end; before
+    // this fix, it opened but never ended (a leaked broadcaster, an idle
+    // tap).
+    //
+    // Deterministic, not timing-based -- subscribeToTask's own two internal
+    // store reads happen back to back with no yield point a real concurrent
+    // write could land in between via wall-clock racing; a store that
+    // answers WORKING the first time and COMPLETED every time after
+    // reproduces the exact race window directly, whichever read lands
+    // where. No driver ever ran here (registry starts with nothing for this
+    // task id), matching the state a real one leaves behind after
+    // completing and releasing. A direct unit test against DefaultHandler,
+    // not a wire round trip -- same pattern as
+    // testDefaultHandlerGetExtendedAgentCardFailsWhenNoneConfigured above.
+    TaskStore store = new BecomesTerminalAfterFirstGet("race-1");
+    DefaultHandler handler = new (new EchoAgent(), store, (), new HttpPushNotificationSender(), new, 300);
+
+    stream<StreamResponse, Error?>|Error result = handler.subscribeToTask({id: "race-1"}, ());
+    if result is Error {
+        test:assertFail(result.message());
+    }
+    stream<StreamResponse, Error?> events = result;
+
+    record {| StreamResponse value; |}|Error? first = events.next();
+    if first !is record {| StreamResponse value; |} {
+        test:assertFail("subscribeToTask must return the task's current state as its first event");
+    }
+    StreamResponse snapshot = first.value;
+    test:assertTrue(snapshot is Task);
+    test:assertEquals((<Task>snapshot).status.state, TASK_STATE_COMPLETED,
+            "the second internal read is what this test controls, and it always answers COMPLETED");
+
+    record {| StreamResponse value; |}|Error? next = events.next();
+    test:assertTrue(next is (), "the stream must end here -- specification 3.1.6's terminal-state MUST -- "
+            + "not sit open on a broadcaster nothing will ever close");
+}
+
+# A `TaskStore` whose `get` answers `TASK_STATE_WORKING` the first time it is
+# asked about one specific task id, and `TASK_STATE_COMPLETED` every time
+# after -- for
+# `testServerRoundTripSubscribeRacingCompletionEndsCleanly`, which needs
+# `subscribeToTask`'s own two internal reads to see different states without
+# racing a real concurrent write against them. `put`/`list`/`remove` are
+# unused by that test and are simple, uninteresting stubs.
+isolated class BecomesTerminalAfterFirstGet {
+    *TaskStore;
+    private final string targetId;
+    private int getCount = 0;
+
+    isolated function init(string targetId) {
+        self.targetId = targetId;
+    }
+
+    public isolated function put(Task task, string? owner) returns Error? {
+        return;
+    }
+
+    public isolated function get(string id, string? owner) returns Task?|Error {
+        if id != self.targetId {
+            return;
+        }
+        int count;
+        lock {
+            self.getCount += 1;
+            count = self.getCount;
+        }
+        TaskState state = count == 1 ? TASK_STATE_WORKING : TASK_STATE_COMPLETED;
+        return {id, contextId: "c1", status: {state, timestamp: "2026-01-01T00:00:00Z"}};
+    }
+
+    public isolated function list(ListTasksRequest filter, string? owner) returns ListTasksResponse|Error {
+        return {tasks: [], nextPageToken: "", pageSize: 0, totalSize: 0};
+    }
+
+    public isolated function remove(string id, string? owner) returns Error? {
+        return;
+    }
+}
+
+@test:Config {}
+function testServerRoundTripCancelRacingCompletionIsNotCancelable() returns error? {
+    // cancelTask deliberately does not hold registry.acquire (a live
+    // subscriber must be able to race a cancel against a driver still
+    // running), so it can lose that race: the driver reaches a different
+    // terminal state first, and the store's own terminal-transition guard
+    // refuses cancelTask's write. That must surface as
+    // TaskNotCancelableError, the same as reading an already-terminal task
+    // up front does -- not the store's own internal error verbatim.
+    //
+    // Deterministic, not timing-based, for the same reason as the subscribe
+    // race above: cancelTask's own read, build, and put happen back to back
+    // with nothing for a real concurrent write to land between via
+    // wall-clock racing. This store answers WORKING to the first read (so
+    // cancelTask proceeds past its own up-front terminal check) and refuses
+    // every put with the same shape InMemoryTaskStore's terminal-transition
+    // guard does -- then answers COMPLETED to the re-read that follows,
+    // reproducing exactly what a driver that reached COMPLETED first, in
+    // between, would leave behind.
+    TaskStore store = new RefusesWriteAfterFirstGet("race-2");
+    DefaultHandler handler = new (new EchoAgent(), store, (), new HttpPushNotificationSender(), new, 300);
+
+    Task|Error canceled = handler.cancelTask({id: "race-2"}, ());
+    test:assertTrue(canceled is TaskNotCancelableError,
+            "a cancel that loses the race to the task's own completion must be TaskNotCancelableError, not a bare 500");
+}
+
+# A `TaskStore` whose `get` answers `TASK_STATE_WORKING` the first time it is
+# asked about one specific task id and `TASK_STATE_COMPLETED` every time
+# after (same idea as `BecomesTerminalAfterFirstGet` above), and whose `put`
+# always refuses -- the same shape `InMemoryTaskStore`'s own
+# terminal-transition guard does -- for
+# `testServerRoundTripCancelRacingCompletionIsNotCancelable`.
+isolated class RefusesWriteAfterFirstGet {
+    *TaskStore;
+    private final string targetId;
+    private int getCount = 0;
+
+    isolated function init(string targetId) {
+        self.targetId = targetId;
+    }
+
+    public isolated function put(Task task, string? owner) returns Error? {
+        string msg = "simulated terminal-transition conflict";
+        return error InternalError(msg, message = msg);
+    }
+
+    public isolated function get(string id, string? owner) returns Task?|Error {
+        if id != self.targetId {
+            return;
+        }
+        int count;
+        lock {
+            self.getCount += 1;
+            count = self.getCount;
+        }
+        TaskState state = count == 1 ? TASK_STATE_WORKING : TASK_STATE_COMPLETED;
+        return {id, contextId: "c1", status: {state, timestamp: "2026-01-01T00:00:00Z"}};
+    }
+
+    public isolated function list(ListTasksRequest filter, string? owner) returns ListTasksResponse|Error {
+        return {tasks: [], nextPageToken: "", pageSize: 0, totalSize: 0};
+    }
+
+    public isolated function remove(string id, string? owner) returns Error? {
+        return;
+    }
+}
+
+@test:Config {}
+function testServerRoundTripMessageReplyOnContinuedTaskDoesNotCloseOtherSubscribers() returns error? {
+    // A direct Message reply on a CONTINUED task -- as opposed to a fresh
+    // one, where a direct reply removes the never-otherwise-observed seed
+    // entirely -- leaves the task itself untouched: still open, still
+    // whatever non-terminal state it was in. Closing every live
+    // subscriber's stream for that unrelated event would violate
+    // specification 3.5.2 ("closing one stream MUST NOT affect other
+    // active streams for the same task").
+    Client c = check echoClient();
+    Task paused = <Task>check c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "ask"}]}
+    });
+    test:assertEquals(paused.status.state, TASK_STATE_INPUT_REQUIRED);
+
+    stream<StreamResponse, error?> subscriber = check c->subscribeToTask({id: paused.id});
+    StreamResponse subscriberSnapshot = check expectStreamValue(subscriber);
+    test:assertTrue(subscriberSnapshot is Task);
+    test:assertEquals((<Task>subscriberSnapshot).status.state, TASK_STATE_INPUT_REQUIRED);
+
+    // "ping" is EchoAgent's direct-Message-reply trigger (see its own
+    // definition above) -- sent as the continuation of the paused task.
+    Task|Message reply = check c->sendMessage({
+        message: {messageId: "m2", role: ROLE_USER, taskId: paused.id, contextId: paused.contextId,
+            parts: [{text: "ping"}]}
+    });
+    test:assertTrue(reply is Message, "the trigger must produce a direct reply, not drive the task through updater");
+
+    // driveTask's continuation branch broadcasts a direct Message reply in
+    // its own right (see its own doc comment) before returning it, so the
+    // live subscriber sees it too -- consume that here, distinctly from the
+    // stream simply ending, which is the whole point of this test.
+    StreamResponse pingEvent = check expectStreamValue(subscriber);
+    test:assertTrue(pingEvent is Message && (<Message>pingEvent).messageId == (<Message>reply).messageId,
+            "the subscriber must see the same direct reply the caller got, not the stream ending instead");
+
+    // The subscriber's stream must still be open and the task still there,
+    // unchanged by a reply the task itself was never touched by.
+    Task stillOpen = <Task>check c->getTask({id: paused.id});
+    test:assertEquals(stillOpen.status.state, TASK_STATE_INPUT_REQUIRED,
+            "the continuation's direct reply must not have transitioned the task");
+
+    // Prove the stream is still live, not merely "hasn't happened to close
+    // yet": release a real event on it and confirm the subscriber sees it.
+    Task|Message finalReply = check c->sendMessage({
+        message: {messageId: "m3", role: ROLE_USER, taskId: paused.id, contextId: paused.contextId,
+            parts: [{text: "here is more information"}]}
+    });
+    test:assertTrue(finalReply is Task && (<Task>finalReply).status.state == TASK_STATE_COMPLETED);
+    // m3's TaskUpdater is a fresh instance, so its first transition also
+    // lazily emits the task's pre-transition snapshot (still INPUT_REQUIRED,
+    // now with m3's own message in history) before the WORKING event itself
+    // -- the same "just-seeded Task, emitted lazily" driveTask/TaskUpdater
+    // already document elsewhere in this module.
+    StreamResponse lazySeed = check expectStreamValue(subscriber);
+    test:assertTrue(lazySeed is Task && (<Task>lazySeed).status.state == TASK_STATE_INPUT_REQUIRED);
+    StreamResponse sawWorking = check expectStreamValue(subscriber);
+    test:assertTrue(sawWorking is TaskStatusUpdateEvent
+            && (<TaskStatusUpdateEvent>sawWorking).status.state == TASK_STATE_WORKING,
+            "the subscriber must still be receiving this task's real events");
+}
+
 isolated function expectStreamValue(stream<StreamResponse, error?> events) returns StreamResponse|error {
     record {| StreamResponse value; |}|error? result = events.next();
     if result is error {
@@ -709,6 +999,23 @@ function testServerRoundTripGetExtendedAgentCardWhenConfigured() returns error? 
     AgentCard extended = check c->getExtendedAgentCard();
     test:assertEquals(extended.name, "Echo Agent (extended)");
     test:assertEquals(extended.skills.length(), 2, "the extended card reveals the internal-only skill too");
+
+    // The extended card literal above, like this file's other cards, follows the
+    // README's own placeholder pattern (capabilities: {}, supportedInterfaces: []) --
+    // both must be derived from what the listener actually serves, the same as the
+    // public card's own capabilities.streaming/pushNotifications are, not left at
+    // that placeholder. Left undone, a client that follows specification 13.3's own
+    // "replace your held card with the extended one" and then checks capabilities
+    // locally (as this library's own HttpClient does) would refuse operations the
+    // server actually supports.
+    test:assertEquals(extended.capabilities.streaming, true,
+            "the extended card's capabilities must be derived, not left at the developer's placeholder");
+    test:assertEquals(extended.capabilities.pushNotifications, true);
+    test:assertEquals(extended.capabilities.extendedAgentCard, true,
+            "the extended card, being itself, has one configured");
+    test:assertEquals(extended.supportedInterfaces.length(), 1);
+    test:assertEquals(extended.supportedInterfaces[0].url, extendedCardServerUrl,
+            "the extended card's own interface URL must be filled in from the request, same as the public card's");
 }
 
 @test:Config {}
@@ -868,6 +1175,26 @@ function testServerRoundTripInlinePushNotificationConfigKeepsTheCallersOwnId() r
     TaskPushNotificationConfig fetched = check c->getTaskPushNotificationConfig(
             {taskId: created.id, id: "inline-cfg"});
     test:assertEquals(fetched.url, "https://example.com/a");
+}
+
+@test:Config {}
+function testServerRoundTripListPushNotificationConfigsOnATaskWithNoneIsAnEmptyPageNotAPanic() returns error? {
+    // A task that never registered any push config -- the ordinary case,
+    // not the 3-configs-registered case the earlier list test above
+    // covers. listTaskPushNotificationConfigs used to build this response
+    // as one chained expression, (self.pushConfigs[taskId] ?: {}).toArray()
+    // .clone(); with no config ever registered for the task, that elvis
+    // operator's {} default is what toArray().clone() runs on, and doing
+    // so as one inline chain panicked the handler with a JVM
+    // NullPointerException (confirmed by a standalone repro, isolated from
+    // the rest of this module, to be specifically about that one shape --
+    // binding the map to a local variable first avoids it).
+    Client c = check echoClient();
+    Task created = <Task>check c->sendMessage({
+        message: {messageId: "m-no-push-configs", role: ROLE_USER, parts: [{text: "no webhook here"}]}
+    });
+    ListTaskPushNotificationConfigsResponse page = check c->listTaskPushNotificationConfigs({taskId: created.id});
+    test:assertEquals((page.configs ?: []).length(), 0);
 }
 
 // ---- task-owner scoping --------------------------------------------------
@@ -1070,6 +1397,10 @@ isolated service class PushNotificationAgent {
         if text == "pause" {
             return ();
         }
+        if text == "boom" {
+            string msg = "agent exploded";
+            return error InternalError(msg, message = msg);
+        }
         if text.startsWith("hold:") {
             Gate? gate = gateFor(text.substring(5));
             if gate is Gate {
@@ -1099,7 +1430,7 @@ function testServerRoundTripPushNotificationDeliveryOnCompletion() returns error
     });
     test:assertEquals(created.status.state, TASK_STATE_COMPLETED);
 
-    CapturedWebhookCall? call = takeLastWebhookCall();
+    CapturedWebhookCall? call = awaitWebhookCallForTask(created.id);
     test:assertTrue(call is CapturedWebhookCall,
             "the webhook registered inline on the sendMessage request must have been called");
     CapturedWebhookCall received = <CapturedWebhookCall>call;
@@ -1107,6 +1438,86 @@ function testServerRoundTripPushNotificationDeliveryOnCompletion() returns error
     test:assertEquals(task["id"], created.id);
     map<json> status = check task["status"].ensureType();
     test:assertEquals(status["state"], "TASK_STATE_COMPLETED");
+}
+
+@test:Config {}
+function testServerRoundTripPushNotificationDeliveryOnFailure() returns error? {
+    // notifyPushConfigs's own doc comment says it fires "unconditional on
+    // the state reached -- not filtered to terminal states", matching every
+    // reference SDK -- confirmed again here against the actual Python
+    // a2a-sdk source: its event consumer fires a push notification for a
+    // FAILED TaskStatusUpdateEvent the same way it does for any other one
+    // (PushNotificationEvent there is a type alias covering
+    // TaskStatusUpdateEvent, not a distinct wrapper only some transitions
+    // produce). driveTask always returned the original Error, even when its
+    // own best-effort failed() transition succeeded, so this library's
+    // equivalent silently skipped exactly this one case.
+    // returnImmediately, so the caller learns the task's id up front (as any
+    // real caller relying on this notification would have to) -- the
+    // blocking call, by contrast, only ever returns the bare Error "boom"
+    // produces, which carries no task id at all, exactly like a real
+    // caller has no way to identify which task to check either.
+    HttpClient c = check new (pushNotificationServerUrl);
+    Task created = <Task>check c->sendMessage({
+        message: {messageId: "m-boom", role: ROLE_USER, parts: [{text: "boom"}]},
+        configuration: {taskPushNotificationConfig: {url: testWebhookUrl}, returnImmediately: true}
+    });
+    string taskId = created.id;
+
+    CapturedWebhookCall? call = awaitWebhookCallForTask(taskId);
+    test:assertTrue(call is CapturedWebhookCall, "a task that failed must still notify its registered webhook");
+    map<json> task = check webhookTask(<CapturedWebhookCall>call);
+    test:assertEquals(task["id"], taskId);
+    map<json> status = check task["status"].ensureType();
+    test:assertEquals(status["state"], "TASK_STATE_FAILED");
+}
+
+@test:Config {}
+function testServerRoundTripBlockingSendPushNotificationDeliveryOnFailure() returns error? {
+    // The blocking (non-returnImmediately) call's own copy of the same fix,
+    // a separate code path in sendMessage itself -- the previous test only
+    // exercises finishDrivenTask's. A failed blocking call's Error return
+    // carries no task id at all (real callers have the same problem), so
+    // this is found by the triggering message's own id in the resulting
+    // task's history instead.
+    HttpClient c = check new (pushNotificationServerUrl);
+    Task|Message|Error result = c->sendMessage({
+        message: {messageId: "m-boom-blocking", role: ROLE_USER, parts: [{text: "boom"}]},
+        configuration: {taskPushNotificationConfig: {url: testWebhookUrl}}
+    });
+    test:assertTrue(result is Error, "the trigger must fail the call, same as EchoAgent's own \"boom\" does");
+
+    CapturedWebhookCall? call = awaitWebhookCallWithHistoryMessageId("m-boom-blocking");
+    test:assertTrue(call is CapturedWebhookCall,
+            "a task that failed on the blocking call must still notify its registered webhook");
+    map<json> task = check webhookTask(<CapturedWebhookCall>call);
+    map<json> status = check task["status"].ensureType();
+    test:assertEquals(status["state"], "TASK_STATE_FAILED");
+}
+
+@test:Config {}
+function testServerRoundTripSendMessageDoesNotBlockOnPushNotificationDelivery() returns error? {
+    // notifyPushConfigs calls itself "fire-and-forget" in its own doc
+    // comment, but used to run inline, awaited, before the response
+    // returned -- so a slow or unresponsive webhook held up every caller of
+    // sendMessage/cancelTask, not just the one that registered it. Proven
+    // directly: a receiver that deliberately takes SLOW_WEBHOOK_DELAY
+    // (1.5s) to answer must not add anything close to that to how long
+    // sendMessage itself takes.
+    HttpClient c = check new (pushNotificationServerUrl);
+    time:Utc before = time:utcNow();
+    Task created = <Task>check c->sendMessage({
+        message: {messageId: "slow-webhook-1", role: ROLE_USER, parts: [{text: "notify me"}]},
+        configuration: {taskPushNotificationConfig: {url: slowWebhookUrl}}
+    });
+    decimal elapsed = time:utcDiffSeconds(time:utcNow(), before);
+    test:assertEquals(created.status.state, TASK_STATE_COMPLETED);
+    test:assertTrue(elapsed < SLOW_WEBHOOK_DELAY / 2,
+            string `sendMessage must not wait on webhook delivery -- took ${elapsed}s against a ${SLOW_WEBHOOK_DELAY}s webhook`);
+
+    // The slow delivery does still genuinely happen, just off to the side.
+    CapturedWebhookCall? call = awaitWebhookCallForTask(created.id);
+    test:assertTrue(call is CapturedWebhookCall, "delivery must still actually happen, just not block the response");
 }
 
 // Polls until the task in `contextId` reaches `want`, and returns its id.
@@ -1242,7 +1653,7 @@ function testServerRoundTripPushNotificationDeliveryOnCancel() returns error? {
     Task canceled = check c->cancelTask({id: created.id});
     test:assertEquals(canceled.status.state, TASK_STATE_CANCELED);
 
-    CapturedWebhookCall? call = takeLastWebhookCall();
+    CapturedWebhookCall? call = awaitWebhookCallForTask(created.id);
     test:assertTrue(call is CapturedWebhookCall, "cancelTask must also notify registered webhooks");
     CapturedWebhookCall received = <CapturedWebhookCall>call;
     map<json> canceledTask = check webhookTask(received);
@@ -1423,6 +1834,29 @@ function testServerRoundTripWithheldPushNotificationsIsRejectedServerSide() retu
             "must be rejected server-side, even before any task-existence check");
 }
 
+@test:Config {}
+function testServerRoundTripInlinePushConfigOnSendMessageIsRejectedWhenCapabilityWithheld() returns error? {
+    // The dedicated push-config routes are gated above; this is the *other*
+    // registration channel -- an inline taskPushNotificationConfig on the
+    // send request itself, which specification 3.3.4 doesn't name as a
+    // fifth case by text, but which this library's own design already
+    // treats as functionally a Create ("the spec's own registration
+    // channel for this case is inline on the send request itself"). Gone
+    // around with a raw http:Client for the same reason the test above
+    // does: the typed Client only refuses what the *dedicated* routes
+    // would, since it has no client-side knowledge that an inline config
+    // needs the same gate.
+    http:Client raw = check new (withheldCapabilitiesServerUrl);
+    json body = {
+        "message": {"messageId": "m1", "role": "ROLE_USER", "parts": [{"text": "hello"}]},
+        "configuration": {"taskPushNotificationConfig": {"url": "https://example.com/webhook"}}
+    };
+    http:Response resp = check raw->post("/message:send", body, {"A2A-Version": "1.0"});
+    test:assertEquals(resp.statusCode, http:STATUS_BAD_REQUEST,
+            "an inline push config must be rejected the same as the dedicated routes are, " +
+            "not silently registered against a capability the card says is off");
+}
+
 @test:AfterSuite
 function stopEchoServer() returns error? {
     check echoListener.gracefulStop();
@@ -1472,6 +1906,36 @@ function testUnknownPushConfigSubRouteIs404() returns error? {
             headers = {"A2A-Version": "1.0"});
     test:assertEquals(resp.statusCode, 404);
     test:assertEquals(check reasonOf(resp), "METHOD_NOT_FOUND");
+}
+
+@test:Config {}
+function testBarePushConfigPathWithNoTaskIdIs404NotACrash() returns error? {
+    // onPushNotificationConfigs assumes a "/tasks/{taskId}/pushNotificationConfigs..."
+    // shape and slices the path on that assumption (TASKS_PATH_PREFIX.length() as the
+    // start index); routing a bare "/pushNotificationConfigs" (no task id, no /tasks/
+    // prefix at all) into it took that start index past the slice's own end.
+    http:Client raw = check new (serverUrl);
+    http:Response resp = check raw->get("/pushNotificationConfigs", {"A2A-Version": "1.0"});
+    test:assertEquals(resp.statusCode, 404, "never a legal path; must fall through cleanly, not crash the handler");
+    test:assertEquals(check reasonOf(resp), "METHOD_NOT_FOUND");
+}
+
+@test:Config {}
+function testTenantLookingPrefixIsNotMistakenForTheBareTasksRoute() returns error? {
+    // "/tasks-eu/..." must not be recognized as the tenant-less "/tasks" family just
+    // because it happens to start with the same six characters -- it names a tenant,
+    // "tasks-eu", same as "/acme-corp/..." does below. This listener declares no
+    // tenant, so it is the same "agent does not serve this tenant" 400 either way;
+    // what this guards is that it reaches that check at all, instead of 404ing as an
+    // unmatched "/tasks..." route (a Listener cannot yet serve any tenant at all --
+    // deriveServedCard always replaces supportedInterfaces with a tenant-less entry --
+    // so a "declared and matched" positive case is not something to test here).
+    http:Client raw = check new (serverUrl);
+    http:Response resp = check raw->post("/tasks-eu/message:send",
+            {"message": {"messageId": "m1", "role": "ROLE_USER", "parts": [{"text": "hi"}]}},
+            {"A2A-Version": "1.0", "Content-Type": "application/json"});
+    test:assertEquals(resp.statusCode, 400, "a tenant prefix, not an unmatched route");
+    test:assertEquals(check reasonOf(resp), "INVALID_PARAMS");
 }
 
 @test:Config {}

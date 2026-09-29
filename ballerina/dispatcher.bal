@@ -96,7 +96,7 @@ isolated service class DispatcherService {
         // the request that fetches the card is what reveals it. This is how a
         // client that resolves the card then gets a usable URL to call.
         if method == "GET" && rawPath == "/.well-known/agent-card.json" {
-            return cardHttpResponse(self.cardForHost(req));
+            return cardHttpResponse(self.cardWithInterfaceUrl(self.card, req));
         }
 
         // Authentication comes before everything else, so a caller that has
@@ -155,25 +155,35 @@ isolated service class DispatcherService {
         return result;
     }
 
-    # The served card with its HTTP+JSON interface URL filled in: the configured
-    # public URL if there is one, otherwise the scheme this listener serves and
-    # the request's Host header.
+    # A card with its HTTP+JSON interface URL filled in: the configured
+    # public URL if there is one, otherwise the scheme this listener serves
+    # and the request's Host header.
     #
-    # + req - The discovery request
-    # + return - A copy of the card with a usable interface URL
-    private isolated function cardForHost(http:Request req) returns AgentCard {
+    # Used for both the public discovery card and the extended card -- a
+    # client is meant to be able to reach either at the URL its own
+    # `supportedInterfaces` names, and specification 13.3 has clients
+    # replace their held card with the extended one, so it needs a real URL
+    # exactly as much as the public card does; before this was generalized,
+    # the extended card route never called this at all and served whatever
+    # placeholder URL the developer's own card literal happened to have.
+    #
+    # + card - The card to fill in, as held (readonly)
+    # + req - The request the card is being served in response to
+    # + return - A copy of `card` with a usable interface URL
+    private isolated function cardWithInterfaceUrl(AgentCard card, http:Request req) returns AgentCard {
         string|http:HeaderNotFoundError host = req.getHeader("Host");
         string? publicUrl = self.publicUrl;
         if host !is string && publicUrl is () {
-            return self.card;
+            return card;
         }
         string url = interfaceUrlFor(publicUrl, self.interfaceScheme, host is string ? host : "");
-        // The held card is readonly, so round-trip through JSON for a fresh
-        // mutable copy, then fill the HTTP+JSON interface's URL.
-        // `deriveServedCard` put a single such entry there.
-        AgentCard|error served = self.card.toJson().cloneWithType(AgentCard);
+        // `card` is readonly, so round-trip through JSON for a fresh mutable
+        // copy, then fill the HTTP+JSON interface's URL. `deriveServedCard`
+        // put a single such entry there, on both the public and extended
+        // cards.
+        AgentCard|error served = card.toJson().cloneWithType(AgentCard);
         if served is error {
-            return self.card;
+            return card;
         }
         foreach int i in 0 ..< served.supportedInterfaces.length() {
             if served.supportedInterfaces[i].protocolBinding == HTTP_JSON {
@@ -251,9 +261,22 @@ isolated service class DispatcherService {
     # + return - The path with any tenant prefix removed, and the tenant (or
     #            `()`); or an error if a tenant prefix does not match the card
     private isolated function stripTenant(string rawPath) returns [string, string?]|Error {
-        // The known operation paths all begin with one of these.
+        // The known operation paths all begin with one of these. "/message:"
+        // is self-delimited (its own ':' is the boundary), but "/tasks" and
+        // "/extendedAgentCard" are not: a bare startsWith check on those two
+        // also matches a tenant segment that happens to share the prefix,
+        // e.g. "/tasks-eu/message:send" -- so for those, the character right
+        // after the prefix must actually end the path or start the next
+        // segment ('/' or ':'), not continue the same word.
         foreach string known in ["/message:", "/tasks", "/extendedAgentCard"] {
-            if rawPath.startsWith(known) {
+            if !rawPath.startsWith(known) {
+                continue;
+            }
+            if known.endsWith(":") || rawPath.length() == known.length() {
+                return [rawPath, ()];
+            }
+            string next = rawPath.substring(known.length(), known.length() + 1);
+            if next == "/" || next == ":" {
                 return [rawPath, ()];
             }
         }
@@ -299,7 +322,8 @@ isolated service class DispatcherService {
                 return self.onSendStreamingMessage(tenant, owner, req);
             }
             ["GET", "/extendedAgentCard"] => {
-                return cardHttpResponse(check self.handler.getExtendedAgentCard());
+                AgentCard extended = check self.handler.getExtendedAgentCard();
+                return cardHttpResponse(self.cardWithInterfaceUrl(extended, req));
             }
             ["GET", "/tasks"] => {
                 ListTasksRequest filter = queryToListFilter(req);
@@ -323,7 +347,12 @@ isolated service class DispatcherService {
             string id = path.substring(TASKS_PATH_PREFIX.length(), path.length() - ":subscribe".length());
             return self.onSubscribeToTask(id, owner);
         }
-        if path.includes(PUSH_NOTIFICATION_CONFIGS_SEGMENT) {
+        // onPushNotificationConfigs assumes a "/tasks/{taskId}/pushNotificationConfigs..." shape
+        // (the only shape the spec's HTTP+JSON binding defines) and slices the path on that
+        // assumption; requiring the /tasks/ prefix here keeps a bare "/pushNotificationConfigs" --
+        // never a legal path -- from reaching that slicing at all, and falling through to the
+        // 404 below instead.
+        if path.startsWith(TASKS_PATH_PREFIX) && path.includes(PUSH_NOTIFICATION_CONFIGS_SEGMENT) {
             return self.onPushNotificationConfigs(method, path, owner, req);
         }
         if method == "GET" && path.startsWith(TASKS_PATH_PREFIX) && !path.includes(":")
@@ -569,6 +598,26 @@ class SseFramingGenerator {
             return {value: {'event: "error", data: restErrorBody(wrapTransportError(envelope)).toJsonString()}};
         }
         return {value: {data: envelope.toJsonString()}};
+    }
+
+    # Consumer-side close: forwards to `self.events` (an `EventTap` for a
+    # live `sendStreamingMessage`/`subscribeToTask`), the same way `EventTap`
+    # itself forwards to nothing further because it *is* the source.
+    #
+    # Required for the same reason `EventTap.close` documents itself as
+    # required: a `stream<T,E>` built by wrapping a generator object only
+    # calls close on that object if it defines one. `ballerina/mime`'s
+    # `EventStreamWriter` (the thing actually writing these bytes to the
+    # wire) calls `self.eventStream.close()` when a write fails -- the
+    # ordinary way a client disconnect surfaces -- so without this method,
+    # that close signal reached exactly as far as this class and stopped:
+    # the wrapped `EventTap` was never told, and stayed registered, idle,
+    # for up to `streamIdleTimeout` (or, for a task paused on
+    # `TASK_STATE_INPUT_REQUIRED`, indefinitely).
+    #
+    # + return - Always `()`; `EventTap.close` cannot itself fail
+    public isolated function close() returns error? {
+        return self.events.close();
     }
 }
 

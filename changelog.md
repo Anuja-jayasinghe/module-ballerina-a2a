@@ -45,3 +45,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - A 401 or 403 Is Now an `AuthenticationError` or `AuthorizationError` Instead of an `InternalError` Carrying That Status as Its Code
 - `subscribeToTask` on an Already-Terminal Task Now Correctly Answers `UnsupportedOperationError` per Specification Section 3.1.6, Instead of a One-Event Snapshot
 - A Panic or Returned `Error` from `onMessage` Now Transitions the Task to `TASK_STATE_FAILED` Instead of Leaving It at Whatever State It Was Left In
+- A Second Concurrent Message to a Task Already Being Driven Is Now Rejected Before Its Text Is Written to History or Its Inline Push Config Is Registered, Instead of After
+- Subscribing to a Task Just as It Reaches a Terminal State No Longer Leaks a Broadcaster That Nothing Will Ever Close (Specification Section 3.1.6)
+- `notifyPushConfigs` Now Runs Detached from `sendMessage`/`cancelTask`'s Response, So a Slow or Unresponsive Registered Webhook No Longer Holds Up the Caller
+- A Fresh Task's `history` Now Seeds With the Triggering Message, Matching the Continuation Path, Which Has Always Appended It
+- `cancelTask` Racing a Driver to a Different Terminal State Now Answers `TaskNotCancelableError` Instead of a Bare 500
+- A Direct `Message` Reply to a Continued (Not Fresh) Task No Longer Closes Every Other Live Subscriber's Stream for That Task (Specification Section 3.5.2)
+- The Webhook SSRF Guard No Longer Refuses Ordinary Hostnames That Happen to Start With `fc`/`fd` (e.g. `fdic.gov`), and Now Correctly Rejects IPv4-Mapped and Uncompressed-Form IPv6 Loopback/Link-Local Addresses It Previously Let Through (Specification Section 13.2)
+- The Extended Agent Card Now Has Its `capabilities`/`supportedInterfaces` Derived the Same Way the Public Card's Are, Instead of Being Served With Whatever Placeholder Shape the Developer's Card Literal Had
+- `GET /pushNotificationConfigs` With No Task Id No Longer Panics the Handler; It Is Now a 404
+- A Tenant Segment Sharing a Prefix With a Known Operation Path (e.g. `/tasks-eu/...`) Is No Longer Misrouted as an Unmatched `/tasks` Request
+- A Client Disconnecting From a Live Stream Now Actually Closes the Server-Side Subscription, Instead of Leaving It Idle Until `streamIdleTimeout`
+- `listTaskPushNotificationConfigs` on a Task With No Registered Configs No Longer Panics
+- The Webhook SSRF Guard Now Rejects a Numbers-and-Dots IPv4 Form a Real Resolver Still Accepts (`127.1`, `10.1`, a Single 32-Bit Decimal, or the Cloud Metadata Address Folded Into One Number), and a Hostname With a Trailing Dot, Both of Which Previously Bypassed It
+- A Task That Fails (`onMessage` Returns an `Error`, or Panics) Now Notifies Its Registered Webhooks, Matching Every Other State Transition
+- An Inline `taskPushNotificationConfig` on `sendMessage`/`sendStreamingMessage` Is Now Rejected When `capabilities.pushNotifications` Is `false`, Instead of Being Silently Registered

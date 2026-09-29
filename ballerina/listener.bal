@@ -245,7 +245,23 @@ public isolated class Listener {
         self.interfaceScheme = self.httpListener.getConfig().secureSocket is () ? "http" : "https";
         self.store = config.taskStore;
         AgentCard? extended = config.extendedAgentCard;
-        self.extendedCard = extended is AgentCard ? withDerivedSecurity(extended, config.auth).cloneReadOnly() : ();
+        // The extended card goes through deriveServedCard too, not just
+        // withDerivedSecurity, for the same reason the public card does: it
+        // must not advertise a capability the server does not provide. Left
+        // undone, a developer who followed this README's own placeholder
+        // example (`capabilities: {}, supportedInterfaces: []`) would get an
+        // extended card that says streaming and push notifications are off
+        // -- and specification 13.3 has clients replace their held card
+        // with exactly this one ("SHOULD replace their cached public Agent
+        // Card... for the duration of their authenticated session"), so a
+        // spec-conformant client would then refuse operations the server
+        // actually supports. `extendedCardConfigured: true` here (not
+        // `self.extendedCard is AgentCard`, which is what the public card
+        // uses): the extended card, being itself, has one configured.
+        self.extendedCard = extended is AgentCard
+            ? deriveServedCard(withDerivedSecurity(extended, config.auth), true,
+                    config.streamingCapability, config.pushNotificationsCapability).cloneReadOnly()
+            : ();
         self.card = deriveServedCard(withDerivedSecurity(agentCard, config.auth), self.extendedCard is AgentCard,
                 config.streamingCapability, config.pushNotificationsCapability).cloneReadOnly();
         self.ownerResolver = config.ownerResolver;
@@ -265,7 +281,7 @@ public isolated class Listener {
     public isolated function attach(Service a2aService, string[]|string? name = ()) returns error? {
         TaskExecutionRegistry registry = new;
         DefaultHandler handler = new (a2aService, self.store, self.extendedCard, self.pushSender, registry,
-                self.streamIdleTimeout, self.keepAliveInterval);
+                self.streamIdleTimeout, self.keepAliveInterval, self.card.capabilities.pushNotifications);
         DispatcherService dispatcherService = new (self.card, handler, self.ownerResolver, self.authenticator,
                 self.interfaceScheme, self.publicUrl);
         lock {

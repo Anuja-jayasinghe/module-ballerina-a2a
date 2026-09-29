@@ -206,3 +206,22 @@ function testTaskExecutionRegistrySubscribeDoesNotClaimDriverSlot() returns erro
     EventBroadcaster? acquired = registry.acquire("t1");
     test:assertTrue(acquired is EventBroadcaster, "subscribe must not claim the driver slot");
 }
+
+@test:Config {}
+function testSseFramingGeneratorCloseForwardsToItsUnderlyingTap() returns error? {
+    // A client disconnect surfaces as ballerina/mime's EventStreamWriter
+    // calling close() on the outer SSE stream, which only propagates to a
+    // wrapped generator that defines close() itself (dispatcher.bal's own
+    // SseFramingGenerator, and its own doc comment). Tested directly here,
+    // not through an actual HTTP disconnect -- there is no reliable,
+    // non-flaky way to force one from a well-behaved http:Client -- against
+    // the same EventBroadcaster/EventTap pair a live stream really wraps.
+    EventBroadcaster broadcaster = new;
+    EventTap tap = broadcaster.newTap();
+    stream<StreamResponse, Error?> tapStream = new (tap);
+    SseFramingGenerator framing = new (tapStream);
+
+    error? result = framing.close();
+    test:assertTrue(result is (), "close must not itself fail");
+    test:assertTrue(tap.isClosed(), "the wrapped EventTap must be closed too, not left listening");
+}

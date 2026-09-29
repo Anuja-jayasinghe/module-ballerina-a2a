@@ -176,7 +176,14 @@ isolated function validateWebhookUrl(string url) returns Error? {
         int? colonIdx = hostPort.lastIndexOf(":");
         host = colonIdx is int ? hostPort.substring(0, colonIdx) : hostPort;
     }
+    // A trailing dot (e.g. "localhost.") is a legal, fully-qualified form of
+    // the same name -- the root label is just empty -- so it must compare
+    // equal to the un-dotted form, not slip past every check below because
+    // none of them account for it.
     string lowerHost = host.toLowerAscii();
+    if lowerHost.endsWith(".") {
+        lowerHost = lowerHost.substring(0, lowerHost.length() - 1);
+    }
 
     if lowerHost == "localhost" || lowerHost.endsWith(".localhost") || lowerHost.endsWith(".local")
             || lowerHost == "metadata.google.internal" {
@@ -190,27 +197,211 @@ isolated function validateWebhookUrl(string url) returns Error? {
 # Whether a host, already known to be an IP literal or plain hostname,
 # names a loopback, link-local (which covers the
 # `169.254.169.254`-style cloud metadata endpoint), private (RFC 1918),
-# carrier-grade-NAT (`100.64.0.0/10`), or IPv6 unique-local/loopback
-# address.
+# carrier-grade-NAT (`100.64.0.0/10`), or IPv6 unique-local/loopback/
+# link-local address.
 #
 # + host - The lowercased host, brackets and port already stripped
 # + return - Whether the host is a disallowed IP literal
 isolated function isDisallowedIpLiteral(string host) returns boolean {
-    int[]? octets = parseIPv4(host);
-    if octets is int[] {
-        int a = octets[0];
-        int b = octets[1];
-        if a == 127 || a == 0 || a == 10 || (a == 172 && b >= 16 && b <= 31)
-                || (a == 192 && b == 168) || (a == 169 && b == 254) || (a == 100 && b >= 64 && b <= 127) {
-            return true;
-        }
+    // The numbers-and-dots form (parseIPv4Numeric), not the strict
+    // dotted-quad-only parseIPv4: a real HTTP client's DNS/IP resolution
+    // (confirmed against java.net.InetAddress.getByName, what a JVM-based
+    // client resolves a host through) accepts short forms too --
+    // "127.1" and "10.1" (the last part covering the remaining two/three
+    // octets), a single 32-bit decimal ("2130706433" is 127.0.0.1), and
+    // "169.254.43518" (the cloud metadata address, its last two octets
+    // folded into one 16-bit number: 169*256+254 = 43518). A strict
+    // 4-octet-only check lets all of these connect while believing it had
+    // blocked the same address written the usual way.
+    int[]? v4 = parseIPv4Numeric(host);
+    if v4 is int[] {
+        return isDisallowedIPv4Octets(v4);
+    }
+    int[]? hextets = parseIPv6Hextets(host);
+    if hextets is () {
+        // Not a valid literal of either family -- a plain hostname, which
+        // this function's caller has already screened for the specific
+        // disallowed *names* it checks by string (localhost, .local,
+        // metadata.google.internal); nothing further to check here. Before
+        // this fix, an IPv6-only check ran against every such hostname too,
+        // so any name starting "fc"/"fd" (e.g. fdic.gov) was wrongly refused.
         return false;
     }
-    // IPv6: loopback, unspecified, and the fc00::/7 unique-local block --
-    // whose two /8s, fc00::/8 and fd00::/8, both surface as the host
-    // starting "fc" or "fd" in standard (non-compressed-leading-zero)
-    // hextet form.
-    return host == "::1" || host == "::" || host.startsWith("fc") || host.startsWith("fd");
+    // An IPv4-mapped IPv6 address (::ffff:0:0/96, RFC 4291 §2.5.5.2): the low
+    // 32 bits are an IPv4 address, written either as a trailing dotted quad
+    // (::ffff:127.0.0.1) or as two hex hextets (::ffff:a9fe:a9fe, the same
+    // 169.254.169.254 cloud metadata address) -- both already normalized to
+    // the same 8-hextet form by parseIPv6Hextets. Classify the embedded IPv4
+    // address by the IPv4 rules, the same way a plain request to it would be.
+    if hextets[0] == 0 && hextets[1] == 0 && hextets[2] == 0 && hextets[3] == 0
+            && hextets[4] == 0 && hextets[5] == 0xffff {
+        int[] mapped = [hextets[6] >> 8, hextets[6] & 0xff, hextets[7] >> 8, hextets[7] & 0xff];
+        return isDisallowedIPv4Octets(mapped);
+    }
+    // Loopback (::1) and unspecified (::), any way they were written --
+    // parseIPv6Hextets already normalizes 0:0:0:0:0:0:0:1 to the same array
+    // as ::1, so a single all-zero-but-last-hextet check covers both forms.
+    boolean allZeroButLast = true;
+    foreach int i in 0 ..< 7 {
+        if hextets[i] != 0 {
+            allZeroButLast = false;
+            break;
+        }
+    }
+    if allZeroButLast {
+        return true; // ::1 (hextets[7] == 1) or :: (hextets[7] == 0)
+    }
+    // Link-local, fe80::/10: the top 10 bits of the first hextet are
+    // 1111111010, i.e. the first hextet is in 0xfe80-0xfebf.
+    if hextets[0] >= 0xfe80 && hextets[0] <= 0xfebf {
+        return true;
+    }
+    // Unique-local, fc00::/7: the first hextet's top byte is 0xfc or 0xfd.
+    int topByte = hextets[0] >> 8;
+    return topByte == 0xfc || topByte == 0xfd;
+}
+
+# + octets - Four IPv4 octets
+# + return - Whether they name a loopback, unspecified, private (RFC 1918),
+#            link-local (which covers `169.254.169.254`), or
+#            carrier-grade-NAT (`100.64.0.0/10`) address
+isolated function isDisallowedIPv4Octets(int[] octets) returns boolean {
+    int a = octets[0];
+    int b = octets[1];
+    return a == 127 || a == 0 || a == 10 || (a == 172 && b >= 16 && b <= 31)
+        || (a == 192 && b == 168) || (a == 169 && b == 254) || (a == 100 && b >= 64 && b <= 127);
+}
+
+# Expands an IPv6 literal (brackets and port already stripped by the caller)
+# into its eight 16-bit hextets, handling `::` compression and a trailing
+# IPv4-mapped tail (`::ffff:127.0.0.1`), so `isDisallowedIpLiteral` can
+# classify an address the same way regardless of how it was written --
+# `::1` and `0:0:0:0:0:0:0:1` expand to the same array.
+#
+# + host - The candidate host string
+# + return - The eight hextets, or `()` if `host` is not a valid IPv6
+#            literal -- including any plain hostname, which is exactly the
+#            case this function's caller uses `()` to mean "not this family,
+#            nothing more to check here"
+isolated function parseIPv6Hextets(string host) returns int[]? {
+    if !host.includes(":") {
+        return;
+    }
+    int? compressionAt = host.indexOf("::");
+    string left;
+    string right;
+    boolean compressed;
+    if compressionAt is int {
+        if host.indexOf("::", compressionAt + 1) is int {
+            return; // a second "::" is never legal
+        }
+        left = host.substring(0, compressionAt);
+        right = host.substring(compressionAt + 2);
+        compressed = true;
+    } else {
+        left = host;
+        right = "";
+        compressed = false;
+    }
+    string[] leftGroups = left == "" ? [] : splitOnColon(left);
+    string[] rightGroups = right == "" ? [] : splitOnColon(right);
+
+    // A trailing IPv4 dotted quad, if present, is only ever the address's
+    // very last group -- whichever of the two halves is the last one.
+    string[] tailGroups = compressed ? rightGroups : leftGroups;
+    int[]? v4Tail = ();
+    if tailGroups.length() > 0 && tailGroups[tailGroups.length() - 1].includes(".") {
+        v4Tail = parseIPv4(tailGroups[tailGroups.length() - 1]);
+        if v4Tail is () {
+            return; // looked like a v4 tail but wasn't a valid one
+        }
+        tailGroups = tailGroups.slice(0, tailGroups.length() - 1);
+        if compressed {
+            rightGroups = tailGroups;
+        } else {
+            leftGroups = tailGroups;
+        }
+    }
+
+    int neededHexGroups = 8 - (v4Tail is int[] ? 2 : 0);
+    int haveHexGroups = leftGroups.length() + rightGroups.length();
+    if compressed {
+        int missing = neededHexGroups - haveHexGroups;
+        if missing < 0 {
+            return; // more groups than fit -- malformed
+        }
+        int[] result = [];
+        foreach string g in leftGroups {
+            int? h = parseHextet(g);
+            if h is () {
+                return;
+            }
+            result.push(h);
+        }
+        foreach int _ in 0 ..< missing {
+            result.push(0);
+        }
+        foreach string g in rightGroups {
+            int? h = parseHextet(g);
+            if h is () {
+                return;
+            }
+            result.push(h);
+        }
+        if v4Tail is int[] {
+            result.push((v4Tail[0] << 8) | v4Tail[1]);
+            result.push((v4Tail[2] << 8) | v4Tail[3]);
+        }
+        return result;
+    }
+    // No "::": every group must be spelled out.
+    if haveHexGroups != neededHexGroups {
+        return;
+    }
+    int[] result = [];
+    foreach string g in leftGroups {
+        int? h = parseHextet(g);
+        if h is () {
+            return;
+        }
+        result.push(h);
+    }
+    if v4Tail is int[] {
+        result.push((v4Tail[0] << 8) | v4Tail[1]);
+        result.push((v4Tail[2] << 8) | v4Tail[3]);
+    }
+    return result;
+}
+
+# + group - A single ':'-delimited group from an IPv6 literal
+# + return - Its value (0-0xffff), or `()` if it is not 1-4 hex digits
+isolated function parseHextet(string group) returns int? {
+    if group.length() == 0 || group.length() > 4 {
+        return;
+    }
+    int|error n = int:fromHexString(group);
+    if n is error || n < 0 || n > 0xffff {
+        return;
+    }
+    return n;
+}
+
+# + s - A string with no leading/trailing/doubled colon (the caller has
+#       already removed any `::` compression marker)
+# + return - `s` split on every remaining single `:`
+isolated function splitOnColon(string s) returns string[] {
+    string[] parts = [];
+    string remaining = s;
+    while true {
+        int? idx = remaining.indexOf(":");
+        if idx is () {
+            parts.push(remaining);
+            break;
+        }
+        parts.push(remaining.substring(0, idx));
+        remaining = remaining.substring(idx + 1);
+    }
+    return parts;
 }
 
 # Parses a dotted-quad IPv4 literal into its four octets, or `()` if `host`
@@ -245,6 +436,76 @@ isolated function parseIPv4(string host) returns int[]? {
             return;
         }
         result.push(n);
+    }
+    return result;
+}
+
+# Parses an IPv4 literal in any of the numbers-and-dots forms a real
+# resolver actually accepts, not just the four-octet dotted-quad form --
+# see `isDisallowedIpLiteral`'s own comment for why this matters. 1-4
+# dot-separated decimal parts; every part but the last is exactly one
+# octet, and the last absorbs however many trailing octets the count
+# leaves implicit (4 parts: none, it's an octet too; 3: the last 16 bits;
+# 2: the last 24 bits; 1: the whole 32 bits) -- the classic `inet_aton`
+# rule, confirmed against `java.net.InetAddress.getByName` (what a
+# JVM-based HTTP client resolves a host through): "127.1" -> 127.0.0.1,
+# "10.1" -> 10.0.0.1, "2130706433" -> 127.0.0.1, "169.254.43518" ->
+# 169.254.169.254. Hex (`0x7f...`) and full octal (`017700000001`) forms
+# are not accepted by that same resolver, so they need no handling here;
+# a leading zero on a decimal part is decimal, not octal (`0177.0.0.1` ->
+# 177.0.0.1), matching `int:fromString`'s own behaviour, relied on below
+# instead of hand-rolling digit validation.
+#
+# + host - The candidate host string
+# + return - The four octets, or `()` if `host` is not a valid literal in
+#            any of these forms
+isolated function parseIPv4Numeric(string host) returns int[]? {
+    string[] parts = [];
+    string remaining = host;
+    while true {
+        int? dotIdx = remaining.indexOf(".");
+        if dotIdx is () {
+            parts.push(remaining);
+            break;
+        }
+        parts.push(remaining.substring(0, dotIdx));
+        remaining = remaining.substring(dotIdx + 1);
+    }
+    if parts.length() == 0 || parts.length() > 4 {
+        return;
+    }
+    int[] values = [];
+    foreach string part in parts {
+        if part.length() == 0 {
+            return;
+        }
+        int|error n = int:fromString(part);
+        if n is error || n < 0 {
+            return;
+        }
+        values.push(n);
+    }
+    foreach int i in 0 ..< values.length() - 1 {
+        if values[i] > 255 {
+            return;
+        }
+    }
+    int lastValue = values[values.length() - 1];
+    // Whichever position the last part is in, it stands in for every octet
+    // from there to the end -- 4 parts leaves it exactly one, same as every
+    // other part.
+    int trailingOctets = 4 - (values.length() - 1);
+    int maxLast = trailingOctets == 1 ? 255 : trailingOctets == 2 ? 65535
+        : trailingOctets == 3 ? 16777215 : 4294967295;
+    if lastValue > maxLast {
+        return;
+    }
+    int[] result = [];
+    foreach int i in 0 ..< values.length() - 1 {
+        result.push(values[i]);
+    }
+    foreach int i in 0 ..< trailingOctets {
+        result.push((lastValue >> ((trailingOctets - 1 - i) * 8)) & 0xff);
     }
     return result;
 }
