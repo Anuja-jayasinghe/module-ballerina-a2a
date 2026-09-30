@@ -73,6 +73,42 @@ isolated function validateOutboundMessage(Message message) returns Error? {
     }
 }
 
+# Validates a Message a caller sent to this server.
+#
+# The same two rules as `validateOutboundMessage`, but a failure here is a bad
+# request (a 400), not the catch-all an outgoing message reports.
+#
+# + message - The message to check
+# + return - An `invalidRequest` error when it violates a specification requirement
+isolated function validateReceivedMessage(Message message) returns Error? {
+    if message.parts.length() == 0 {
+        return invalidRequest("Message.parts is a required array and must contain at least one element "
+            + "(specification section 5.7)");
+    }
+    foreach Part part in message.parts {
+        int variants = countSetPartVariants(part);
+        if variants != 1 {
+            return invalidRequest(
+                string `Part must have exactly one of text, raw, url, or data set; found ${variants}`);
+        }
+    }
+}
+
+# Validates the id a caller chose for a push-notification config.
+#
+# The id becomes a path segment (`/tasks/{id}/pushNotificationConfigs/{configId}`),
+# so one containing `/` could never be fetched or deleted again. An unset or
+# empty id is fine: the server assigns one.
+#
+# + config - The config the caller supplied, or `()` if none was
+# + return - An `invalidRequest` error if the id cannot be used as a path segment
+isolated function validatePushConfigId(TaskPushNotificationConfig? config) returns Error? {
+    string? id = config?.id;
+    if id is string && id.includes("/") {
+        return invalidRequest(string `push notification config id "${id}" must not contain '/'`);
+    }
+}
+
 # Validates a Task an agent sent us, and the artifacts and history it carries.
 #
 # + task - The decoded task
