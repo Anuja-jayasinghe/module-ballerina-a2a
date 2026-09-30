@@ -52,6 +52,14 @@ public isolated client class TaskUpdater {
     // is exactly the one Message event [specification section 3.1.2](https://a2a-protocol.org/latest/specification/#312-send-streaming-message)
     // requires, never a spurious Task first.
     private boolean seedEmitted = false;
+    // The requesting call's `configuration.historyLength` (sendMessage/
+    // sendStreamingMessage), applied only to the lazily-broadcast seed
+    // event below -- never to `self.base`, which must keep the task's full
+    // history so later writes and `currentTask()` carry it forward intact.
+    // A plain `int?`, so reading it needs no `lock`: unlike a mutable
+    // reference type, a value type read from a `final` field is always
+    // isolated-safe.
+    private final int? historyLength;
 
     # Binds an updater to a task. Called by the library, not by agent code.
     #
@@ -64,8 +72,12 @@ public isolated client class TaskUpdater {
     #          task, or a continuation's already-accumulated state
     # + broadcaster - Where every transition and artifact is pushed live, for
     #                 `sendStreamingMessage`/`subscribeToTask` subscribers
+    # + historyLength - The triggering request's `configuration.historyLength`,
+    #                    applied to the one Task snapshot this updater ever
+    #                    broadcasts live (specification 3.2.2/3.2.4). `()`
+    #                    imposes no limit.
     isolated function init(string taskId, string contextId, TaskStore store, string? owner, Task base,
-            EventBroadcaster broadcaster) {
+            EventBroadcaster broadcaster, int? historyLength = ()) {
         self.taskId = taskId;
         self.contextId = contextId;
         self.store = store;
@@ -76,6 +88,7 @@ public isolated client class TaskUpdater {
         // replaced by them.
         self.artifacts = base?.artifacts is Artifact[] ? (<Artifact[]>base?.artifacts).clone() : [];
         self.broadcaster = broadcaster;
+        self.historyLength = historyLength;
     }
 
     # The task's server-generated id.
@@ -128,7 +141,10 @@ public isolated client class TaskUpdater {
             self.artifacts.push(artifact.clone());
         }
         if seed is Task {
-            self.broadcaster.push(seed);
+            // Same historyLength this task's own stream sends its
+            // TaskArtifactUpdateEvents at -- only the seed carries history
+            // at all, so this is the one place per stream this matters.
+            self.broadcaster.push(projectTask(seed, true, self.historyLength));
         }
         self.broadcaster.push(event);
         return;
@@ -217,7 +233,7 @@ public isolated client class TaskUpdater {
             self.base = task.clone();
         }
         if seed is Task {
-            self.broadcaster.push(seed);
+            self.broadcaster.push(projectTask(seed, true, self.historyLength));
         }
         self.broadcaster.push(event);
     }

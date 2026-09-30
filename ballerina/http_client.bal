@@ -182,6 +182,25 @@ isolated function decodeListTasksResponse(json result) returns ListTasksResponse
     if rewired is error {
         return invalidAgentResponse(string `ListTasks response could not be decoded: ${rewired.message()}`);
     }
+    // A server whose `tasks` field defaults to a nil slice can send
+    // `"tasks": null` for an empty page -- confirmed directly against a
+    // real a2a-go server, whose Go zero value does exactly this.
+    // `cloneWithType` otherwise rejects it outright: `tasks` is a
+    // required, non-nullable `Task[]`, and ProtoJSON (specification 5.5,
+    // ADR-001) treats a missing/null repeated field as empty either way,
+    // so normalizing null to `[]` before decoding is what the wire format
+    // itself already means, not a workaround for one server's quirk.
+    // A server whose `tasks` field defaults to a nil slice can send
+    // "tasks": null for an empty page -- confirmed directly against a
+    // real a2a-go server, whose Go zero value does exactly this.
+    // `cloneWithType` otherwise rejects it outright: `tasks` is a
+    // required, non-nullable `Task[]`, and ProtoJSON (specification 5.5,
+    // ADR-001) treats a missing/null repeated field as empty either way,
+    // so normalizing null to `[]` before decoding is what the wire format
+    // itself already means, not a workaround for one server's quirk.
+    if rewired is map<json> && rewired["tasks"] is () {
+        rewired["tasks"] = [];
+    }
     ListTasksResponse|error decoded = rewired.cloneWithType(ListTasksResponse);
     if decoded is error {
         return invalidAgentResponse(string `ListTasks response did not match the expected shape: ${decoded.message()}`);

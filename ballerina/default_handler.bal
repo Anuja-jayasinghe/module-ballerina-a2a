@@ -159,17 +159,26 @@ isolated class DefaultHandler {
             owner,
             configuration: request?.configuration
         };
-        final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster);
+        // Specification 3.2.2/3.2.4: unset imposes no limit, 0 omits
+        // history entirely. Threaded into the updater too, so the one Task
+        // snapshot sendStreamingMessage's stream broadcasts respects it as
+        // well -- this method's own callers never see that snapshot, but
+        // sendStreamingMessage constructs its updater the same way.
+        int? historyLength = request?.configuration?.historyLength;
+        final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster, historyLength);
 
         boolean returnImmediately = request?.configuration?.returnImmediately ?: false;
         if returnImmediately {
             // The task already exists (seeded, or continued and
             // persisted, above) -- hand it back now, without waiting for
             // driveTask, which keeps running on its own detached strand
-            // exactly like sendStreamingMessage's own driver.
+            // exactly like sendStreamingMessage's own driver. projectTask
+            // clones rather than mutating `seed` in place: `seed` is also
+            // `updater`'s own `base`, which must keep the task's full
+            // history for later writes to carry forward.
             future<()> _ = start self.finishDrivenTask(
                     taskId, owner, context.clone(), updater, broadcaster, target.isNewTask, true);
-            return seed;
+            return projectTask(seed, true, historyLength);
         }
 
         future<Task|Message|Error> f =
@@ -183,9 +192,12 @@ isolated class DefaultHandler {
         self.registry.release(taskId, stopped);
         if result is Task {
             if drivenToThisState {
+                // Untrimmed: a registered webhook gets the task as it
+                // actually is, independent of what this caller happened to
+                // ask this one response to look like.
                 future<()> _ = start self.notifyPushConfigs(taskId, result.clone());
             }
-            return result;
+            return projectTask(result, true, historyLength);
         } else if result is Message {
             return result;
         } else if result is Error {
@@ -597,7 +609,11 @@ isolated class DefaultHandler {
             owner,
             configuration: request?.configuration
         };
-        final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster);
+        // Specification 3.2.2/3.2.4: applies to the one Task snapshot this
+        // stream ever broadcasts (the seed, on the agent's first touch of
+        // updater) -- see task_updater.bal's own handling of it.
+        int? historyLength = request?.configuration?.historyLength;
+        final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster, historyLength);
 
         // returnImmediately has no effect on streaming per the
         // specification -- always false here; see driveTask's own doc.
@@ -689,15 +705,7 @@ isolated class DefaultHandler {
         if task is () {
             return taskNotFound(request.id);
         }
-        int? historyLength = request?.historyLength;
-        if historyLength is int {
-            Message[]? history = task?.history;
-            if history is Message[] && history.length() > historyLength {
-                task.history = historyLength <= 0 ? []
-                    : history.slice(history.length() - historyLength);
-            }
-        }
-        return task;
+        return projectTask(task, true, request?.historyLength);
     }
 
     # Handles cancelTask.

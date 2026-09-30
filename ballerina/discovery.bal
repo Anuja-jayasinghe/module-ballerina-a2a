@@ -286,13 +286,21 @@ isolated function selectInterface(
 
 # Resolves the URL to construct a client against.
 #
+# Stripped of any trailing slash for the same reason `stripTrailingSlash`'s
+# own doc comment gives for card discovery: `http:Client` joins a base
+# ending in `/` with a path starting in `/` into a double slash
+# (`//message:send`), which the server 404s. Confirmed directly, against a
+# real `@a2a-js/sdk` agent: it advertises exactly this shape for a
+# root-mounted deployment (`http://host:port/`), and every operation
+# against it failed until this was stripped.
+#
 # + card - The agent card to read the endpoint from
 # + preferredBinding - Which transport binding to resolve a URL for
 # + return - The matching supportedInterfaces entry's url, or an
 #            InternalError if the card declares no such entry
 isolated function primaryUrl(AgentCard card, TransportBinding preferredBinding) returns string|Error {
     AgentInterface iface = check selectInterface(card, preferredBinding);
-    return iface.url;
+    return stripTrailingSlash(iface.url);
 }
 
 # Rejects a card whose interface for the given binding declares a pre-v1.0

@@ -581,6 +581,65 @@ function testServerRoundTripSendStreamingMessageDirectReply() returns error? {
     test:assertTrue(second is (), "the stream must close immediately after the one Message event");
 }
 
+// Finding 22: configuration.historyLength was read by getTask and
+// listTasks (via projectTask) but never by sendMessage/sendStreamingMessage
+// -- confirmed live against a real Node client and TCK CORE-HIST-003.
+// Specification 3.2.2 ("A value of zero is a request to not include any
+// history"), 3.2.4 ("0: No history should be returned"), 3.1.3's MUST for
+// getTask (the same guarantee this extends to send/stream).
+@test:Config {}
+function testServerRoundTripSendMessageHistoryLengthZeroOmitsHistory() returns error? {
+    Client c = check echoClient();
+    Task|Message result = check c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "echo hi"}]},
+        configuration: {historyLength: 0}
+    });
+    test:assertTrue(result is Task);
+    Message[] history = (<Task>result)?.history ?: [];
+    test:assertEquals(history, [], "historyLength: 0 must omit history from a blocking sendMessage response");
+}
+
+@test:Config {}
+function testServerRoundTripSendMessageReturnImmediatelyHistoryLengthZero() returns error? {
+    Client c = check echoClient();
+    // returnImmediately hands back the pre-created snapshot through a
+    // separate return statement from the driven-synchronously case above --
+    // a distinct code path, so it gets its own test rather than assuming
+    // the same fix covers it.
+    Task|Message result = check c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "echo hi"}]},
+        configuration: {historyLength: 0, returnImmediately: true}
+    });
+    test:assertTrue(result is Task);
+    Message[] history = (<Task>result)?.history ?: [];
+    test:assertEquals(history, [], "the returnImmediately snapshot must also respect historyLength");
+}
+
+@test:Config {}
+function testServerRoundTripSendStreamingMessageHistoryLengthZeroOmitsHistoryFromSeed() returns error? {
+    Client c = check echoClient();
+    stream<StreamResponse, error?> events = check c->sendStreamingMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "stream me"}]},
+        configuration: {historyLength: 0}
+    });
+
+    StreamResponse first = check expectStreamValue(events);
+    test:assertTrue(first is Task, "the first event must be the newly created task");
+    Message[] history = (<Task>first)?.history ?: [];
+    test:assertEquals(history, [],
+            "the seed Task event sendStreamingMessage broadcasts live must also respect historyLength");
+
+    // Drain the rest so this task's driver finishes cleanly before the
+    // next test runs.
+    StreamResponse second = check expectStreamValue(events);
+    test:assertTrue(second is TaskStatusUpdateEvent && (<TaskStatusUpdateEvent>second).status.state == TASK_STATE_WORKING);
+    StreamResponse third = check expectStreamValue(events);
+    test:assertTrue(third is TaskArtifactUpdateEvent);
+    StreamResponse fourth = check expectStreamValue(events);
+    test:assertTrue(fourth is TaskStatusUpdateEvent
+            && (<TaskStatusUpdateEvent>fourth).status.state == TASK_STATE_COMPLETED);
+}
+
 @test:Config {}
 function testServerRoundTripSubscribeToTask() returns error? {
     // Per specification 3.1.6, a task already in a terminal state cannot

@@ -66,6 +66,29 @@ function testRestClientRejectsCardWithoutRestInterface() {
             "a card declaring no HTTP+JSON interface must fail construction");
 }
 
+// Finding 21: a card whose interface url ends in "/" (a real @a2a-js/sdk
+// agent advertises exactly this for a root-mounted deployment) used to
+// make the client build "//message:send" -- primaryUrl's own trailing
+// slash, joined with http:Client's leading one on every path.
+@test:Config {}
+function testRestClientStripsTrailingSlashFromInterfaceUrl() returns error? {
+    AgentCard card = {
+        name: "n", description: "d", version: "1.0.0", capabilities: {},
+        supportedInterfaces: [
+            {url: getServerBaseUrl() + "/", protocolBinding: "HTTP+JSON", protocolVersion: "1.0"}
+        ],
+        skills: [],
+        defaultInputModes: ["text"],
+        defaultOutputModes: ["text"]
+    };
+    setNextRestResponse({task: defaultTaskJson()});
+    HttpClient c = check new (card);
+    Task|Message result = check c->sendMessage({message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]}});
+    test:assertTrue(result is Task);
+    test:assertEquals(getLastRestRequest().path, "/message:send",
+            "a trailing slash on the card's interface url must not double up with the path's own leading slash");
+}
+
 // v0.3 defines a REST binding, but this library does not implement it —
 // v0.3 method names have no meaning as REST paths — so this must fail at
 // construction rather than sending v0.3 method names down REST paths.
@@ -132,6 +155,18 @@ function testRestClientMapsOperationsToMethodAndPath() returns error? {
     req = getLastRestRequest();
     test:assertEquals(req.method, "DELETE");
     test:assertEquals(req.path, "/tasks/task-1/pushNotificationConfigs/cfg-1");
+}
+
+// Finding 24: a server whose `tasks` field defaults to a nil slice sends
+// "tasks": null for an empty page -- confirmed against a real a2a-go
+// server. `tasks` is a required, non-nullable Task[], so this used to fail
+// with "ListTasks response did not match the expected shape".
+@test:Config {}
+function testRestClientTreatsNullTasksAsEmpty() returns error? {
+    HttpClient c = check new (getServerBaseUrl());
+    setNextRestResponse({tasks: null, nextPageToken: "", pageSize: 0, totalSize: 0});
+    ListTasksResponse result = check c->listTasks();
+    test:assertEquals(result.tasks, []);
 }
 
 // A tenant becomes a path prefix on this binding, not just a body field.
