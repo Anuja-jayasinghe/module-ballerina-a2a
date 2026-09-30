@@ -24,6 +24,13 @@
 
 import ballerina/time;
 
+// Specification 3.1.4's own bounds for ListTasks.pageSize: "If unspecified,
+// at most 50 tasks will be returned. The minimum value is 1. The maximum
+// value is 100."
+const LIST_TASKS_DEFAULT_PAGE_SIZE = 50;
+const LIST_TASKS_MIN_PAGE_SIZE = 1;
+const LIST_TASKS_MAX_PAGE_SIZE = 100;
+
 # Whether a task state is terminal — no further transition is legal from it.
 #
 # The four terminal states are fixed by the specification ([section 3.1.1](https://a2a-protocol.org/latest/specification/#311-send-message)):
@@ -218,15 +225,32 @@ public isolated class InMemoryTaskStore {
             order by statusTimestampKey(t) descending
             select t;
 
-        int pageSize = filter?.pageSize ?: matched.length();
-        if pageSize < 0 {
-            pageSize = 0;
+        // Specification 3.1.4: "If unspecified, at most 50 tasks will be
+        // returned. The minimum value is 1. The maximum value is 100" --
+        // an explicit value outside that range is a caller mistake (400),
+        // per section 6.5's own validation example (`pageSize=150` ->
+        // "Must be between 1 and 100 inclusive"), not something to clamp
+        // or silently treat as "no results".
+        int? requestedPageSize = filter?.pageSize;
+        if requestedPageSize is int && (requestedPageSize < LIST_TASKS_MIN_PAGE_SIZE
+                || requestedPageSize > LIST_TASKS_MAX_PAGE_SIZE) {
+            return invalidParams(string `pageSize must be between ${LIST_TASKS_MIN_PAGE_SIZE} and `
+                + string `${LIST_TASKS_MAX_PAGE_SIZE} inclusive, got ${requestedPageSize}`);
         }
+        int pageSize = requestedPageSize ?: LIST_TASKS_DEFAULT_PAGE_SIZE;
         int startIndex = 0;
         string? pageToken = filter?.pageToken;
         if pageToken is string {
             int? found = indexOfTaskId(matched, pageToken);
-            startIndex = found is int ? found + 1 : matched.length();
+            if found is () {
+                // A page token this store never issued -- unlike the
+                // filters above, this is never legitimately "no results";
+                // it is a caller passing back a cursor from a different
+                // query, an expired one, or one it invented. The reference
+                // a2a-sdk agrees (InvalidParams "Invalid page token").
+                return invalidParams(string `pageToken "${pageToken}" does not name a task in this result set`);
+            }
+            startIndex = found + 1;
         }
         int endIndex = startIndex + pageSize;
         if endIndex > matched.length() {

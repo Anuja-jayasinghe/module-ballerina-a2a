@@ -54,10 +54,18 @@ isolated function errorBindingFor(Error err) returns ErrorBinding {
         return {status: http:STATUS_BAD_REQUEST, reason: "CONTENT_TYPE_NOT_SUPPORTED"};
     }
     if err is InvalidAgentResponseError {
-        // Per [specification section 5.4](https://a2a-protocol.org/latest/specification/#54-error-code-mappings)'s error-code mapping table: the
-        // only two entries that aren't 400 are TaskNotFoundError (404,
-        // above) and this one -- the agent's own response was the
-        // problem, not the client's request.
+        // Specification section 5.4's own table actually gives this,
+        // TaskNotCancelableError and ContentTypeNotSupportedError each
+        // their own non-400 status -- 502, 409 and 415 respectively --
+        // alongside TaskNotFoundError's 404. This deliberately returns 400
+        // for all three instead (see those errors' own bindings, above):
+        // every reference SDK checked (`a2a-sdk` 1.1.2's own
+        // A2A_ERROR_MAPPING, `a2a-go`'s internal/rest/rest.go, and
+        // `@a2a-js/sdk`'s REST_ERROR_HTTP_STATUS) does the same, so this
+        // follows the ecosystem's actual practice over the spec's own text
+        // here, not an oversight -- confirmed directly against all three
+        // sources, not assumed. a2a-java's REST mapping has not been
+        // checked.
         return {status: http:STATUS_INTERNAL_SERVER_ERROR, reason: "INVALID_AGENT_RESPONSE"};
     }
     if err is ExtendedAgentCardNotConfiguredError {

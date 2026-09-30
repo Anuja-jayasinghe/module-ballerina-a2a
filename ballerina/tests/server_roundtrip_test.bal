@@ -25,6 +25,7 @@ import ballerina/http;
 import ballerina/lang.runtime;
 import ballerina/test;
 import ballerina/time;
+import ballerina/uuid;
 
 const int SERVER_TEST_PORT = 19234;
 final string serverUrl = string `http://localhost:${SERVER_TEST_PORT}`;
@@ -190,6 +191,33 @@ function testServerResponsesUseA2AJsonContentType() returns error? {
 
     http:Response errorResp = check raw->get("/tasks/does-not-exist", {"A2A-Version": "1.0"});
     test:assertEquals(errorResp.getContentType(), "application/a2a+json");
+}
+
+// Finding 26: a patch-qualified A2A-Version used to be an exact-string
+// match against "1.0", so "1.0.5" was refused. Specification 3.6:
+// "Agents MUST process requests using the semantics of the requested
+// A2A-Version (matching Major.Minor)", and separately, patch numbers "do
+// not affect protocol compatibility". Confirmed live against real Python
+// (a2a-sdk) and Java (a2a-java) servers, both of which already accept it.
+@test:Config {}
+function testServerAcceptsAPatchQualifiedVersion() returns error? {
+    http:Client raw = check new (serverUrl);
+    http:Response resp = check raw->get("/tasks/does-not-exist", {"A2A-Version": "1.0.5"});
+    // 404 (task not found) proves the request was actually processed as
+    // v1.0, not refused as an unsupported version.
+    test:assertEquals(resp.statusCode, 404);
+    test:assertEquals(check reasonOf(resp), "TASK_NOT_FOUND");
+}
+
+// A different Major.Minor must still be refused -- this is not "accept any
+// 1.x", which is where the two reference SDKs are laxer than the spec text
+// itself (see checkVersion's own doc comment).
+@test:Config {}
+function testServerStillRejectsADifferentMinorVersion() returns error? {
+    http:Client raw = check new (serverUrl);
+    http:Response resp = check raw->get("/tasks/does-not-exist", {"A2A-Version": "1.1"});
+    test:assertEquals(resp.statusCode, 400);
+    test:assertEquals(check reasonOf(resp), "VERSION_NOT_SUPPORTED");
 }
 
 // ---- inbound request bodies ----------------------------------------------
@@ -1027,11 +1055,82 @@ function testServerRoundTripListTasks() returns error? {
     Task|Message _ = check c->sendMessage({
         message: {messageId: "m2", role: ROLE_USER, parts: [{text: "two"}]}
     });
-    // Far larger than however many tasks the other tests sharing this server
-    // have created, so this page holds all of them.
-    ListTasksResponse page = check c->listTasks({pageSize: 1000});
+    // 100 is the maximum specification 3.1.4 allows; not "however many
+    // tasks exist" (finding 28 -- a request for more than the max used to
+    // be silently honoured in full instead of refused). Not asserting an
+    // empty nextPageToken either: this server is shared with every other
+    // test in this file, so once their combined task count passes 100,
+    // this genuinely is no longer the last page.
+    ListTasksResponse page = check c->listTasks({pageSize: 100});
     test:assertTrue(page.totalSize >= 2, "listTasks must see the tasks that were created");
-    test:assertEquals(page.nextPageToken, "", "a full page must end with an empty nextPageToken");
+    test:assertTrue(page.tasks.length() <= 100, "a page must never exceed the specification's own maximum");
+}
+
+// Finding 28: with no pageSize, listTasks used to return every matching
+// task (unbounded); specification 3.1.4: "If unspecified, at most 50 tasks
+// will be returned." A dedicated contextId isolates this from every other
+// task the shared echoListener accumulates across the rest of this suite.
+@test:Config {}
+function testServerRoundTripListTasksDefaultsPageSizeTo50() returns error? {
+    Client c = check echoClient();
+    string contextId = uuid:createType4AsString();
+    foreach int i in 0 ..< 55 {
+        Task|Message _ = check c->sendMessage({
+            message: {messageId: string `default-page-${i}`, contextId, role: ROLE_USER, parts: [{text: "hi"}]}
+        });
+    }
+    ListTasksResponse page = check c->listTasks({contextId});
+    test:assertEquals(page.totalSize, 55);
+    test:assertEquals(page.tasks.length(), 50, "an unspecified pageSize must default to 50, not every match");
+    test:assertNotEquals(page.nextPageToken, "", "55 matches over a 50-task page must not look like the last page");
+}
+
+// Finding 28: an explicit pageSize outside 1..100 used to be silently
+// honoured in full (too large) or clamped to an empty page (zero or
+// negative) -- either way, not the caller error specification 6.5's own
+// validation example makes it ("Must be between 1 and 100 inclusive").
+@test:Config {}
+function testServerRoundTripListTasksRejectsPageSizeOutOfRange() returns error? {
+    Client c = check echoClient();
+    foreach int badPageSize in [0, -3, 101, 100000] {
+        ListTasksResponse|Error result = c->listTasks({pageSize: badPageSize});
+        test:assertTrue(result is InternalError, string `pageSize ${badPageSize} must be refused, not honoured`);
+        test:assertEquals((<InternalError>result).detail()?.code, -32602);
+    }
+}
+
+// Finding 29: a pageToken naming no task in the result set used to be
+// treated as "start from the end" -- an empty page, indistinguishable from
+// a caller who legitimately paged to the end. The reference a2a-sdk
+// raises InvalidParams "Invalid page token" for exactly this.
+@test:Config {}
+function testServerRoundTripListTasksRejectsBogusPageToken() returns error? {
+    Client c = check echoClient();
+    ListTasksResponse|Error result = c->listTasks({pageToken: "not-a-real-cursor-" + uuid:createType4AsString()});
+    test:assertTrue(result is InternalError, "a page token naming no known task must be refused");
+    test:assertEquals((<InternalError>result).detail()?.code, -32602);
+}
+
+// Finding 29: an unrecognized status, or a pageSize/historyLength/
+// statusTimestampAfter that doesn't parse as its wire type, used to be
+// silently dropped (status: every task returned instead of none matching;
+// the numeric fields: ignored; the timestamp: every task excluded) rather
+// than refused. Specification 6.5's own validation example is exactly
+// this shape: a 400 naming the bad field.
+@test:Config {}
+function testServerRoundTripListTasksRejectsInvalidQueryValues() returns error? {
+    http:Client raw = check new (serverUrl);
+    string[] badQueries = [
+        "status=nonsense",
+        "pageSize=abc",
+        "historyLength=abc",
+        "statusTimestampAfter=not-a-timestamp"
+    ];
+    foreach string query in badQueries {
+        http:Response resp = check raw->get(string `/tasks?${query}`, {"A2A-Version": "1.0"});
+        test:assertEquals(resp.statusCode, 400, query);
+        test:assertEquals(check reasonOf(resp), "INVALID_PARAMS", query);
+    }
 }
 
 // ---- extended Agent Card ------------------------------------------------

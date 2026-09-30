@@ -36,6 +36,7 @@
 // the response, rather than one return type per operation.
 
 import ballerina/http;
+import ballerina/time;
 
 # The A2A protocol version this server implements.
 const A2A_PROTOCOL_VERSION = "1.0";
@@ -193,19 +194,25 @@ isolated service class DispatcherService {
         return served;
     }
 
-    # Rejects a request whose A2A-Version header names anything but exactly
-    # 1.0. An absent header means 0.3 ([section 3.6.2](https://a2a-protocol.org/latest/specification/#362-server-responsibilities)), which this v1.0-only
-    # server does not serve. That section requires Major.Minor
-    # to match exactly and gives no guarantee that a later 1.x minor stays
-    # wire-compatible with 1.0 -- so "1.1" is exactly as unsafe to accept as
-    # "2.0" or "0.3" is. Matches the client-side requireV1Interface check.
+    # Rejects a request whose A2A-Version header names anything but 1.0, by
+    # Major.Minor. An absent header means 0.3 ([section 3.6.2](https://a2a-protocol.org/latest/specification/#362-server-responsibilities)), which this
+    # v1.0-only server does not serve. Section 3.6 requires Major.Minor to
+    # match exactly ("Agents MUST process requests using the semantics of
+    # the requested A2A-Version (matching Major.Minor)") and separately
+    # says patch numbers "do not affect protocol compatibility" -- so a
+    # patch-qualified version ("1.0.5") is compared only on its first two
+    # components, matched against `majorMinor`, below. "1.1" is still
+    # correctly refused: nothing guarantees a later 1.x minor stays
+    # wire-compatible with 1.0, and both reference SDKs are laxer than
+    # the spec text here (accepting any 1.x) -- this follows the spec, not
+    # them. Matches the client-side requireV1Interface check.
     #
     # + req - The HTTP request
     # + return - A VersionNotSupportedError when the version is unsupported
     private isolated function checkVersion(http:Request req) returns Error? {
         string|http:HeaderNotFoundError header = req.getHeader("A2A-Version");
         string version = header is string ? header : "0.3";
-        if version != A2A_PROTOCOL_VERSION {
+        if majorMinor(version) != A2A_PROTOCOL_VERSION {
             string msg = string `A2A protocol version ${version} is not supported; `
                 + string `this interface serves v1.0`;
             return error VersionNotSupportedError(msg, message = msg);
@@ -326,7 +333,7 @@ isolated service class DispatcherService {
                 return cardHttpResponse(self.cardWithInterfaceUrl(extended, req));
             }
             ["GET", "/tasks"] => {
-                ListTasksRequest filter = queryToListFilter(req);
+                ListTasksRequest filter = check queryToListFilter(req);
                 return jsonResponse((check self.handler.listTasks(filter, owner)).toJson());
             }
         }
@@ -682,11 +689,39 @@ isolated function queryInt(http:Request req, string name) returns int? {
     return parsed is int ? parsed : ();
 }
 
+# The first two dot-separated components of a version string -- its
+# Major.Minor, with any patch component (a third or later segment) dropped.
+# A version with fewer than two components is returned as given, so it
+# still compares unequal to a real "Major.Minor" value rather than being
+# coerced into a false match.
+#
+# + version - The version string, e.g. "1.0", "1.0.5", or "0.3"
+# + return - Just the Major.Minor prefix, e.g. "1.0"
+isolated function majorMinor(string version) returns string {
+    int? firstDot = version.indexOf(".");
+    if firstDot is () {
+        return version;
+    }
+    int? secondDot = version.indexOf(".", firstDot + 1);
+    return secondDot is () ? version : version.substring(0, secondDot);
+}
+
 # Builds a ListTasksRequest from the query string of a GET /tasks request.
 #
+# Every value present is validated at the wire level here -- an
+# unrecognized `status`, or a `pageSize`/`historyLength` that doesn't parse
+# as an integer, is refused with `InvalidParams` (400) rather than silently
+# dropped, per specification section 6.5's own validation example. Range
+# checks that depend on interpreting an already-well-formed value against
+# domain rules -- `pageSize` outside 1..100 (section 3.1.4), and whether a
+# `pageToken` names a real cursor -- are the store's job instead
+# (`InMemoryTaskStore.list`), since a custom `TaskStore` may have entirely
+# different pagination semantics of its own; this function only owns
+# translating the HTTP wire format into a `ListTasksRequest`.
+#
 # + req - The request
-# + return - The filter
-isolated function queryToListFilter(http:Request req) returns ListTasksRequest {
+# + return - The filter, or an InvalidParams Error
+isolated function queryToListFilter(http:Request req) returns ListTasksRequest|Error {
     ListTasksRequest filter = {};
     string? contextId = req.getQueryParamValue("contextId");
     if contextId is string {
@@ -695,24 +730,37 @@ isolated function queryToListFilter(http:Request req) returns ListTasksRequest {
     string? status = req.getQueryParamValue("status");
     if status is string {
         TaskState|error state = status.ensureType();
-        if state is TaskState {
-            filter.status = state;
+        if state is error {
+            return invalidParams(string `status "${status}" is not a valid task state`);
         }
+        filter.status = state;
     }
-    int? pageSize = queryInt(req, "pageSize");
-    if pageSize is int {
+    string? rawPageSize = req.getQueryParamValue("pageSize");
+    if rawPageSize is string {
+        int|error pageSize = int:fromString(rawPageSize);
+        if pageSize is error {
+            return invalidParams(string `pageSize "${rawPageSize}" is not an integer`);
+        }
         filter.pageSize = pageSize;
     }
     string? pageToken = req.getQueryParamValue("pageToken");
     if pageToken is string {
         filter.pageToken = pageToken;
     }
-    int? historyLength = queryInt(req, "historyLength");
-    if historyLength is int {
+    string? rawHistoryLength = req.getQueryParamValue("historyLength");
+    if rawHistoryLength is string {
+        int|error historyLength = int:fromString(rawHistoryLength);
+        if historyLength is error {
+            return invalidParams(string `historyLength "${rawHistoryLength}" is not an integer`);
+        }
         filter.historyLength = historyLength;
     }
     string? after = req.getQueryParamValue("statusTimestampAfter");
     if after is string {
+        time:Utc|error parsed = time:utcFromString(after);
+        if parsed is error {
+            return invalidParams(string `statusTimestampAfter "${after}" is not a valid RFC 3339 timestamp`);
+        }
         filter.statusTimestampAfter = after;
     }
     string? includeArtifacts = req.getQueryParamValue("includeArtifacts");
