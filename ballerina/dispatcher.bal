@@ -340,6 +340,13 @@ isolated service class DispatcherService {
 
         if method == "POST" && path.startsWith(TASKS_PATH_PREFIX) && path.endsWith(":cancel") {
             string id = path.substring(TASKS_PATH_PREFIX.length(), path.length() - ":cancel".length());
+            // The proto's `{id=*}` matches exactly one path segment; a
+            // slash in what would otherwise be the id means this path
+            // names no A2A operation at all, not a lookup for a task
+            // literally named "a/b".
+            if id.includes("/") {
+                return methodNotFound(string `no A2A operation at ${method} ${path}`);
+            }
             return jsonResponse((check self.handler.cancelTask({id}, owner)).toJson());
         }
         // The proto's own annotation is GET, but the client falls back to
@@ -352,6 +359,9 @@ isolated service class DispatcherService {
         // such route" masking the first.
         if (method == "GET" || method == "POST") && path.startsWith(TASKS_PATH_PREFIX) && path.endsWith(":subscribe") {
             string id = path.substring(TASKS_PATH_PREFIX.length(), path.length() - ":subscribe".length());
+            if id.includes("/") {
+                return methodNotFound(string `no A2A operation at ${method} ${path}`);
+            }
             return self.onSubscribeToTask(id, owner);
         }
         // onPushNotificationConfigs assumes a "/tasks/{taskId}/pushNotificationConfigs..." shape
@@ -365,6 +375,9 @@ isolated service class DispatcherService {
         if method == "GET" && path.startsWith(TASKS_PATH_PREFIX) && !path.includes(":")
                 && !path.includes(PUSH_NOTIFICATION_CONFIGS_SEGMENT) {
             string id = path.substring(TASKS_PATH_PREFIX.length());
+            if id.includes("/") {
+                return methodNotFound(string `no A2A operation at ${method} ${path}`);
+            }
             int? historyLength = queryInt(req, "historyLength");
             return jsonResponse((check self.handler.getTask({id, historyLength}, owner)).toJson());
         }

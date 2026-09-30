@@ -169,6 +169,90 @@ function testRestClientTreatsNullTasksAsEmpty() returns error? {
     test:assertEquals(result.tasks, []);
 }
 
+// Finding 33: ProtoJSON omits a field left at its default value
+// (specification 5.7), so a real a2a-rs server's last page arrives with
+// nextPageToken/pageSize/totalSize all absent -- confirmed against
+// a2a-sdk 1.2.0 (next_page_token='') and @a2a-js/sdk (nextPageToken="").
+// These were required, non-nullable fields, so this used to fail with
+// "ListTasks response did not match the expected shape".
+@test:Config {}
+function testRestClientDefaultsOmittedListTasksFieldsToZeroValue() returns error? {
+    HttpClient c = check new (getServerBaseUrl());
+    setNextRestResponse({tasks: [defaultTaskJson()]});
+    ListTasksResponse result = check c->listTasks();
+    test:assertEquals(result.nextPageToken, "");
+    test:assertEquals(result.pageSize, 0);
+    test:assertEquals(result.totalSize, 0);
+    test:assertEquals(result.tasks.length(), 1);
+}
+
+// Same, for the canonical ProtoJSON rendering of an empty page: every
+// field but `tasks` (itself normalized separately, finding 24) absent.
+@test:Config {}
+function testRestClientDecodesEmptyListTasksObject() returns error? {
+    HttpClient c = check new (getServerBaseUrl());
+    setNextRestResponse({});
+    ListTasksResponse result = check c->listTasks();
+    test:assertEquals(result.tasks, []);
+    test:assertEquals(result.nextPageToken, "");
+    test:assertEquals(result.pageSize, 0);
+    test:assertEquals(result.totalSize, 0);
+}
+
+// Finding 34: a 2xx whose body cannot be parsed as JSON at all (a
+// truncated stream, an HTML error page) used to be silently read as
+// "{}" -- for listTaskPushNotificationConfigs, whose response type is
+// all-optional, that decoded as a successful *empty page*, hiding the
+// failure entirely. It must now be a typed error, since the operation
+// expects real content and the body has none it could parse.
+@test:Config {}
+function testRestClientRejectsUnparseableTwoxxBody() returns error? {
+    HttpClient c = check new (getServerBaseUrl());
+    setNextRestResponseRaw("<html><body>Bad Gateway</body></html>", contentType = "text/html");
+    ListTaskPushNotificationConfigsResponse|Error result = c->listTaskPushNotificationConfigs({taskId: "task-1"});
+    test:assertTrue(result is InvalidAgentResponseError,
+            "an unparseable 2xx body must not be silently read as an empty success");
+}
+
+// DeleteTaskPushNotificationConfig returns google.protobuf.Empty over the
+// wire, so it alone tolerates an absent/unparseable body on a 2xx.
+@test:Config {}
+function testRestClientDeleteToleratesUnparseableEmptyBody() returns error? {
+    HttpClient c = check new (getServerBaseUrl());
+    setNextRestResponseRaw("", contentType = "text/plain");
+    Error? result = c->deleteTaskPushNotificationConfig({taskId: "task-1", id: "cfg-1"});
+    test:assertTrue(result is (), "DELETE's empty-body success must still be tolerated");
+}
+
+// Finding 35: ProtoJSON treats an explicit `null` on an optional field
+// the same as the field being absent, and accepts an enum's integer
+// ordinal as well as its name (specification 5.5). Both reference
+// clients already read a conforming server this leniently.
+@test:Config {}
+function testRestClientAcceptsNullHistoryAndMetadataOnATask() returns error? {
+    HttpClient c = check new (getServerBaseUrl());
+    json taskJson = defaultTaskJson();
+    map<json> withNulls = <map<json>>taskJson.clone();
+    withNulls["history"] = null;
+    withNulls["metadata"] = null;
+    setNextRestResponse(withNulls);
+    Task result = check c->getTask({id: "task-123"});
+    test:assertEquals(result.history, ());
+    test:assertEquals(result.metadata, ());
+}
+
+@test:Config {}
+function testRestClientAcceptsIntegerTaskState() returns error? {
+    HttpClient c = check new (getServerBaseUrl());
+    map<json> taskWithIntState = <map<json>>defaultTaskJson().clone();
+    map<json> status = <map<json>>(<map<json>>taskWithIntState["status"]).clone();
+    status["state"] = 3; // TASK_STATE_COMPLETED's ordinal
+    taskWithIntState["status"] = status;
+    setNextRestResponse(taskWithIntState);
+    Task result = check c->getTask({id: "task-123"});
+    test:assertEquals(result.status.state, TASK_STATE_COMPLETED);
+}
+
 // A tenant becomes a path prefix on this binding, not just a body field.
 @test:Config {}
 function testRestClientPrefixesPathWithTenant() returns error? {

@@ -97,6 +97,11 @@ type MockRestScript record {|
     // How long the mock waits before responding, for exercising
     // http:ClientConfiguration.timeout passthrough.
     decimal delaySeconds = 0;
+    // Finding 34: a body that isn't valid JSON at all (a truncated
+    // stream, an HTML error page) rather than well-formed JSON with the
+    // wrong shape. () means send jsonBody as normal.
+    string? rawBody = ();
+    string rawContentType = "application/json";
 |};
 
 isolated MockRestScript restScript = {};
@@ -106,6 +111,16 @@ isolated MockRestScript restScript = {};
 public isolated function setNextRestResponse(json body, int statusCode = 200, boolean hasResponseBody = true) {
     lock {
         restScript = {jsonBody: body.clone(), statusCode, hasResponseBody};
+    }
+}
+
+// Scripts the next REST request to receive a 2xx whose body is not valid
+// JSON at all — a truncated stream or an HTML error page, e.g. — rather
+// than well-formed JSON of the wrong shape. Finding 34.
+//
+public isolated function setNextRestResponseRaw(string body, string contentType = "application/json", int statusCode = 200) {
+    lock {
+        restScript = {statusCode, rawBody: body, rawContentType: contentType};
     }
 }
 
@@ -615,7 +630,11 @@ service / on mockListener {
         }
 
         http:Response res = new;
-        if script.isSse {
+        if script.rawBody is string {
+            res.statusCode = script.statusCode;
+            res.setTextPayload(<string>script.rawBody, contentType = script.rawContentType);
+            check caller->respond(res);
+        } else if script.isSse {
             // caller->respond() with a raw stream defaults POST responses
             // to 201; the Client checks for exactly 200, so set it explicitly.
             res.statusCode = 200;

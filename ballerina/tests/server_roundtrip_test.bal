@@ -2053,6 +2053,29 @@ function testUnknownPathIs404NotFound() returns error? {
     test:assertTrue(resp.getContentType().startsWith("application/a2a+json"));
 }
 
+// Finding 37: the proto's `{id=*}` matches exactly one path segment, so a
+// slash in what would otherwise be the id names no A2A operation at all --
+// found because a real client's legacy fallback called GET on a `:subscribe`
+// path and hit this via a different route. Previously served as a lookup
+// for a task literally named "a/b/c" (a 404 either way, since no such task
+// exists, but the wrong reason and route).
+@test:Config {}
+function testTaskIdWithASlashIs404NotACrossSegmentLookup() returns error? {
+    http:Client raw = check new (serverUrl);
+
+    http:Response getResp = check raw->get("/tasks/a/b/c", {"A2A-Version": "1.0"});
+    test:assertEquals(getResp.statusCode, 404);
+    test:assertEquals(check reasonOf(getResp), "METHOD_NOT_FOUND");
+
+    http:Response cancelResp = check raw->post("/tasks/a/b:cancel", (), {"A2A-Version": "1.0"});
+    test:assertEquals(cancelResp.statusCode, 404);
+    test:assertEquals(check reasonOf(cancelResp), "METHOD_NOT_FOUND");
+
+    http:Response subscribeResp = check raw->get("/tasks/a/b:subscribe", {"A2A-Version": "1.0"});
+    test:assertEquals(subscribeResp.statusCode, 404);
+    test:assertEquals(check reasonOf(subscribeResp), "METHOD_NOT_FOUND");
+}
+
 @test:Config {}
 function testUnknownPushConfigSubRouteIs404() returns error? {
     // The second place a path can fall through: under a task's push-config
