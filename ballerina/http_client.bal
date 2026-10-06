@@ -451,7 +451,7 @@ public isolated client class HttpClient {
     #            unreachable token endpoint)
     public isolated function init(AgentCard|string agent, *ClientConfiguration config) returns Error? {
         AgentCard card = agent is string
-            ? check resolveAgentCard(agent, config.clientConfig, config.headers)
+            ? check resolveAgentCard(agent, config.headers, clientConfig = config.clientConfig)
             : agent;
         string serviceUrl = check primaryUrl(card, HTTP_JSON);
         string? effectiveTenant = config.tenant;

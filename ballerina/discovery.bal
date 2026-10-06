@@ -192,8 +192,8 @@ isolated function stripTrailingSlash(string url) returns string {
 #            an OAuth2 token that cannot be obtained
 isolated function fetchAgentCardBody(
         string agentBaseUrl,
-        http:ClientConfiguration clientConfig = {},
-        map<string> headers = {}) returns json|Error {
+        map<string> headers = {},
+        *http:ClientConfiguration clientConfig) returns json|Error {
     http:Client discoveryClient = check newHttpClient(stripTrailingSlash(agentBaseUrl), clientConfig);
     map<string> reqHeaders = {[A2A_VERSION_HEADER]: A2A_VERSION};
     foreach [string, string] [k, v] in headers.entries() {
@@ -237,9 +237,9 @@ isolated function fetchAgentCardBody(
 #            obtained (a wrong client secret, an unreachable token endpoint)
 public isolated function resolveAgentCard(
         string agentBaseUrl,
-        http:ClientConfiguration clientConfig = {},
-        map<string> headers = {}) returns AgentCard|Error {
-    json body = check fetchAgentCardBody(agentBaseUrl, clientConfig, headers);
+        map<string> headers = {},
+        *http:ClientConfiguration clientConfig) returns AgentCard|Error {
+    json body = check fetchAgentCardBody(agentBaseUrl, headers, clientConfig = clientConfig);
     return parseAgentCardBody(body);
 }
 

@@ -93,7 +93,8 @@ function testHttpClientFromUrlRefusedTokenIsATypedError() returns error? {
 
 @test:Config {}
 function testResolveAgentCardRefusedTokenIsATypedError() returns error? {
-    AgentCard|Error card = resolveAgentCard(tokenStubUrl, oauthConfig(tokenStubUrl + "/token", "wrong-secret"));
+    AgentCard|Error card = resolveAgentCard(tokenStubUrl,
+            clientConfig = oauthConfig(tokenStubUrl + "/token", "wrong-secret"));
     test:assertTrue(card is InternalError, "resolveAgentCard promises a typed error");
 }
 
@@ -102,6 +103,7 @@ function testHttpClientRightSecretStillConstructs() returns error? {
     // The happy path, so the trap is not swallowing a working configuration.
     HttpClient c = check new (cardAt(tokenStubUrl), clientConfig = oauthConfig(tokenStubUrl + "/token", "right-secret"));
     test:assertTrue(c is HttpClient);
-    AgentCard card = check resolveAgentCard(tokenStubUrl, oauthConfig(tokenStubUrl + "/token", "right-secret"));
+    AgentCard card = check resolveAgentCard(tokenStubUrl,
+            clientConfig = oauthConfig(tokenStubUrl + "/token", "right-secret"));
     test:assertEquals(card.name, "n");
 }

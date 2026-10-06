@@ -287,7 +287,7 @@ public isolated class Listener {
         lock {
             self.dispatcher = dispatcherService;
         }
-        error? result = self.httpListener.attach(dispatcherService, "/");
+        error? result = self.httpListener.attach(dispatcherService);
         if result is error {
             return wrapTransportError(result);
         }
