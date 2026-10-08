@@ -29,6 +29,7 @@
 // handler is constructed by developers, but driven only by this package's
 // own listeners.
 
+import ballerina/log;
 import ballerina/time;
 import ballerina/uuid;
 
@@ -539,6 +540,10 @@ public isolated class DefaultHandler {
                     string `onMessage returned without driving the task to a state for ${taskId}`);
         }
         if failure is Error {
+            // The agent's own failure, which otherwise only reaches the
+            // caller: logged so it is visible on the server too.
+            log:printError("A2A agent failed to handle a message; the task is marked FAILED", 'error = failure,
+                    taskId = taskId);
             Message failMessage = {
                 messageId: uuid:createType4AsString(),
                 role: ROLE_AGENT,
@@ -1079,8 +1084,11 @@ public isolated class DefaultHandler {
             Error? deliveryResult = self.pushSender.send(config, task);
             if deliveryResult is Error {
                 // Fire-and-forget: a delivery failure must not fail the
-                // operation that triggered it, so it is deliberately
-                // dropped here rather than propagated.
+                // operation that triggered it, so it is logged here rather
+                // than propagated. The config's token and credentials are
+                // never logged (specification section 13.4).
+                log:printWarn("A2A push notification delivery failed", 'error = deliveryResult,
+                        taskId = taskId, configId = config?.id ?: "", state = task.status.state);
             }
         }
     }

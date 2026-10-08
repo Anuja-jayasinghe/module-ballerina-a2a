@@ -36,6 +36,7 @@
 // the response, rather than one return type per operation.
 
 import ballerina/http;
+import ballerina/log;
 import ballerina/time;
 
 # The A2A protocol version this server implements.
@@ -112,6 +113,7 @@ isolated service class DispatcherService {
             string|http:HeaderNotFoundError authorization = req.getHeader(AUTHORIZATION_HEADER);
             string|AuthFailure authenticated = authenticator.authenticate(authorization is string ? authorization : ());
             if authenticated is AuthFailure {
+                logAuthFailure(authenticated, method, rawPath, authorization is string ? schemeOf(authorization) : ());
                 return toAuthErrorResponse(authenticated, authenticator.challengeHeaders());
             }
             identity = authenticated;
@@ -635,6 +637,25 @@ class SseFramingGenerator {
     public isolated function close() returns error? {
         return self.events.close();
     }
+}
+
+# Logs a request that authentication refused, per
+# [specification section 13.4](https://a2a-protocol.org/latest/specification/#134-general-security-best-practices):
+# agents SHOULD log authentication failures and authorization denials. Never
+# the credential itself -- only the scheme it was presented under.
+#
+# + failure - Why the request was not admitted
+# + method - The HTTP method
+# + path - The request path
+# + scheme - The credential scheme presented, lower-cased, or `()` if none was
+isolated function logAuthFailure(AuthFailure failure, string method, string path, string? scheme) {
+    if failure.forbidden {
+        log:printWarn("A2A request denied: the caller lacks a required scope", method = method, path = path,
+                requiredScopes = ", ".'join(...failure.requiredScopes));
+        return;
+    }
+    log:printWarn("A2A request rejected: missing or invalid credentials", method = method, path = path,
+            scheme = scheme ?: "none");
 }
 
 # Reads the tenant a card declares on its HTTP+JSON interface, or `()`.
