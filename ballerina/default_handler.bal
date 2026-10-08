@@ -30,7 +30,6 @@
 // own listeners.
 
 import ballerina/log;
-import ballerina/time;
 import ballerina/uuid;
 
 # What `DefaultHandler.resolveTaskForSend` hands `sendMessage`/
@@ -392,7 +391,7 @@ public isolated class DefaultHandler {
             Task seed = {
                 id: taskId,
                 contextId,
-                status: {state: TASK_STATE_SUBMITTED, timestamp: time:utcToString(time:utcNow())},
+                status: {state: TASK_STATE_SUBMITTED, timestamp: currentTimestamp()},
                 history: [request.message.clone()]
             };
             return {taskId, contextId, seed, isNewTask: true};
@@ -869,7 +868,7 @@ public isolated class DefaultHandler {
                 + string `and cannot be canceled`;
             return error TaskNotCancelableError(msg, message = msg, code = -32002);
         }
-        task.status = {state: TASK_STATE_CANCELED, timestamp: time:utcToString(time:utcNow())};
+        task.status = {state: TASK_STATE_CANCELED, timestamp: currentTimestamp()};
         Error? putResult = self.store.put(task, owner);
         if putResult is Error {
             // The task the check above read is no longer the task the store

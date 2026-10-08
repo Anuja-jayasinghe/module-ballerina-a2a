@@ -1217,6 +1217,25 @@ isolated function badRequestFieldOf(json[] details) returns string|error {
     return error("no google.rpc.BadRequest entry");
 }
 
+// Specification 5.6.1: timestamps are ISO 8601 in UTC, and millisecond
+// precision SHOULD be used (a whole second MAY omit the fraction).
+@test:Config {}
+function testServerRoundTripStatusTimestampsUseMillisecondPrecision() returns error? {
+    Client c = check echoClient();
+    Task created = <Task>check c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "what time is it"}]}
+    });
+    Task canceledTarget = <Task>check c->sendMessage({
+        message: {messageId: "m2", role: ROLE_USER, parts: [{text: "ask"}]}
+    });
+    Task canceled = check c->cancelTask({id: canceledTarget.id});
+    foreach Task task in [created, canceled] {
+        string timestamp = task.status?.timestamp ?: "";
+        test:assertTrue(re `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$`.isFullMatch(timestamp),
+                string `"${timestamp}" must be UTC with millisecond precision`);
+    }
+}
+
 // Specification 3.2.4: at historyLength 0 the `history` field SHOULD be
 // omitted, not sent as an empty array -- on getTask and listTasks alike.
 @test:Config {}

@@ -203,7 +203,7 @@ public isolated client class TaskUpdater {
     # + message - An optional status message
     # + return - An `a2a:Error` if the store rejected the transition
     private isolated function transition(TaskState state, Message? message) returns Error? {
-        TaskStatus status = {state, timestamp: time:utcToString(time:utcNow())};
+        TaskStatus status = {state, timestamp: currentTimestamp()};
         if message is Message {
             status.message = message;
         }
@@ -268,3 +268,11 @@ public isolated client class TaskUpdater {
     }
 
 }
+
+
+# The current time as a status timestamp: ISO 8601 in UTC, at millisecond
+# precision, which [specification section 5.6.1](https://a2a-protocol.org/latest/specification/#561-timestamps)
+# says SHOULD be used. `time:utcNow()` alone carries microseconds.
+#
+# + return - The timestamp, e.g. `2026-10-08T09:23:05.617Z`
+isolated function currentTimestamp() returns string => time:utcToString(time:utcNow(3));
