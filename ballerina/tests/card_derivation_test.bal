@@ -134,6 +134,20 @@ function testDerivedSecurityIsOnTheExtendedCardToo() returns error? {
     test:assertEquals(requirementsOf(card), <json>[{"schemes": {"bearerAuth": {"list": []}}}]);
 }
 
+// Specification 13.3: the extended card SHOULD carry appropriate caching
+// headers. It is only for authenticated callers, so no shared cache may keep
+// it; the public card stays cacheable by anyone.
+@test:Config {}
+function testTheExtendedCardIsPrivatelyCacheable() returns error? {
+    string token = check bearerToken("alice");
+    http:Response extended = check authCall(JWT_AUTH_TEST_PORT, "GET", "/extendedAgentCard", "Bearer " + token);
+    test:assertEquals(extended.statusCode, 200);
+    test:assertEquals(check extended.getHeader("Cache-Control"), "private, max-age=300");
+
+    http:Response publicCard = check authCall(JWT_AUTH_TEST_PORT, "GET", "/.well-known/agent-card.json", ());
+    test:assertEquals(check publicCard.getHeader("Cache-Control"), "max-age=300");
+}
+
 @test:Config {}
 function testNoAuthDerivesNothing() returns error? {
     map<json> card = check servedCardOf(SERVER_TEST_PORT);

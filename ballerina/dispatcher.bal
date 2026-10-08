@@ -327,7 +327,7 @@ isolated service class DispatcherService {
             }
             ["GET", "/extendedAgentCard"] => {
                 AgentCard extended = check servedExtendedCard(self.extendedCard);
-                return cardHttpResponse(self.cardWithInterfaceUrl(extended, req));
+                return cardHttpResponse(self.cardWithInterfaceUrl(extended, req), authenticated = true);
             }
             ["GET", "/tasks"] => {
                 ListTasksRequest filter = check queryToListFilter(req);
@@ -696,11 +696,19 @@ const int AGENT_CARD_CACHE_MAX_AGE_SECONDS = 300;
 # sufficient since a served card's `version` is the developer's own,
 # presumed to change whenever the card's definition does.
 #
+# The extended card is marked `private`: it is served only to an
+# authenticated caller, and section 13.3 asks for "appropriate caching
+# headers" for it. `private` keeps a shared cache (a proxy or CDN) from
+# storing it for other callers, whatever that cache's policy on
+# `Authorization`-bearing requests.
+#
 # + card - The card to serve
+# + authenticated - Whether this is the extended card, for authenticated callers only
 # + return - The HTTP response carrying it
-isolated function cardHttpResponse(AgentCard card) returns http:Response {
+isolated function cardHttpResponse(AgentCard card, boolean authenticated = false) returns http:Response {
     http:Response response = jsonResponse(encodeAgentCardForWire(card));
-    response.setHeader("Cache-Control", string `max-age=${AGENT_CARD_CACHE_MAX_AGE_SECONDS}`);
+    string scope = authenticated ? "private, " : "";
+    response.setHeader("Cache-Control", string `${scope}max-age=${AGENT_CARD_CACHE_MAX_AGE_SECONDS}`);
     response.setHeader("ETag", string `"${card.version}"`);
     return response;
 }
