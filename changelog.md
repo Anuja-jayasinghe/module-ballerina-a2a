@@ -37,9 +37,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Add `AuthenticationError` (401) and `AuthorizationError` (403), Typed from the `ErrorInfo` Reason or the Bare Status, with an `AuthenticationError` Carrying the `WWW-Authenticate` Challenges; the Server Maps Both to Their Statuses
 - Refuse to Start an `HttpListener` Given a Handler with an `extendedAgentCard` but No `auth`, per Specification Section 13.3 (a Breaking Change for Any Such Configuration)
 - Add `HttpListenerConfiguration.publicUrl`, the Base URL Served as the Card's Interface URL, for a Listener Behind a Proxy or Gateway That Terminates TLS or Rewrites the Host
+- Retry Push-Notification Delivery With Exponential Backoff per Specification Section 13.2, via `PushNotificationSenderConfiguration.retryConfig` (Three Retries, 1, 2 and 4 Seconds Apart, by Default; `()` Sends Once)
+- Attach a `google.rpc.BadRequest` Entry Naming the Field at Fault to Validation Errors, per Specification Section 11.6, With the Field Also in `ErrorInfo.metadata.field`
+- Name the Required Scopes in a 403, in Its Message and in `ErrorInfo.metadata.requiredScopes`, per Specification Section 3.3.2
+- Log Authentication Failures, Authorization Denials, Agent Failures and Undeliverable Push Notifications Through `ballerina/log`, Never Including Credentials, per Specification Section 13.4
 
 ### Fixed
 
+- A Live Stream Now Ends When Its Task Pauses on `TASK_STATE_INPUT_REQUIRED`, per Specification Section 11.7, Instead of Staying Open Until `streamIdleTimeout`; `TASK_STATE_AUTH_REQUIRED` Still Keeps It Open (Section 7.6.1). `EventBroadcasterRegistry.release`'s Second Parameter Is Renamed `terminal` to `closed` to Match (a Breaking Change for a Custom Registry Calling It by Name)
+- `historyLength: 0` Now Omits `history` Entirely, per Specification Section 3.2.4, Instead of Sending an Empty Array
+- `includeArtifacts` Other Than `true`/`false`, and a Non-Numeric `historyLength` on `getTask` or `pageSize` on the Push-Config List, Are Now a `400` Instead of Being Read as `false` or Ignored
+- A Push Notification the Webhook Answers With a Non-2xx Status Is Now a Failed Delivery; It Was Counted as Delivered
+- Status Timestamps Are Now Written at Millisecond Precision, per Specification Section 5.6.1, Instead of Microseconds
+- The Extended Agent Card Is Now Served `Cache-Control: private`, So a Shared Cache Cannot Store It for Other Callers (Specification Section 13.3)
 - Return an `InternalError`, Not a Panic, from `HttpClient` and `resolveAgentCard` When the Initial OAuth2 Token Cannot Be Obtained (a Wrong Client Secret, an Unreachable Token Endpoint)
 - Return an `InternalError` Naming the Entry, Not a Panic, from `HttpListener` When an `auth` Entry Cannot Be Initialised (a JWKS That Cannot Be Preloaded, an Unreachable LDAP Server); the Authenticator Is Now Built Before the HTTP Listener
 - An `HttpListener` Serving TLS Now Advertises an `https` Interface URL in Its Card, Instead of `http`, Which Sent Clients to Plain HTTP on a TLS Port (Specification Section 7.1)
