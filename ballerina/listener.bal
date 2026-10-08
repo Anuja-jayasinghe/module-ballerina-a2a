@@ -14,31 +14,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// The server entry point: a Listener that serves an A2A agent over HTTP+JSON.
+// The HTTP-family transport: a listener that serves an `a2a:DefaultHandler`
+// over the HTTP+JSON (REST) binding. It owns everything about the wire -- the
+// port, TLS, authentication, the address the card advertises, stream
+// keep-alives -- and nothing about the agent itself, which the handler owns.
 
 import ballerina/http;
 
-# Configuration for an `a2a:Listener`.
-public type ListenerConfiguration record {|
+# Configuration for an `a2a:HttpListener`: how requests reach the agent.
+public type HttpListenerConfiguration record {|
     *http:ListenerConfiguration;
-    # The store the server keeps its tasks in. Defaults to an in-memory store
-    # that does not survive a restart; supply an `a2a:TaskStore` of your own
-    # for durable storage.
-    TaskStore taskStore = new InMemoryTaskStore();
-    # The richer card `getExtendedAgentCard` returns to callers who request
-    # it. Unset means the agent does not implement the operation: the
-    # derived card declares `capabilities.extendedAgentCard` false, and a
-    # request for it fails with `a2a:UnsupportedOperationError`.
-    #
-    # Requires `auth`: the operation is for authenticated callers, so a
-    # listener configured with an extended card and no `auth` refuses to start
-    # ([specification section 13.3](https://a2a-protocol.org/latest/specification/#133-extended-agent-card-access-control)).
-    AgentCard? extendedAgentCard = ();
-    # Resolves each request's caller to an owner scope, for task-visibility
-    # scoping per [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping). Unset means every task is
-    # visible to every caller — this server's behavior before this field
-    # existed. See `a2a:TaskOwnerResolver`.
-    TaskOwnerResolver? ownerResolver = ();
     # How callers authenticate, as the same `http:ListenerAuthConfig` entries a
     # service's `@http:ServiceConfig` takes: JWT validation, OAuth2 token
     # introspection, or Basic against a file or LDAP user store, each
@@ -56,21 +41,16 @@ public type ListenerConfiguration record {|
     # The authenticated identity (a JWT's `sub`, the introspected `sub` or
     # `username`, or the Basic username) becomes the task owner scope, so a
     # caller sees only its own tasks ([section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping));
-    # an `ownerResolver`, if configured, takes precedence. Keep the card's
-    # `securitySchemes` in agreement with what is configured here. A card that
-    # declares neither `securitySchemes` nor `securityRequirements` gets both
-    # derived from `auth`: `Bearer` for JWT and OAuth2 entries, `Basic` for file
-    # and LDAP ones, one requirement per entry. Declare them yourself -- for
-    # example an `openIdConnect` scheme with your provider's discovery URL --
-    # and nothing is derived.
+    # a `DefaultHandlerConfiguration.ownerResolver`, if configured, takes
+    # precedence. Keep the card's `securitySchemes` in agreement with what is
+    # configured here. A card that declares neither `securitySchemes` nor
+    # `securityRequirements` gets both derived from `auth`: `Bearer` for JWT and
+    # OAuth2 entries, `Basic` for file and LDAP ones, one requirement per entry.
+    # Declare them yourself -- for example an `openIdConnect` scheme with your
+    # provider's discovery URL -- and nothing is derived.
     #
     # Applies whether `listenTo` is a port or an existing `http:Listener`.
     http:ListenerAuthConfig[]? auth = ();
-    # Delivers task updates to registered push-notification webhooks.
-    # Defaults to `a2a:HttpPushNotificationSender`, a real HTTP POST — unlike
-    # `ownerResolver`, delivery needs no identity this library cannot
-    # invent, so it has a working default rather than an optional hook.
-    PushNotificationSender pushSender = new HttpPushNotificationSender();
     # Seconds a live `sendStreamingMessage`/`subscribeToTask` stream may sit
     # idle — no event, from a task still being driven — before the server
     # ends it. The backstop for a client that disconnects without the HTTP
@@ -90,24 +70,6 @@ public type ListenerConfiguration record {|
     # timeout in play. `0` sends no keep-alives. Keep-alives are not activity:
     # `streamIdleTimeout` still ends a stream nothing is being produced on.
     decimal keepAliveInterval = 15;
-    # Whether the served card advertises `capabilities.streaming`. `true`
-    # by default, since `sendStreamingMessage`/`subscribeToTask` are
-    # always implemented by this listener regardless of what any
-    # individual `onMessage` actually does with the `TaskUpdater` it is
-    # handed. Set `false` only when a deployment deliberately wants to
-    # withhold the capability -- once `false`, both operations are
-    # rejected server-side with `a2a:UnsupportedOperationError`, per
-    # [specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation), the same as a card that never
-    # claimed to support them.
-    boolean streamingCapability = true;
-    # Whether the served card advertises `capabilities.pushNotifications`.
-    # `true` by default, since the push-notification-config operations
-    # and real webhook delivery are always implemented. Set `false` only
-    # when a deployment deliberately wants to withhold the capability --
-    # e.g. no outbound network access for webhooks, or an operator policy
-    # against it -- once `false`, the four config operations are rejected
-    # server-side with `a2a:PushNotificationNotSupportedError`.
-    boolean pushNotificationsCapability = true;
     # The base URL clients reach this agent at, served as the card's HTTP+JSON
     # interface URL, e.g. `https://agents.example.com/travel`. Unset, the URL is
     # built from the request's `Host` header and the scheme this listener really
@@ -124,32 +86,31 @@ public type ListenerConfiguration record {|
     string? publicUrl = ();
 |};
 
-# The `http:ListenerConfiguration` half of a `ListenerConfiguration`: everything
-# left once this package's own fields are taken out.
+# The `http:ListenerConfiguration` half of an `HttpListenerConfiguration`:
+# everything left once this package's own fields are taken out.
 #
-# `ListenerConfiguration` includes `http:ListenerConfiguration`, so a caller can
-# write `new a2a:Listener(9090, agentCard = ..., timeout = 120)`. The listener
-# built for a port used to be created from an empty configuration, silently
-# dropping every one of those fields -- a `timeout`, or a `secureSocket`, had no
-# effect at all.
+# `HttpListenerConfiguration` includes `http:ListenerConfiguration`, so a
+# caller can write `new a2a:HttpListener(9090, handler, timeout = 120)`. The
+# listener built for a port used to be created from an empty configuration,
+# silently dropping every one of those fields -- a `timeout`, or a
+# `secureSocket`, had no effect at all.
 #
 # + config - The full configuration
 # + return - The HTTP listener's own settings
-isolated function httpListenerConfigurationOf(ListenerConfiguration config) returns http:ListenerConfiguration {
-    ListenerConfiguration {
-        taskStore: _, extendedAgentCard: _, ownerResolver: _, auth: _, pushSender: _, streamIdleTimeout: _, keepAliveInterval: _,
-        streamingCapability: _, pushNotificationsCapability: _, publicUrl: _, ...httpConfig
+isolated function httpListenerConfigurationOf(HttpListenerConfiguration config) returns http:ListenerConfiguration {
+    HttpListenerConfiguration {
+        auth: _, streamIdleTimeout: _, keepAliveInterval: _, publicUrl: _, ...httpConfig
     } = config;
     return {...httpConfig};
 }
 
-# Serves an A2A agent over the HTTP+JSON binding.
+# Serves an `a2a:DefaultHandler` over the HTTP+JSON (REST) binding.
 #
-# Construct it with the agent's `a2a:AgentCard` and a port (or an existing
-# `http:Listener`), then attach an `a2a:Service`:
+# Build the agent's handler, give it to the listener, and attach the agent's
+# `a2a:Service`:
 #
 # ```ballerina
-# listener a2a:Listener agent = new (9090, agentCard = {
+# final a2a:DefaultHandler handler = new ({
 #     name: "Weather Agent",
 #     description: "Answers weather questions",
 #     version: "1.0.0",
@@ -159,55 +120,62 @@ isolated function httpListenerConfigurationOf(ListenerConfiguration config) retu
 #     capabilities: {},         // derived by the listener
 #     supportedInterfaces: []   // derived by the listener
 # });
+#
+# listener a2a:HttpListener agent = new (9090, handler);
+#
+# service a2a:Service on agent {
+#     isolated remote function onMessage(a2a:RequestContext context, a2a:TaskUpdater updater)
+#             returns a2a:Message|a2a:Error? {
+#         // the agent's logic
+#     }
+# }
 # ```
 #
 # The listener serves the card at `/.well-known/agent-card.json`, fills in its
 # `supportedInterfaces` with the HTTP+JSON entry at its own address, and
 # overrides the capability flags to what is implemented and enabled — so a
 # card cannot advertise a capability the server does not provide, or does not
-# accept (see `ListenerConfiguration.streamingCapability`/
+# accept (see `DefaultHandlerConfiguration.streamingCapability`/
 # `pushNotificationsCapability` for deliberately withholding one this listener
 # does implement). Pass `capabilities: {}` and `supportedInterfaces: []` as
 # placeholders; they are replaced.
-public isolated class Listener {
+#
+# A service chooses its binding with `@a2a:ServiceConfig`; this listener serves
+# `a2a:REST`, the default.
+public isolated class HttpListener {
     private final http:Listener httpListener;
+    private final DefaultHandler handler;
     private final AgentCard & readonly card;
-    private final TaskStore store;
     private final (AgentCard & readonly)? extendedCard;
-    private final TaskOwnerResolver? ownerResolver;
     private final ListenerAuthenticator? authenticator;
-    private final PushNotificationSender pushSender;
-    private final decimal streamIdleTimeout;
-    private final decimal keepAliveInterval;
+    private final StreamTiming & readonly streamTiming;
     // What the served card's interface URL is built from: the scheme this
     // listener really serves, and the explicit public URL if one was configured.
     private final string interfaceScheme;
     private final string? publicUrl;
     private DispatcherService? dispatcher = ();
 
-    # Creates a Listener.
+    # Creates an HttpListener.
     #
     # + listenTo - A port, or an existing `http:Listener` to mount on
-    # + agentCard - The agent's card; `supportedInterfaces` and `capabilities`
-    #               are derived, so a caller supplies identity, skills, and I/O
-    #               modes
-    # + config - Listener configuration, including the task store and the
-    #            extended card. Given a port, its `http:ListenerConfiguration`
-    #            fields (`timeout`, `secureSocket`, `host`, ...) configure the
-    #            listener that is created; given an existing `http:Listener`,
-    #            that listener was configured when it was built, so they have
-    #            nothing to apply to and are ignored.
-    # + return - An `a2a:Error` if the card is invalid, the HTTP listener
-    #            cannot be created, or an `auth` entry cannot be initialised
-    #            (for example a JWKS that cannot be preloaded, or an LDAP
-    #            server that cannot be reached)
-    public isolated function init(int|http:Listener listenTo, AgentCard agentCard,
-            *ListenerConfiguration config) returns Error? {
+    # + handler - The agent's handler, which this listener serves
+    # + config - How requests reach the agent. Given a port, its
+    #            `http:ListenerConfiguration` fields (`timeout`, `secureSocket`,
+    #            `host`, ...) configure the listener that is created; given an
+    #            existing `http:Listener`, that listener was configured when it
+    #            was built, so they have nothing to apply to and are ignored.
+    # + return - An `a2a:Error` if the handler has an extended card but no
+    #            `auth` is configured, `publicUrl` is unusable, the HTTP listener
+    #            cannot be created, or an `auth` entry cannot be initialised (for
+    #            example a JWKS that cannot be preloaded, or an LDAP server that
+    #            cannot be reached)
+    public isolated function init(int|http:Listener listenTo, DefaultHandler handler,
+            *HttpListenerConfiguration config) returns Error? {
         // Refused before anything is bound: [specification section 13.3](https://a2a-protocol.org/latest/specification/#133-extended-agent-card-access-control)
         // says `GetExtendedAgentCard` MUST require authentication, so a
         // listener that would serve it to anyone must not start.
-        if config.extendedAgentCard is AgentCard && config.auth is () {
-            string msg = "ListenerConfiguration.extendedAgentCard requires ListenerConfiguration.auth: "
+        if handler.extendedAgentCard is AgentCard && config.auth is () {
+            string msg = "DefaultHandlerConfiguration.extendedAgentCard requires HttpListenerConfiguration.auth: "
                 + "the extended agent card is for authenticated callers (specification section 13.3)";
             return error InternalError(msg, message = msg);
         }
@@ -224,7 +192,8 @@ public isolated class Listener {
         http:ListenerAuthConfig[]? auth = config.auth;
         if auth is http:ListenerAuthConfig[] {
             if auth.length() == 0 {
-                string msg = "ListenerConfiguration.auth must contain at least one entry; leave it unset for no authentication";
+                string msg = "HttpListenerConfiguration.auth must contain at least one entry; "
+                    + "leave it unset for no authentication";
                 return error InternalError(msg, message = msg);
             }
             self.authenticator = check new (auth.cloneReadOnly());
@@ -243,8 +212,7 @@ public isolated class Listener {
         // The scheme comes from the HTTP listener itself, so it is right for a
         // port and for an `http:Listener` passed in.
         self.interfaceScheme = self.httpListener.getConfig().secureSocket is () ? "http" : "https";
-        self.store = config.taskStore;
-        AgentCard? extended = config.extendedAgentCard;
+        self.handler = handler;
         // The extended card goes through deriveServedCard too, not just
         // withDerivedSecurity, for the same reason the public card does: it
         // must not advertise a capability the server does not provide. Left
@@ -258,32 +226,42 @@ public isolated class Listener {
         // actually supports. `extendedCardConfigured: true` here (not
         // `self.extendedCard is AgentCard`, which is what the public card
         // uses): the extended card, being itself, has one configured.
+        //
+        // Derived here, per listener, rather than once on the handler: the
+        // security schemes come from this listener's `auth`.
+        AgentCard? extended = handler.extendedAgentCard;
         self.extendedCard = extended is AgentCard
-            ? deriveServedCard(withDerivedSecurity(extended, config.auth), true,
-                    config.streamingCapability, config.pushNotificationsCapability).cloneReadOnly()
+            ? deriveServedCard(withDerivedSecurity(extended, auth), true,
+                    handler.streamingCapability, handler.pushNotificationsCapability).cloneReadOnly()
             : ();
-        self.card = deriveServedCard(withDerivedSecurity(agentCard, config.auth), self.extendedCard is AgentCard,
-                config.streamingCapability, config.pushNotificationsCapability).cloneReadOnly();
-        self.ownerResolver = config.ownerResolver;
-        self.pushSender = config.pushSender;
-        self.streamIdleTimeout = config.streamIdleTimeout;
-        self.keepAliveInterval = config.keepAliveInterval;
+        self.card = deriveServedCard(withDerivedSecurity(handler.agentCard, auth), self.extendedCard is AgentCard,
+                handler.streamingCapability, handler.pushNotificationsCapability).cloneReadOnly();
+        self.streamTiming = {idleTimeout: config.streamIdleTimeout, keepAliveInterval: config.keepAliveInterval};
     }
 
-    # Attaches an `a2a:Service` to serve.
+    # Attaches the agent's `a2a:Service`.
     #
     # One service per listener in this release. The service's `onMessage` is
-    # the agent's logic; the listener runs the rest of the protocol around it.
+    # the agent's logic; the listener's `a2a:DefaultHandler` runs the rest of
+    # the protocol around it. The service is bound to that handler, so every
+    # listener given the same handler must attach this same service.
     #
-    # + a2aService - The service to serve
+    # + a2aService - The service to serve; `@a2a:ServiceConfig` chooses its
+    #                binding
     # + name - Ignored; the A2A paths are fixed by the specification
-    # + return - An `a2a:Error` if attachment fails
+    # + return - An `a2a:Error` if the service asks for a binding this listener
+    #            does not serve, the handler already serves a different
+    #            service, or attachment fails
     public isolated function attach(Service a2aService, string[]|string? name = ()) returns error? {
-        InMemoryEventBroadcasterRegistry registry = new;
-        DefaultHandler handler = new (a2aService, self.store, self.extendedCard, self.pushSender, registry,
-                self.streamIdleTimeout, self.keepAliveInterval, self.card.capabilities.pushNotifications);
-        DispatcherService dispatcherService = new (self.card, handler, self.ownerResolver, self.authenticator,
-                self.interfaceScheme, self.publicUrl);
+        Protocol protocol = serviceConfigurationOf(a2aService).protocol;
+        if protocol != REST {
+            string msg = string `@a2a:ServiceConfig protocol ${protocol} is not supported yet: `
+                + "a2a:HttpListener serves only a2a:REST (HTTP+JSON)";
+            return error InternalError(msg, message = msg);
+        }
+        check self.handler.bindService(a2aService);
+        DispatcherService dispatcherService = new (self.card, self.extendedCard, self.handler, self.authenticator,
+                self.interfaceScheme, self.publicUrl, self.streamTiming);
         lock {
             self.dispatcher = dispatcherService;
         }
@@ -352,7 +330,7 @@ public isolated class Listener {
 # CRUD operations plus real webhook delivery via the configured
 # `a2a:PushNotificationSender`, `a2a:HttpPushNotificationSender` by default)
 # are always *implemented*, but each is only *advertised* -- and, correspondingly,
-# only accepted server-side -- when its `ListenerConfiguration` flag is left at
+# only accepted server-side -- when its `DefaultHandlerConfiguration` flag is left at
 # its `true` default; a deployment that sets one `false` gets that capability
 # rejected server-side exactly as if this listener had never implemented it,
 # never a card that quietly claims something the server then refuses. Extended
@@ -366,14 +344,16 @@ public isolated class Listener {
 # capabilities it fully owns.
 #
 # + supplied - The card the developer passed
-# + extendedCardConfigured - Whether `ListenerConfiguration.extendedAgentCard`
+# + extendedCardConfigured - Whether `DefaultHandlerConfiguration.extendedAgentCard`
 #                            was set
-# + streamingCapability - `ListenerConfiguration.streamingCapability`
-# + pushNotificationsCapability - `ListenerConfiguration.pushNotificationsCapability`
+# + streamingCapability - `DefaultHandlerConfiguration.streamingCapability`
+# + pushNotificationsCapability - `DefaultHandlerConfiguration.pushNotificationsCapability`
 # + return - The card to serve
 isolated function deriveServedCard(AgentCard supplied, boolean extendedCardConfigured,
         boolean streamingCapability, boolean pushNotificationsCapability) returns AgentCard {
-    AgentCard card = supplied.clone();
+    // A mutable top level even when `supplied` is readonly, as a handler's card is:
+    // `clone()` alone returns an immutable value unchanged.
+    AgentCard card = {...supplied.clone()};
     card.supportedInterfaces = [
         {url: "", protocolBinding: HTTP_JSON, protocolVersion: A2A_PROTOCOL_VERSION}
     ];
@@ -388,7 +368,7 @@ isolated function deriveServedCard(AgentCard supplied, boolean extendedCardConfi
 
 # Checks a configured public URL and puts it in the form the card serves.
 #
-# + url - `ListenerConfiguration.publicUrl`
+# + url - `HttpListenerConfiguration.publicUrl`
 # + return - The URL without a trailing slash, or an `a2a:InternalError` if it
 #            is not an absolute `http://` or `https://` URL with a host and no
 #            query or fragment
@@ -413,6 +393,6 @@ isolated function normalisePublicUrl(string url) returns string|Error {
 }
 
 isolated function invalidPublicUrl(string url, string reason) returns Error {
-    string msg = string `ListenerConfiguration.publicUrl "${url}" is not usable: ${reason}`;
+    string msg = string `HttpListenerConfiguration.publicUrl "${url}" is not usable: ${reason}`;
     return error InternalError(msg, message = msg);
 }

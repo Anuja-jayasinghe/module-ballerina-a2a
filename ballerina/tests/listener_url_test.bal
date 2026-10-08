@@ -29,11 +29,15 @@ const int PUBLIC_URL_TEST_PORT = 19264;
 const string TEST_CERT = "tests/resources/localhost.crt";
 const string TEST_KEY = "tests/resources/localhost.key";
 
-listener Listener tlsUrlListener = new (TLS_URL_TEST_PORT, agentCard = authTestCard,
+final DefaultHandler tlsUrlHandler = new (authTestCard);
+
+listener HttpListener tlsUrlListener = new (TLS_URL_TEST_PORT, tlsUrlHandler,
     secureSocket = {key: {certFile: TEST_CERT, keyFile: TEST_KEY}}
 );
 
-listener Listener publicUrlListener = new (PUBLIC_URL_TEST_PORT, agentCard = authTestCard,
+final DefaultHandler publicUrlHandler = new (authTestCard);
+
+listener HttpListener publicUrlListener = new (PUBLIC_URL_TEST_PORT, publicUrlHandler,
     publicUrl = "https://agents.example.com/travel/"
 );
 
@@ -77,7 +81,7 @@ function testPublicUrlIsNormalisedAndValidated() returns error? {
 
 @test:Config {}
 function testListenerRefusesAnUnusablePublicUrl() {
-    Listener|Error created = new (19265, agentCard = authTestCard, publicUrl = "ftp://agents.example.com");
+    HttpListener|Error created = new (19265, new DefaultHandler(authTestCard), publicUrl = "ftp://agents.example.com");
     test:assertTrue(created is InternalError);
     if created is Error {
         test:assertTrue(created.message().includes("ListenerConfiguration.publicUrl"), created.message());

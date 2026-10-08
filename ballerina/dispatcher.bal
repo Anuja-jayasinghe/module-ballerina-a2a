@@ -51,20 +51,23 @@ isolated service class DispatcherService {
     *http:Service;
 
     private final AgentCard & readonly card;
+    private final (AgentCard & readonly)? extendedCard;
     private final DefaultHandler handler;
-    private final TaskOwnerResolver? ownerResolver;
     private final ListenerAuthenticator? authenticator;
     private final string interfaceScheme;
     private final string? publicUrl;
+    private final StreamTiming & readonly streamTiming;
 
-    isolated function init(AgentCard card, DefaultHandler handler, TaskOwnerResolver? ownerResolver,
-            ListenerAuthenticator? authenticator = (), string interfaceScheme = "http", string? publicUrl = ()) {
+    isolated function init(AgentCard card, (AgentCard & readonly)? extendedCard, DefaultHandler handler,
+            ListenerAuthenticator? authenticator = (), string interfaceScheme = "http", string? publicUrl = (),
+            StreamTiming streamTiming = {}) {
         self.card = card.cloneReadOnly();
+        self.extendedCard = extendedCard;
         self.handler = handler;
-        self.ownerResolver = ownerResolver;
         self.authenticator = authenticator;
         self.interfaceScheme = interfaceScheme;
         self.publicUrl = publicUrl;
+        self.streamTiming = streamTiming.cloneReadOnly();
     }
 
     isolated resource function get [string... path](http:Request req)
@@ -133,21 +136,12 @@ isolated service class DispatcherService {
         [string, string?] [path, tenant] = routed;
 
         // Resolved once per request, after the tenant is known (a resolver
-        // may want it) and before any operation runs. `()` when no resolver
-        // is configured -- every task stays in the one shared, unscoped
-        // pool this server has always used.
-        string? owner;
-        TaskOwnerResolver? resolver = self.ownerResolver;
-        if resolver is TaskOwnerResolver {
-            string?|Error resolved = resolver.resolveOwner(callerContextOf(req, identity, tenant));
-            if resolved is Error {
-                return toRestErrorResponse(resolved);
-            }
-            owner = resolved;
-        } else {
-            // No resolver: the authenticated identity, if there is one, is
-            // the owner (section 13.1); otherwise the one shared pool.
-            owner = identity;
+        // may want it) and before any operation runs. With no resolver
+        // configured on the handler, the authenticated identity is the owner
+        // (section 13.1); with no `auth` either, the one shared, unscoped pool.
+        string?|Error owner = self.handler.resolveOwner(callerContextOf(req, identity, tenant));
+        if owner is Error {
+            return toRestErrorResponse(owner);
         }
 
         http:Response|stream<http:SseEvent, error?>|Error result = self.route(method, path, tenant, owner, req);
@@ -330,7 +324,7 @@ isolated service class DispatcherService {
                 return self.onSendStreamingMessage(tenant, owner, req);
             }
             ["GET", "/extendedAgentCard"] => {
-                AgentCard extended = check self.handler.getExtendedAgentCard();
+                AgentCard extended = check servedExtendedCard(self.extendedCard);
                 return cardHttpResponse(self.cardWithInterfaceUrl(extended, req));
             }
             ["GET", "/tasks"] => {
@@ -419,7 +413,8 @@ isolated service class DispatcherService {
             return serverStreamingUnsupportedError("sendStreamingMessage");
         }
         SendMessageRequest request = check decodeSendMessageRequest(req.getJsonPayload());
-        stream<StreamResponse, Error?> events = check self.handler.sendStreamingMessage(request, tenant, owner);
+        stream<StreamResponse, Error?> events =
+            check self.handler.sendStreamingMessage(request, tenant, owner, self.streamTiming);
         stream<http:SseEvent, error?> framed = new (new SseFramingGenerator(events));
         return framed;
     }
@@ -436,7 +431,7 @@ isolated service class DispatcherService {
         if !self.card.capabilities.streaming {
             return serverStreamingUnsupportedError("subscribeToTask");
         }
-        stream<StreamResponse, Error?> events = check self.handler.subscribeToTask({id}, owner);
+        stream<StreamResponse, Error?> events = check self.handler.subscribeToTask({id}, owner, self.streamTiming);
         stream<http:SseEvent, error?> framed = new (new SseFramingGenerator(events));
         return framed;
     }
@@ -786,12 +781,34 @@ isolated function queryToListFilter(http:Request req) returns ListTasksRequest|E
 
 # The URL the served card gives clients for this listener.
 #
-# + publicUrl - `ListenerConfiguration.publicUrl`, already normalised, if set
+# + publicUrl - `HttpListenerConfiguration.publicUrl`, already normalised, if set
 # + scheme - `http` or `https`, from what the HTTP listener really serves
 # + host - The request's `Host` header
 # + return - The public URL when configured, otherwise `scheme://host`
 isolated function interfaceUrlFor(string? publicUrl, string scheme, string host) returns string {
     return publicUrl ?: string `${scheme}://${host}`;
+}
+
+# The card `getExtendedAgentCard` serves.
+#
+# Per [specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation), the two failure reasons are
+# distinct: `capabilities.extendedAgentCard` false/absent is
+# `UnsupportedOperationError`; declared `true` but no card actually
+# configured is `ExtendedAgentCardNotConfiguredError`. `deriveServedCard`
+# ties the capability flag 1:1 to whether a card was configured, so the
+# second case can never actually happen here -- an unconfigured card always
+# means the capability reads `false` too, which is the first case.
+#
+# + extendedCard - The listener's derived extended card, or `()` if none is
+#                  configured
+# + return - The extended card, or an UnsupportedOperationError if none was
+#            set up
+isolated function servedExtendedCard((AgentCard & readonly)? extendedCard) returns AgentCard|Error {
+    if extendedCard is AgentCard {
+        return extendedCard;
+    }
+    string msg = "capabilities.extendedAgentCard is false: no extended AgentCard is configured for this agent";
+    return error UnsupportedOperationError(msg, message = msg, code = -32004);
 }
 
 # Builds the transport-free view of a request's caller that an

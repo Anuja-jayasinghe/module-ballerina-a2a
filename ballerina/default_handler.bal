@@ -18,9 +18,16 @@
 //
 // This is the `DefaultRequestHandler` equivalent: the developer's
 // `onMessage` is the only business logic, and this turns its result into the
-// ten operations a client can call. sendMessage creates a task and drives it
+// operations a client can call. sendMessage creates a task and drives it
 // (or passes a direct Message straight back); getTask/cancelTask/listTasks
 // read and mutate through the `TaskStore`.
+//
+// It knows nothing of any transport. A developer builds one per agent and
+// hands it to a listener (`a2a:HttpListener`); the listener owns the wire --
+// authentication, the served card's URLs and security schemes, stream
+// keep-alives -- and calls in here. The operations stay package-private: the
+// handler is constructed by developers, but driven only by this package's
+// own listeners.
 
 import ballerina/time;
 import ballerina/uuid;
@@ -41,8 +48,101 @@ type ResolvedSendTarget record {|
     boolean isNewTask;
 |};
 
-isolated class DefaultHandler {
-    private final Service agentService;
+# Configuration for an `a2a:DefaultHandler`: everything about the agent that
+# does not depend on how requests reach it.
+public type DefaultHandlerConfiguration record {|
+    # The store the server keeps its tasks in. Defaults to an in-memory store
+    # that does not survive a restart; supply an `a2a:TaskStore` of your own
+    # for durable storage.
+    TaskStore taskStore = new InMemoryTaskStore();
+    # The richer card `getExtendedAgentCard` returns to callers who request
+    # it. Unset means the agent does not implement the operation: the
+    # derived card declares `capabilities.extendedAgentCard` false, and a
+    # request for it fails with `a2a:UnsupportedOperationError`.
+    #
+    # Requires authentication: the operation is for authenticated callers, so a
+    # listener given a handler with an extended card and no `auth` refuses to
+    # start ([specification section 13.3](https://a2a-protocol.org/latest/specification/#133-extended-agent-card-access-control)).
+    AgentCard? extendedAgentCard = ();
+    # Resolves each request's caller to an owner scope, for task-visibility
+    # scoping per [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping). Unset, the identity the
+    # listener's `auth` established is the owner, and with no `auth` either,
+    # every task is visible to every caller. Applies to every listener this
+    # handler is given. See `a2a:TaskOwnerResolver`.
+    TaskOwnerResolver? ownerResolver = ();
+    # Delivers task updates to registered push-notification webhooks.
+    # Defaults to `a2a:HttpPushNotificationSender`, a real HTTP POST — unlike
+    # `ownerResolver`, delivery needs no identity this library cannot
+    # invent, so it has a working default rather than an optional hook.
+    PushNotificationSender pushSender = new HttpPushNotificationSender();
+    # Where a task's live events travel to its streaming subscribers. Defaults
+    # to `a2a:InMemoryEventBroadcasterRegistry`, which reaches subscribers in
+    # this process; see `a2a:EventBroadcasterRegistry` for replacing it.
+    EventBroadcasterRegistry eventRegistry = new InMemoryEventBroadcasterRegistry();
+    # Whether the served card advertises `capabilities.streaming`. `true`
+    # by default, since `sendStreamingMessage`/`subscribeToTask` are
+    # always implemented regardless of what any individual `onMessage`
+    # actually does with the `TaskUpdater` it is handed. Set `false` only
+    # when a deployment deliberately wants to withhold the capability --
+    # once `false`, both operations are rejected server-side with
+    # `a2a:UnsupportedOperationError`, per [specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation),
+    # the same as a card that never claimed to support them.
+    boolean streamingCapability = true;
+    # Whether the served card advertises `capabilities.pushNotifications`.
+    # `true` by default, since the push-notification-config operations
+    # and real webhook delivery are always implemented. Set `false` only
+    # when a deployment deliberately wants to withhold the capability --
+    # e.g. no outbound network access for webhooks, or an operator policy
+    # against it -- once `false`, the four config operations are rejected
+    # server-side with `a2a:PushNotificationNotSupportedError`.
+    boolean pushNotificationsCapability = true;
+|};
+
+# How one live stream behaves while nothing is happening: the listener's
+# policy, which the handler applies to each stream it hands out.
+type StreamTiming record {|
+    # Seconds of no events before the stream ends; `0` disables the timeout
+    decimal idleTimeout = 0;
+    # Seconds of no events before the stream sends a keep-alive; `0` sends none
+    decimal keepAliveInterval = 0;
+|};
+
+# Runs the A2A protocol for one agent: its tasks, their lifecycle, live
+# streams, and push-notification configuration.
+#
+# Build one per agent, then give it to a listener, which attaches the
+# agent's `a2a:Service`:
+#
+# ```ballerina
+# final a2a:DefaultHandler handler = new ({
+#     name: "Weather Agent",
+#     description: "Answers weather questions",
+#     version: "1.0.0",
+#     skills: [],
+#     defaultInputModes: ["text"],
+#     defaultOutputModes: ["text"],
+#     capabilities: {},         // derived by the listener
+#     supportedInterfaces: []   // derived by the listener
+# });
+#
+# listener a2a:HttpListener agent = new (9090, handler);
+# ```
+#
+# A handler serves one agent: every listener it is given must attach the same
+# service. Giving it to more than one listener serves the same tasks over each.
+public isolated class DefaultHandler {
+    # The agent's card, as the developer supplied it; each listener derives
+    # what it serves from this
+    final AgentCard & readonly agentCard;
+    # The extended card, as configured, or `()`
+    final (AgentCard & readonly)? extendedAgentCard;
+    # `DefaultHandlerConfiguration.streamingCapability`
+    final boolean streamingCapability;
+    # `DefaultHandlerConfiguration.pushNotificationsCapability`; also gates the
+    # inline config on a send request, which is functionally a Create
+    final boolean pushNotificationsCapability;
+    // Bound when a listener attaches the agent's service; one per handler.
+    private ServiceBinding? binding = ();
     private final TaskStore store;
     // Push-notification config storage: registered, never delivered to (see
     // decision in the server plan -- outbound webhook delivery is a later
@@ -51,45 +151,65 @@ isolated class DefaultHandler {
     // release since there is no delivery mechanism yet for a durable store
     // to matter to.
     private map<map<TaskPushNotificationConfig>> pushConfigs = {};
-    // The richer card `getExtendedAgentCard` returns, if the developer
-    // configured one. `()` means the operation always answers
-    // UnsupportedOperationError -- deriveServedCard already
-    // reflects this in capabilities.extendedAgentCard.
-    private final (AgentCard & readonly)? extendedCard;
+    private final TaskOwnerResolver? ownerResolver;
     private final PushNotificationSender pushSender;
     private final EventBroadcasterRegistry registry;
-    // How long a live tap waits idle before ending its stream -- the
-    // backstop for a client that disconnects without the HTTP layer
-    // surfacing it as a clean stream close. See `ListenerConfiguration.
-    // streamIdleTimeout`.
-    private final decimal streamIdleTimeout;
-    // How long a live stream may go without an event before the server sends a
-    // keep-alive comment frame; `0` sends none. See `ListenerConfiguration.
-    // keepAliveInterval`.
-    private final decimal keepAliveInterval;
-    // Whether the served card's capabilities.pushNotifications is true --
-    // the same gate dispatcher.bal's onPushNotificationConfigs already
-    // applies to the four dedicated config operations (specification
-    // 3.3.4 names Create/Get/List/Delete). The inline config on a
-    // sendMessage/sendStreamingMessage request is functionally a Create
-    // (this library's own design already treats it that way -- "the
-    // spec's own registration channel for this case is inline on the send
-    // request itself"), so it needs the same gate; defaults `true` so
-    // constructing a `DefaultHandler` directly, as several tests already
-    // do, doesn't need updating just to keep working.
-    private final boolean pushNotificationsCapability;
 
-    isolated function init(Service agentService, TaskStore store, (AgentCard & readonly)? extendedCard,
-            PushNotificationSender pushSender, EventBroadcasterRegistry registry, decimal streamIdleTimeout,
-            decimal keepAliveInterval = 0, boolean pushNotificationsCapability = true) {
-        self.agentService = agentService;
-        self.store = store;
-        self.extendedCard = extendedCard;
-        self.pushSender = pushSender;
-        self.registry = registry;
-        self.streamIdleTimeout = streamIdleTimeout;
-        self.keepAliveInterval = keepAliveInterval;
-        self.pushNotificationsCapability = pushNotificationsCapability;
+    # Creates a handler.
+    #
+    # + agentCard - The agent's card; `supportedInterfaces` and `capabilities`
+    #               are derived by each listener, so a caller supplies
+    #               identity, skills, and I/O modes
+    # + config - Where the agent's tasks are kept, who may see them, and what
+    #            the agent advertises
+    public isolated function init(AgentCard agentCard, *DefaultHandlerConfiguration config) {
+        self.agentCard = agentCard.cloneReadOnly();
+        AgentCard? extended = config.extendedAgentCard;
+        self.extendedAgentCard = extended is AgentCard ? extended.cloneReadOnly() : ();
+        self.streamingCapability = config.streamingCapability;
+        self.pushNotificationsCapability = config.pushNotificationsCapability;
+        self.store = config.taskStore;
+        self.ownerResolver = config.ownerResolver;
+        self.pushSender = config.pushSender;
+        self.registry = config.eventRegistry;
+    }
+
+    # Binds the agent's service to this handler, when a listener attaches it.
+    #
+    # The first service binds; the same service again (one agent attached to
+    # several listeners) is accepted; a different one is refused, since a
+    # handler's tasks and card belong to one agent.
+    #
+    # + agentService - The service being attached
+    # + return - An `a2a:InternalError` if a different service is already bound
+    isolated function bindService(Service agentService) returns Error? {
+        lock {
+            ServiceBinding? bound = self.binding;
+            if bound is () {
+                self.binding = new (agentService);
+                return;
+            }
+            if bound.agentService !== agentService {
+                string msg = "this a2a:DefaultHandler already serves a different a2a:Service; "
+                    + "build one DefaultHandler per agent";
+                return error InternalError(msg, message = msg);
+            }
+        }
+    }
+
+    # Resolves a caller's owner scope: the configured `a2a:TaskOwnerResolver`'s
+    # answer, or the authenticated identity when none is configured
+    # ([specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping)).
+    #
+    # + context - Who is calling, as the receiving listener established it
+    # + return - The owner scope, `()` for the shared unscoped pool, or an
+    #            error if the resolver failed
+    isolated function resolveOwner(CallerContext context) returns string?|Error {
+        TaskOwnerResolver? resolver = self.ownerResolver;
+        if resolver is TaskOwnerResolver {
+            return resolver.resolveOwner(context);
+        }
+        return context.identity;
     }
 
     # Handles sendMessage: create a task (or continue an existing one named
@@ -359,7 +479,19 @@ isolated class DefaultHandler {
     # + return - The direct `Message`, the finished `Task`, or an `Error`
     private isolated function driveTask(string taskId, string? owner, RequestContext context, TaskUpdater updater,
             EventBroadcaster broadcaster, boolean isNewTask, boolean returnImmediately) returns Task|Message|Error {
-        Message|Error?|error direct = trap self.agentService->onMessage(context, updater);
+        ServiceBinding? bound;
+        lock {
+            bound = self.binding;
+        }
+        Message|Error?|error direct;
+        if bound is ServiceBinding {
+            direct = trap bound.onMessage(context, updater);
+        } else {
+            // Unreachable through a listener, which binds before it dispatches;
+            // failing the task beats a nil dereference if it ever happens.
+            string msg = "no a2a:Service is attached to this a2a:DefaultHandler";
+            direct = error InternalError(msg, message = msg);
+        }
 
         if direct is Message {
             if returnImmediately {
@@ -565,9 +697,10 @@ isolated class DefaultHandler {
     # + request - The decoded send request
     # + tenant - The tenant the request was routed under, or `()`
     # + owner - The caller's resolved owner scope, or `()`
+    # + timing - The listener's idle-timeout and keep-alive policy for the stream
     # + return - A live stream of the task's events, or an error
-    isolated function sendStreamingMessage(SendMessageRequest request, string? tenant, string? owner)
-            returns stream<StreamResponse, Error?>|Error {
+    isolated function sendStreamingMessage(SendMessageRequest request, string? tenant, string? owner,
+            StreamTiming timing = {}) returns stream<StreamResponse, Error?>|Error {
         check validateReceivedMessage(request.message);
         check validatePushConfigId(request?.configuration?.taskPushNotificationConfig);
         if request?.configuration?.taskPushNotificationConfig is TaskPushNotificationConfig
@@ -601,7 +734,7 @@ isolated class DefaultHandler {
         // Attached before driveTask starts, so nothing it broadcasts can
         // be missed between claiming the driver slot and this tap
         // existing.
-        EventTap tap = broadcaster.newTap(self.streamIdleTimeout, self.keepAliveInterval);
+        EventTap tap = broadcaster.newTap(timing.idleTimeout, timing.keepAliveInterval);
 
         final RequestContext context = {
             message: request.message,
@@ -640,9 +773,10 @@ isolated class DefaultHandler {
     #
     # + request - The task identifier
     # + owner - The caller's resolved owner scope, or `()`
+    # + timing - The listener's idle-timeout and keep-alive policy for the stream
     # + return - The live stream, a TaskNotFoundError, or an
     #            UnsupportedOperationError if the task is already terminal
-    isolated function subscribeToTask(SubscribeToTaskRequest request, string? owner)
+    isolated function subscribeToTask(SubscribeToTaskRequest request, string? owner, StreamTiming timing = {})
             returns stream<StreamResponse, Error?>|Error {
         Task? task = check self.store.get(request.id, owner);
         if task is () {
@@ -655,7 +789,7 @@ isolated class DefaultHandler {
         }
 
         EventBroadcaster broadcaster = self.registry.subscribe(request.id);
-        EventTap tap = broadcaster.newTap(self.streamIdleTimeout, self.keepAliveInterval);
+        EventTap tap = broadcaster.newTap(timing.idleTimeout, timing.keepAliveInterval);
 
         // Re-read after attaching, not the copy from the existence check
         // above -- a driver may have written between the two, and the
@@ -946,26 +1080,28 @@ isolated class DefaultHandler {
             }
         }
     }
+}
 
-    # Handles getExtendedAgentCard.
+# The service a `DefaultHandler` is bound to.
+#
+# A holder rather than a field on the handler itself: the binding happens
+# after construction, so it cannot be a `final` field there, and a remote
+# method call on a service object compiles only through a `final` field of
+# `self` -- not through a local variable, however it is narrowed.
+isolated class ServiceBinding {
+    final Service agentService;
+
+    isolated function init(Service agentService) {
+        self.agentService = agentService;
+    }
+
+    # Runs the agent's `onMessage`.
     #
-    # Per [specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation), the two failure reasons are
-    # distinct: `capabilities.extendedAgentCard` false/absent is
-    # `UnsupportedOperationError`; declared `true` but no card actually
-    # configured is `ExtendedAgentCardNotConfiguredError`. This listener's
-    # `deriveServedCard` ties the capability flag 1:1 to whether a card
-    # was configured, so the second case can never actually happen here
-    # -- an unconfigured card always means the capability reads `false`
-    # too, which is the first case.
-    #
-    # + return - The configured extended card, or an UnsupportedOperationError
-    #            if none was set up
-    isolated function getExtendedAgentCard() returns AgentCard|Error {
-        if self.extendedCard is AgentCard {
-            return <AgentCard>self.extendedCard;
-        }
-        string msg = "capabilities.extendedAgentCard is false: no extended AgentCard is configured for this agent";
-        return error UnsupportedOperationError(msg, message = msg, code = -32004);
+    # + context - The message and request context
+    # + updater - The task's updater
+    # + return - What `onMessage` returned
+    isolated function onMessage(RequestContext context, TaskUpdater updater) returns Message|Error? {
+        return self.agentService->onMessage(context, updater);
     }
 }
 

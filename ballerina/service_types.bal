@@ -16,10 +16,11 @@
 
 // What a developer implements to serve an A2A agent.
 //
-// One shape: `a2a:Service`, implementing a single method, `onMessage`. The
-// library runs the task lifecycle, listTasks, the push-config store, and the
-// extended card around it -- the same split the reference SDKs draw between
-// an `AgentExecutor` and a `RequestHandler`.
+// One shape: `a2a:Service`, implementing a single method, `onMessage`. An
+// `a2a:DefaultHandler` runs the task lifecycle, listTasks, and the push-config
+// store around it, and a listener such as `a2a:HttpListener` carries it over
+// the wire -- the same split the reference SDKs draw between an
+// `AgentExecutor`, a `RequestHandler`, and a transport.
 //
 // `ballerina/mcp` also exposes an `AdvancedService` escape hatch, for a
 // developer who needs to bypass the library's own tool/resource handling.
@@ -46,6 +47,37 @@ public type Service distinct isolated service object {
     remote isolated function onMessage(RequestContext context, TaskUpdater updater)
         returns Message|Error?;
 };
+
+# The protocol binding an attached `a2a:Service` is served over.
+public type Protocol REST|RPC;
+
+# The HTTP+JSON (REST) binding, served by `a2a:HttpListener`.
+public const REST = "REST";
+
+# The JSON-RPC binding. Reserved: not served in this release, so attaching a
+# service configured with it fails.
+public const RPC = "RPC";
+
+# Per-service configuration, given with `@a2a:ServiceConfig`.
+public type ServiceConfiguration record {|
+    # The protocol binding to serve this service over
+    Protocol protocol = REST;
+|};
+
+# Configures an `a2a:Service` -- on a `service` declaration or a `service class`.
+# A service without it is served with the defaults of `a2a:ServiceConfiguration`.
+public annotation ServiceConfiguration ServiceConfig on service, class;
+
+# The configuration an attached service declares, or the defaults when it
+# carries no `@a2a:ServiceConfig`.
+#
+# + a2aService - The service being attached
+# + return - Its configuration
+isolated function serviceConfigurationOf(Service a2aService) returns ServiceConfiguration {
+    typedesc<any> serviceType = typeof a2aService;
+    ServiceConfiguration? config = serviceType.@ServiceConfig;
+    return config ?: {};
+}
 
 # The inbound message and the context of the request that delivered it.
 #

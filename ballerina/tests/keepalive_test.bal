@@ -43,12 +43,18 @@ isolated function silentAgentCard(string name) returns AgentCard => {
     supportedInterfaces: []
 };
 
-listener Listener keepAliveListener = new (KEEPALIVE_TEST_PORT, agentCard = silentAgentCard("Keep-alive Agent"),
-    keepAliveInterval = 0.4);
-listener Listener noKeepAliveListener = new (NO_KEEPALIVE_TEST_PORT, agentCard = silentAgentCard("No keep-alive Agent"),
-    keepAliveInterval = 0);
-listener Listener backstopListener = new (BACKSTOP_TEST_PORT, agentCard = silentAgentCard("Backstop Agent"),
-    keepAliveInterval = 0.4, streamIdleTimeout = 2);
+final DefaultHandler keepAliveHandler = new (silentAgentCard("Keep-alive Agent"));
+
+listener HttpListener keepAliveListener = new (KEEPALIVE_TEST_PORT, keepAliveHandler, keepAliveInterval = 0.4);
+final DefaultHandler noKeepAliveHandler = new (silentAgentCard("No keep-alive Agent"));
+
+listener HttpListener noKeepAliveListener = new (NO_KEEPALIVE_TEST_PORT, noKeepAliveHandler, keepAliveInterval = 0);
+final DefaultHandler backstopHandler = new (silentAgentCard("Backstop Agent"));
+
+listener HttpListener backstopListener = new (BACKSTOP_TEST_PORT, backstopHandler,
+    keepAliveInterval = 0.4,
+    streamIdleTimeout = 2
+);
 
 @test:BeforeSuite
 function startKeepAliveServers() returns error? {

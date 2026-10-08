@@ -87,17 +87,22 @@ isolated function agentCalls() returns int {
     }
 }
 
-listener Listener jwtAuthListener = new (JWT_AUTH_TEST_PORT, agentCard = authTestCard,
-    extendedAgentCard = authTestExtendedCard,
+final DefaultHandler jwtAuthHandler = new (authTestCard, extendedAgentCard = authTestExtendedCard);
+
+listener HttpListener jwtAuthListener = new (JWT_AUTH_TEST_PORT, jwtAuthHandler,
     auth = [{jwtValidatorConfig: authTestJwtValidator}]
 );
 
-listener Listener scopedAuthListener = new (SCOPED_AUTH_TEST_PORT, agentCard = authTestCard,
+final DefaultHandler scopedAuthHandler = new (authTestCard);
+
+listener HttpListener scopedAuthListener = new (SCOPED_AUTH_TEST_PORT, scopedAuthHandler,
     auth = [{jwtValidatorConfig: authTestJwtValidator, scopes: "a2a:write"}]
 );
 
 // Two alternatives: a JWT, or Basic against the file user store.
-listener Listener multiAuthListener = new (MULTI_AUTH_TEST_PORT, agentCard = authTestCard,
+final DefaultHandler multiAuthHandler = new (authTestCard);
+
+listener HttpListener multiAuthListener = new (MULTI_AUTH_TEST_PORT, multiAuthHandler,
     auth = [
         {jwtValidatorConfig: authTestJwtValidator},
         {fileUserStoreConfig: {}}
@@ -105,12 +110,15 @@ listener Listener multiAuthListener = new (MULTI_AUTH_TEST_PORT, agentCard = aut
 );
 
 // Authenticated *and* an owner resolver: the resolver must win.
-listener Listener resolverAuthListener = new (RESOLVER_AUTH_TEST_PORT, agentCard = authTestCard,
-    auth = [{jwtValidatorConfig: authTestJwtValidator}],
-    ownerResolver = new HeaderOwnerResolver()
+final DefaultHandler resolverAuthHandler = new (authTestCard, ownerResolver = new HeaderOwnerResolver());
+
+listener HttpListener resolverAuthListener = new (RESOLVER_AUTH_TEST_PORT, resolverAuthHandler,
+    auth = [{jwtValidatorConfig: authTestJwtValidator}]
 );
 
-listener Listener oauth2AuthListener = new (OAUTH2_AUTH_TEST_PORT, agentCard = authTestCard,
+final DefaultHandler oauth2AuthHandler = new (authTestCard);
+
+listener HttpListener oauth2AuthListener = new (OAUTH2_AUTH_TEST_PORT, oauth2AuthHandler,
     auth = [{oauth2IntrospectionConfig: {url: string `http://localhost:${INTROSPECTION_STUB_PORT}/introspect`}}]
 );
 
@@ -403,7 +411,7 @@ function testAuthOAuth2InactiveOrUnknownTokenIs401() returns error? {
 
 @test:Config {}
 function testAuthEmptyEntryListIsRejectedAtStartup() {
-    Listener|error created = new (EMPTY_AUTH_TEST_PORT, agentCard = authTestCard, auth = []);
+    HttpListener|error created = new (EMPTY_AUTH_TEST_PORT, new DefaultHandler(authTestCard), auth = []);
     test:assertTrue(created is Error, "an empty auth list would admit nobody, which is a mistake, not a policy");
 }
 
@@ -424,7 +432,7 @@ final http:JwtValidatorConfig unreachableJwksValidator = {
 
 @test:Config {}
 function testAuthUnreachableJwksWithACacheIsAnErrorNotAPanic() {
-    Listener|Error created = new (UNREACHABLE_IDP_TEST_PORT, agentCard = authTestCard,
+    HttpListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, new DefaultHandler(authTestCard),
             auth = [{jwtValidatorConfig: unreachableJwksValidator}]);
     test:assertTrue(created is InternalError, "an unreachable IdP at startup must be a returned error");
     if created is Error {
@@ -434,7 +442,7 @@ function testAuthUnreachableJwksWithACacheIsAnErrorNotAPanic() {
 
 @test:Config {}
 function testAuthFailingEntryIsNamedByItsPosition() {
-    Listener|Error created = new (UNREACHABLE_IDP_TEST_PORT, agentCard = authTestCard,
+    HttpListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, new DefaultHandler(authTestCard),
             auth = [{fileUserStoreConfig: {}}, {jwtValidatorConfig: unreachableJwksValidator}]);
     test:assertTrue(created is InternalError);
     if created is Error {
@@ -445,7 +453,8 @@ function testAuthFailingEntryIsNamedByItsPosition() {
 
 @test:Config {}
 function testAuthUnreachableLdapIsAnErrorNotAPanic() {
-    Listener|Error created = new (UNREACHABLE_IDP_TEST_PORT, agentCard = authTestCard, auth = [{
+    HttpListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, new DefaultHandler(authTestCard),
+            auth = [{
         ldapUserStoreConfig: {
             domainName: "example.com", connectionUrl: "ldap://localhost:1", connectionName: "cn=admin",
             connectionPassword: "x", userSearchBase: "ou=Users,dc=example,dc=com", userEntryObjectClass: "person",
@@ -468,20 +477,21 @@ function testAuthJwksWithoutACacheStillConstructsWhenTheIdpIsDown() {
     // No preload without a cache: the keys are only fetched per request, so
     // there is nothing to fail at startup. Guards against the trap turning a
     // working configuration into an error.
-    Listener|Error created = new (UNREACHABLE_IDP_TEST_PORT, agentCard = authTestCard, auth = [{
+    HttpListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, new DefaultHandler(authTestCard),
+            auth = [{
         jwtValidatorConfig: {
             issuer: "https://idp.example.com",
             audience: "a2a",
             signatureConfig: {jwksConfig: {url: "http://localhost:1/jwks"}}
         }
     }]);
-    test:assertTrue(created is Listener, created is Error ? created.message() : "");
+    test:assertTrue(created is HttpListener, created is Error ? created.message() : "");
 }
 
 @test:Config {}
 function testAuthExtendedCardWithoutAuthIsRejectedAtStartup() {
-    Listener|error created = new (EXTENDED_WITHOUT_AUTH_TEST_PORT, agentCard = authTestCard,
-            extendedAgentCard = authTestExtendedCard);
+    DefaultHandler handler = new (authTestCard, extendedAgentCard = authTestExtendedCard);
+    HttpListener|error created = new (EXTENDED_WITHOUT_AUTH_TEST_PORT, handler);
     test:assertTrue(created is Error,
             "a listener that would hand the extended card to anyone must not start (specification section 13.3)");
     if created is error {
@@ -491,7 +501,8 @@ function testAuthExtendedCardWithoutAuthIsRejectedAtStartup() {
 
 @test:Config {}
 function testAuthExtendedCardWithAuthStarts() returns error? {
-    Listener created = check new (EXTENDED_WITH_AUTH_TEST_PORT, agentCard = authTestCard,
-            extendedAgentCard = authTestExtendedCard, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
+    DefaultHandler handler = new (authTestCard, extendedAgentCard = authTestExtendedCard);
+    HttpListener created = check new (EXTENDED_WITH_AUTH_TEST_PORT, handler,
+            auth = [{jwtValidatorConfig: authTestJwtValidator}]);
     check created.gracefulStop();
 }

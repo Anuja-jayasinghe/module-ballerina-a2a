@@ -30,7 +30,7 @@ import ballerina/time;
 const int LISTENER_CONFIG_TEST_PORT = 19242;
 final string listenerConfigServerUrl = string `http://localhost:${LISTENER_CONFIG_TEST_PORT}`;
 
-listener Listener shortTimeoutListener = new (LISTENER_CONFIG_TEST_PORT, agentCard = {
+final DefaultHandler shortTimeoutHandler = new ({
     name: "Silent Agent",
     description: "Says one thing, then nothing until told to finish",
     version: "1.0.0",
@@ -39,7 +39,12 @@ listener Listener shortTimeoutListener = new (LISTENER_CONFIG_TEST_PORT, agentCa
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-}, timeout = 2, keepAliveInterval = 0);
+});
+
+listener HttpListener shortTimeoutListener = new (LISTENER_CONFIG_TEST_PORT, shortTimeoutHandler,
+    timeout = 2,
+    keepAliveInterval = 0
+);
 
 // Reports WORKING, then holds on the Gate registered under the key in its
 // message ("hold:<key>") until a test releases it, then completes.

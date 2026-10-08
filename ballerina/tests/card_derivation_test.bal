@@ -25,7 +25,9 @@ const int TWO_JWT_AUTH_TEST_PORT = 19254;
 const int DECLARED_SECURITY_TEST_PORT = 19255;
 
 // Two entries of the same kind, with different scopes.
-listener Listener twoJwtAuthListener = new (TWO_JWT_AUTH_TEST_PORT, agentCard = authTestCard,
+final DefaultHandler twoJwtAuthHandler = new (authTestCard);
+
+listener HttpListener twoJwtAuthListener = new (TWO_JWT_AUTH_TEST_PORT, twoJwtAuthHandler,
     auth = [
         {jwtValidatorConfig: authTestJwtValidator, scopes: "a2a:read"},
         {jwtValidatorConfig: authTestJwtValidator, scopes: ["a2a:write", "a2a:admin"]}
@@ -33,7 +35,7 @@ listener Listener twoJwtAuthListener = new (TWO_JWT_AUTH_TEST_PORT, agentCard = 
 );
 
 // The developer declares their own security: nothing is derived over it.
-listener Listener declaredSecurityListener = new (DECLARED_SECURITY_TEST_PORT, agentCard = {
+final DefaultHandler declaredSecurityHandler = new ({
     name: "Declared Security Agent",
     description: "Declares an OpenID Connect scheme itself",
     version: "1.0.0",
@@ -46,7 +48,11 @@ listener Listener declaredSecurityListener = new (DECLARED_SECURITY_TEST_PORT, a
         "oidc": <OpenIdConnectSecurityScheme>{openIdConnectUrl: "https://idp.example.com/.well-known/openid-configuration"}
     },
     securityRequirements: [{"oidc": ["openid"]}]
-}, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
+});
+
+listener HttpListener declaredSecurityListener = new (DECLARED_SECURITY_TEST_PORT, declaredSecurityHandler,
+    auth = [{jwtValidatorConfig: authTestJwtValidator}]
+);
 
 @test:BeforeSuite
 function startCardDerivationServers() returns error? {

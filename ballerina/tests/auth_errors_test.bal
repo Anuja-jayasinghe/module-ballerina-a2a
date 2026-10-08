@@ -89,8 +89,9 @@ isolated class FailingOwnerResolver {
     }
 }
 
-listener Listener resolverErrorListener = new (RESOLVER_ERROR_TEST_PORT, agentCard = authTestCard,
-    ownerResolver = new FailingOwnerResolver());
+final DefaultHandler resolverErrorHandler = new (authTestCard, ownerResolver = new FailingOwnerResolver());
+
+listener HttpListener resolverErrorListener = new (RESOLVER_ERROR_TEST_PORT, resolverErrorHandler);
 
 @test:BeforeSuite
 function startAuthErrorServers() returns error? {

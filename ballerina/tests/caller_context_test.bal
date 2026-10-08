@@ -37,9 +37,10 @@ isolated class RecordingOwnerResolver {
     }
 }
 
-listener Listener callerContextListener = new (CALLER_CONTEXT_TEST_PORT, agentCard = authTestCard,
-    auth = [{jwtValidatorConfig: authTestJwtValidator}],
-    ownerResolver = new RecordingOwnerResolver()
+final DefaultHandler callerContextHandler = new (authTestCard, ownerResolver = new RecordingOwnerResolver());
+
+listener HttpListener callerContextListener = new (CALLER_CONTEXT_TEST_PORT, callerContextHandler,
+    auth = [{jwtValidatorConfig: authTestJwtValidator}]
 );
 
 @test:BeforeSuite

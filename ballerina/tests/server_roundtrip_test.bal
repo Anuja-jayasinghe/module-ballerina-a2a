@@ -30,7 +30,7 @@ import ballerina/uuid;
 const int SERVER_TEST_PORT = 19234;
 final string serverUrl = string `http://localhost:${SERVER_TEST_PORT}`;
 
-listener Listener echoListener = new (SERVER_TEST_PORT, agentCard = {
+final DefaultHandler echoHandler = new ({
     name: "Echo Agent",
     description: "Echoes its input",
     version: "1.0.0",
@@ -42,6 +42,8 @@ listener Listener echoListener = new (SERVER_TEST_PORT, agentCard = {
     supportedInterfaces: []
 });
 
+listener HttpListener echoListener = new (SERVER_TEST_PORT, echoHandler);
+
 // A second listener, on its own port, configured with an extended card --
 // separate from echoListener so that one's own extendedAgentCard:false
 // round trip (the common case: no extended card configured) stays
@@ -50,7 +52,7 @@ listener Listener echoListener = new (SERVER_TEST_PORT, agentCard = {
 const int EXTENDED_CARD_TEST_PORT = 19235;
 final string extendedCardServerUrl = string `http://localhost:${EXTENDED_CARD_TEST_PORT}`;
 
-listener Listener extendedCardListener = new (EXTENDED_CARD_TEST_PORT, agentCard = {
+final DefaultHandler extendedCardHandler = new ({
     name: "Echo Agent",
     description: "Echoes its input",
     version: "1.0.0",
@@ -59,7 +61,8 @@ listener Listener extendedCardListener = new (EXTENDED_CARD_TEST_PORT, agentCard
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-}, extendedAgentCard = {
+},
+    extendedAgentCard = {
     name: "Echo Agent (extended)",
     description: "Echoes its input -- extended card reveals an internal-only skill",
     version: "1.0.0",
@@ -71,7 +74,12 @@ listener Listener extendedCardListener = new (EXTENDED_CARD_TEST_PORT, agentCard
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-}, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
+}
+);
+
+listener HttpListener extendedCardListener = new (EXTENDED_CARD_TEST_PORT, extendedCardHandler,
+    auth = [{jwtValidatorConfig: authTestJwtValidator}]
+);
 
 // A minimal agent: echoes the inbound text back as a completed task's
 // artifact, with a handful of trigger texts for the checkpoints live
@@ -838,11 +846,11 @@ function testServerRoundTripSubscribeRacingCompletionEndsCleanly() returns error
     // task id), matching the state a real one leaves behind after
     // completing and releasing. A direct unit test against DefaultHandler,
     // not a wire round trip -- same pattern as
-    // testDefaultHandlerGetExtendedAgentCardFailsWhenNoneConfigured above.
+    // testServedExtendedCardFailsWhenNoneConfigured above.
     TaskStore store = new BecomesTerminalAfterFirstGet("race-1");
-    DefaultHandler handler = new (new EchoAgent(), store, (), new HttpPushNotificationSender(), new InMemoryEventBroadcasterRegistry(), 300);
+    DefaultHandler handler = new (authTestCard, taskStore = store);
 
-    stream<StreamResponse, Error?>|Error result = handler.subscribeToTask({id: "race-1"}, ());
+    stream<StreamResponse, Error?>|Error result = handler.subscribeToTask({id: "race-1"}, (), {idleTimeout: 300});
     if result is Error {
         test:assertFail(result.message());
     }
@@ -924,7 +932,7 @@ function testServerRoundTripCancelRacingCompletionIsNotCancelable() returns erro
     // reproducing exactly what a driver that reached COMPLETED first, in
     // between, would leave behind.
     TaskStore store = new RefusesWriteAfterFirstGet("race-2");
-    DefaultHandler handler = new (new EchoAgent(), store, (), new HttpPushNotificationSender(), new InMemoryEventBroadcasterRegistry(), 300);
+    DefaultHandler handler = new (authTestCard, taskStore = store);
 
     Task|Error canceled = handler.cancelTask({id: "race-2"}, ());
     test:assertTrue(canceled is TaskNotCancelableError,
@@ -1177,18 +1185,16 @@ function testServerRoundTripGetExtendedAgentCardWhenConfigured() returns error? 
 }
 
 @test:Config {}
-function testDefaultHandlerGetExtendedAgentCardFailsWhenNoneConfigured() returns error? {
+function testServedExtendedCardFailsWhenNoneConfigured() {
     // Direct unit test, not a wire round trip: deriveServedCard ties
     // capabilities.extendedAgentCard to whether a card was configured, so
     // this request never actually reaches a Client through echoListener's
     // own wiring -- the Client already refuses client-side with the same
     // UnsupportedOperationError this asserts, per the test above. The
-    // branch is still real code for a future server built directly
-    // against DefaultHandler without that same coupling, so it is
-    // exercised directly here rather than left untested.
-    TaskStore store = new InMemoryTaskStore();
-    DefaultHandler handler = new (new EchoAgent(), store, (), new HttpPushNotificationSender(), new InMemoryEventBroadcasterRegistry(), 300);
-    AgentCard|Error result = handler.getExtendedAgentCard();
+    // branch is still real code for a future binding that serves the
+    // extended card without that same coupling, so it is exercised
+    // directly here rather than left untested.
+    AgentCard|Error result = servedExtendedCard(());
     test:assertTrue(result is UnsupportedOperationError,
             "capabilities.extendedAgentCard false must be UnsupportedOperationError per specification 3.3.4, " +
             "not ExtendedAgentCardNotConfiguredError -- that's reserved for capability true but still unconfigured, " +
@@ -1375,7 +1381,7 @@ isolated class HeaderOwnerResolver {
 const int OWNER_SCOPED_TEST_PORT = 19236;
 final string ownerScopedServerUrl = string `http://localhost:${OWNER_SCOPED_TEST_PORT}`;
 
-listener Listener ownerScopedListener = new (OWNER_SCOPED_TEST_PORT, agentCard = {
+final DefaultHandler ownerScopedHandler = new ({
     name: "Echo Agent",
     description: "Echoes its input",
     version: "1.0.0",
@@ -1384,7 +1390,11 @@ listener Listener ownerScopedListener = new (OWNER_SCOPED_TEST_PORT, agentCard =
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-}, ownerResolver = new HeaderOwnerResolver());
+},
+    ownerResolver = new HeaderOwnerResolver()
+);
+
+listener HttpListener ownerScopedListener = new (OWNER_SCOPED_TEST_PORT, ownerScopedHandler);
 
 @test:BeforeSuite
 function startOwnerScopedServer() returns error? {
@@ -1521,7 +1531,7 @@ const int PUSH_NOTIFICATION_TEST_PORT = 19238;
 final string pushNotificationServerUrl = string `http://localhost:${PUSH_NOTIFICATION_TEST_PORT}`;
 final string testWebhookUrl = string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`;
 
-listener Listener pushNotificationListener = new (PUSH_NOTIFICATION_TEST_PORT, agentCard = {
+final DefaultHandler pushNotificationHandler = new ({
     name: "Echo Agent",
     description: "Echoes its input",
     version: "1.0.0",
@@ -1530,7 +1540,11 @@ listener Listener pushNotificationListener = new (PUSH_NOTIFICATION_TEST_PORT, a
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-}, pushSender = new HttpPushNotificationSender({validateUrl: false}));
+},
+    pushSender = new HttpPushNotificationSender({validateUrl: false})
+);
+
+listener HttpListener pushNotificationListener = new (PUSH_NOTIFICATION_TEST_PORT, pushNotificationHandler);
 
 // Completes normally, except for:
 // - "pause": leaves the task at TASK_STATE_WORKING -- non-terminal, so
@@ -1829,7 +1843,7 @@ function testServerRoundTripPushNotificationDeliveryOnCancel() returns error? {
 const int SECURITY_REQUIREMENTS_TEST_PORT = 19239;
 final string securityRequirementsServerUrl = string `http://localhost:${SECURITY_REQUIREMENTS_TEST_PORT}`;
 
-listener Listener securityRequirementsListener = new (SECURITY_REQUIREMENTS_TEST_PORT, agentCard = {
+final DefaultHandler securityRequirementsHandler = new ({
     name: "Echo Agent",
     description: "Echoes its input",
     version: "1.0.0",
@@ -1843,6 +1857,8 @@ listener Listener securityRequirementsListener = new (SECURITY_REQUIREMENTS_TEST
     },
     securityRequirements: [{"bearerAuth": ["read", "write"]}, {"bearerAuth": []}]
 });
+
+listener HttpListener securityRequirementsListener = new (SECURITY_REQUIREMENTS_TEST_PORT, securityRequirementsHandler);
 
 @test:BeforeSuite
 function startSecurityRequirementsServer() returns error? {
@@ -1886,7 +1902,7 @@ const int EXTENSIONS_TEST_PORT = 19240;
 final string extensionsServerUrl = string `http://localhost:${EXTENSIONS_TEST_PORT}`;
 const string REQUIRED_EXTENSION_URI = "https://example.com/extensions/geolocation/v1";
 
-listener Listener extensionsListener = new (EXTENSIONS_TEST_PORT, agentCard = {
+final DefaultHandler extensionsHandler = new ({
     name: "Echo Agent",
     description: "Echoes its input",
     version: "1.0.0",
@@ -1901,6 +1917,8 @@ listener Listener extensionsListener = new (EXTENSIONS_TEST_PORT, agentCard = {
     },
     supportedInterfaces: []
 });
+
+listener HttpListener extensionsListener = new (EXTENSIONS_TEST_PORT, extensionsHandler);
 
 @test:BeforeSuite
 function startExtensionsServer() returns error? {
@@ -1939,7 +1957,7 @@ function testServerRoundTripRequiredExtensionAcceptsDeclaredClient() returns err
 const int WITHHELD_CAPABILITIES_TEST_PORT = 19241;
 final string withheldCapabilitiesServerUrl = string `http://localhost:${WITHHELD_CAPABILITIES_TEST_PORT}`;
 
-listener Listener withheldCapabilitiesListener = new (WITHHELD_CAPABILITIES_TEST_PORT, agentCard = {
+final DefaultHandler withheldCapabilitiesHandler = new ({
     name: "Echo Agent",
     description: "Echoes its input",
     version: "1.0.0",
@@ -1948,7 +1966,12 @@ listener Listener withheldCapabilitiesListener = new (WITHHELD_CAPABILITIES_TEST
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-}, streamingCapability = false, pushNotificationsCapability = false);
+},
+    streamingCapability = false,
+    pushNotificationsCapability = false
+);
+
+listener HttpListener withheldCapabilitiesListener = new (WITHHELD_CAPABILITIES_TEST_PORT, withheldCapabilitiesHandler);
 
 @test:BeforeSuite
 function startWithheldCapabilitiesServer() returns error? {

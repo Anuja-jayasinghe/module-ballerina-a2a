@@ -61,7 +61,7 @@ isolated class AuthEntry {
     // isolated object can.
     private final AuthEntry? next;
 
-    # + configs - `ListenerConfiguration.auth`
+    # + configs - `HttpListenerConfiguration.auth`
     # + index - The position of the entry this one is built from; it builds
     #           the rest of the chain behind it
     # + return - An `a2a:InternalError` naming the entry, if its handler could
@@ -238,7 +238,7 @@ isolated class ListenerAuthenticator {
     private final AuthEntry first;
     private final string[] & readonly challenges;
 
-    # + configs - `ListenerConfiguration.auth`, non-empty
+    # + configs - `HttpListenerConfiguration.auth`, non-empty
     # + return - An `a2a:InternalError` if an entry's handler could not be initialised
     isolated function init(http:ListenerAuthConfig[] & readonly configs) returns Error? {
         string[] challenges = [];
@@ -316,7 +316,7 @@ const DERIVED_BASIC_SCHEME = "basicAuth";
 # becomes its own requirement (an OR), carrying that entry's scopes.
 #
 # + card - The card the developer supplied
-# + auth - `ListenerConfiguration.auth`
+# + auth - `HttpListenerConfiguration.auth`
 # + return - The card, with `securitySchemes` and `securityRequirements` derived
 #            when they were not declared and `auth` is set; otherwise unchanged
 isolated function withDerivedSecurity(AgentCard card, http:ListenerAuthConfig[]? auth) returns AgentCard {
@@ -354,7 +354,8 @@ isolated function withDerivedSecurity(AgentCard card, http:ListenerAuthConfig[]?
         }
     }
 
-    AgentCard derived = card.clone();
+    // A mutable top level even when `card` is readonly (see `deriveServedCard`).
+    AgentCard derived = {...card.clone()};
     derived.securitySchemes = schemes;
     derived.securityRequirements = requirements;
     return derived;
@@ -362,11 +363,11 @@ isolated function withDerivedSecurity(AgentCard card, http:ListenerAuthConfig[]?
 
 # The error for an `auth` entry whose handler could not be initialised.
 #
-# + index - The entry's position in `ListenerConfiguration.auth`
+# + index - The entry's position in `HttpListenerConfiguration.auth`
 # + kind - The field of the entry that configures its handler
 # + cause - What the handler's constructor panicked or returned with
 # + return - An `a2a:InternalError` naming the entry, with the cause's message
 isolated function authEntryFailure(int index, string kind, error cause) returns Error {
-    string msg = string `ListenerConfiguration.auth[${index}] (${kind}) could not be initialised: ${cause.message()}`;
+    string msg = string `HttpListenerConfiguration.auth[${index}] (${kind}) could not be initialised: ${cause.message()}`;
     return error InternalError(msg, message = msg);
 }
