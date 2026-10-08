@@ -57,8 +57,8 @@ public type HttpListenerConfiguration record {|
     # layer surfacing it as a clean stream close; a healthy long-running
     # task's own events reset this on every one they produce, so raising it
     # only matters for a task that can legitimately sit silent for a long
-    # stretch (e.g. paused on `TASK_STATE_INPUT_REQUIRED`) with a
-    # subscriber still attached.
+    # stretch (e.g. paused on `TASK_STATE_AUTH_REQUIRED`, whose stream stays
+    # open) with a subscriber still attached.
     decimal streamIdleTimeout = 300;
     # Seconds a live `sendStreamingMessage`/`subscribeToTask` stream may go
     # without an event before the server sends an SSE comment frame

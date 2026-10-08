@@ -771,6 +771,10 @@ public isolated class DefaultHandler {
     # on task state), but read-then-attach can lose one in the same window,
     # which is not recoverable once missed.
     #
+    # Subscribing to a task paused on `TASK_STATE_INPUT_REQUIRED` returns its
+    # snapshot and then waits for the client's next message to drive it; the
+    # stream ends when that turn reaches the next interrupted or terminal state.
+    #
     # + request - The task identifier
     # + owner - The caller's resolved owner scope, or `()`
     # + timing - The listener's idle-timeout and keep-alive policy for the stream
@@ -1110,10 +1114,18 @@ isolated class ServiceBinding {
 #
 # A direct `Message` (the task was removed from the store entirely) and an
 # `Error` (driveTask already best-effort transitioned the task to the
-# terminal FAILED state) always are; a `Task` is one only if its own
-# `status.state` is terminal -- an interrupted state (INPUT_REQUIRED/
-# AUTH_REQUIRED) is not, so the task keeps its broadcaster and its driver
-# slot frees up for a later continuation to reacquire.
+# terminal FAILED state) always are. A `Task` is one when its
+# `status.state` is terminal or `TASK_STATE_INPUT_REQUIRED`:
+# [specification section 11.7](https://a2a-protocol.org/latest/specification/#117-streaming)
+# closes a stream once the task reaches "a terminal or interrupted state",
+# and the reference SDKs (Python's `EventConsumer`, a2a-js's
+# `ExecutionEventQueue`) both end it at INPUT_REQUIRED. The client's next
+# message is a new turn with a new stream; the continuation's `acquire`
+# builds the task a fresh broadcaster. `TASK_STATE_AUTH_REQUIRED` is the
+# exception: [section 7.6.1](https://a2a-protocol.org/latest/specification/#761-in-task-authorization-agent-responsibilities)
+# says the agent SHOULD keep the stream open while the client authorizes
+# out of band, so that task keeps its broadcaster and only frees its driver
+# slot for the continuation to reacquire.
 #
 # A direct `Message` result only stops the task when the task it replied to
 # no longer exists: `driveTask`'s own doc comment ties that removal 1:1 to
@@ -1134,7 +1146,7 @@ isolated class ServiceBinding {
 #            bookkeeping
 isolated function resultStopped(Task|Message|Error result, boolean isNewTask) returns boolean {
     if result is Task {
-        return isTerminalState(result.status.state);
+        return isTerminalState(result.status.state) || result.status.state == TASK_STATE_INPUT_REQUIRED;
     }
     if result is Message {
         return isNewTask;

@@ -338,10 +338,13 @@ public type EventBroadcasterRegistry isolated object {
     # Releases the claim a prior `acquire` took.
     #
     # + taskId - The task that finished this driving turn
-    # + terminal - Whether the task reached a terminal state, in which case its
-    #              broadcaster may be dropped too; a paused task keeps its
-    #              broadcaster, so subscribers already attached see it resume
-    public isolated function release(string taskId, boolean terminal);
+    # + closed - Whether the turn closed the task's broadcaster -- the task
+    #            reached a terminal state or `TASK_STATE_INPUT_REQUIRED` -- in
+    #            which case the broadcaster may be dropped too, and the next
+    #            `acquire` starts a fresh one. A task paused on
+    #            `TASK_STATE_AUTH_REQUIRED` keeps its broadcaster, so
+    #            subscribers already attached see it resume
+    public isolated function release(string taskId, boolean closed);
 
     # Finds a task's broadcaster if one exists, without creating one or
     # touching the driver slot.
@@ -405,16 +408,16 @@ public isolated class InMemoryEventBroadcasterRegistry {
     # Releases the driver slot a prior `acquire` claimed.
     #
     # + taskId - The task that finished this driving turn
-    # + terminal - Whether the task reached a terminal state -- if so, the
-    #              broadcaster itself is dropped from the registry too,
-    #              same as `InMemoryTaskStore` never expiring a task
-    #              either; a paused (non-terminal) task keeps its
-    #              broadcaster, so a later message resuming it reaches
-    #              whatever subscribers already attached
-    public isolated function release(string taskId, boolean terminal) {
+    # + closed - Whether the turn closed the task's broadcaster (a terminal
+    #            or input-required task) -- if so, the broadcaster itself is
+    #            dropped from the registry too, so the next `acquire` builds
+    #            an open one; a task paused on `TASK_STATE_AUTH_REQUIRED`
+    #            keeps its broadcaster, so a later message resuming it
+    #            reaches whatever subscribers already attached
+    public isolated function release(string taskId, boolean closed) {
         lock {
             _ = self.driving.removeIfHasKey(taskId);
-            if terminal {
+            if closed {
                 _ = self.broadcasters.removeIfHasKey(taskId);
             }
         }

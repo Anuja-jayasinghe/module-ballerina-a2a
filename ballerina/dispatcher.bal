@@ -629,7 +629,7 @@ class SseFramingGenerator {
     # that close signal reached exactly as far as this class and stopped:
     # the wrapped `EventTap` was never told, and stayed registered, idle,
     # for up to `streamIdleTimeout` (or, for a task paused on
-    # `TASK_STATE_INPUT_REQUIRED`, indefinitely).
+    # `TASK_STATE_AUTH_REQUIRED`, indefinitely).
     #
     # + return - Always `()`; `EventTap.close` cannot itself fail
     public isolated function close() returns error? {

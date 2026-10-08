@@ -185,8 +185,8 @@ isolated class CountingEventRegistry {
 
     public isolated function subscribe(string taskId) returns EventBroadcaster => self.delegate.subscribe(taskId);
 
-    public isolated function release(string taskId, boolean terminal) {
-        self.delegate.release(taskId, terminal);
+    public isolated function release(string taskId, boolean closed) {
+        self.delegate.release(taskId, closed);
     }
 
     public isolated function peekBroadcaster(string taskId) returns EventBroadcaster? =>
