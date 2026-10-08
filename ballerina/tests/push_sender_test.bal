@@ -320,7 +320,82 @@ function testHttpPushNotificationSenderValidationCanBeDisabled() returns error? 
 
 @test:Config {}
 function testHttpPushNotificationSenderUnreachableHostIsAnError() returns error? {
-    HttpPushNotificationSender sender = new ({validateUrl: false});
+    HttpPushNotificationSender sender = new ({validateUrl: false, retryConfig: ()});
     Error? result = sender.send({url: "http://localhost:1/nobody-listens-here"}, sampleTask());
     test:assertTrue(result is Error, "an unreachable webhook must return an Error, not panic or hang");
+}
+
+// ---- retry with backoff (specification 13.2) -----------------------------
+
+isolated map<int> flakyWebhookAttempts = {};
+
+// Answers `status` to the first `failures` calls for `key`, then 200.
+service /webhook/flaky on webhookReceiver {
+    resource function post [string key]/[int failures]/[int status]() returns http:Response {
+        int attempt;
+        lock {
+            attempt = (flakyWebhookAttempts[key] ?: 0) + 1;
+            flakyWebhookAttempts[key] = attempt;
+        }
+        http:Response response = new;
+        response.statusCode = attempt <= failures ? status : 200;
+        return response;
+    }
+}
+
+isolated function flakyAttempts(string key) returns int {
+    lock {
+        return flakyWebhookAttempts[key] ?: 0;
+    }
+}
+
+isolated function flakyUrl(string key, int failures, int status) returns string =>
+    string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/flaky/${key}/${failures}/${status}`;
+
+final http:RetryConfig & readonly quickRetry = {
+    count: 3,
+    interval: 0.1,
+    backOffFactor: 2.0,
+    maxWaitInterval: 1,
+    statusCodes: [408, 429, 500, 502, 503, 504]
+};
+
+@test:Config {}
+function testHttpPushNotificationSenderRetriesATransientFailure() returns error? {
+    HttpPushNotificationSender sender = new ({validateUrl: false, retryConfig: quickRetry});
+    Error? result = sender.send({url: flakyUrl("transient", 2, 503)}, sampleTask());
+    test:assertTrue(result is (), "a webhook that recovers within the retries must count as delivered");
+    test:assertEquals(flakyAttempts("transient"), 3, "two 503s, then the 200");
+}
+
+@test:Config {}
+function testHttpPushNotificationSenderGivesUpAfterTheLastRetry() returns error? {
+    HttpPushNotificationSender sender = new ({validateUrl: false, retryConfig: quickRetry});
+    Error? result = sender.send({url: flakyUrl("down", 99, 500)}, sampleTask());
+    test:assertTrue(result is Error, "a webhook still failing after every retry is a failed delivery");
+    test:assertEquals(flakyAttempts("down"), 4, "the first attempt and three retries");
+}
+
+@test:Config {}
+function testHttpPushNotificationSenderDoesNotRetryAClientError() returns error? {
+    HttpPushNotificationSender sender = new ({validateUrl: false, retryConfig: quickRetry});
+    Error? result = sender.send({url: flakyUrl("refused", 99, 404)}, sampleTask());
+    test:assertTrue(result is Error, "a 404 is not an acknowledgement");
+    test:assertEquals(flakyAttempts("refused"), 1, "a 4xx other than 408 and 429 will not change on retry");
+}
+
+@test:Config {}
+function testHttpPushNotificationSenderRetriesByDefault() returns error? {
+    HttpPushNotificationSender sender = new ({validateUrl: false});
+    Error? result = sender.send({url: flakyUrl("default", 1, 503)}, sampleTask());
+    test:assertTrue(result is (), "the default configuration must retry a 503");
+    test:assertEquals(flakyAttempts("default"), 2);
+}
+
+@test:Config {}
+function testHttpPushNotificationSenderRetryCanBeDisabled() returns error? {
+    HttpPushNotificationSender sender = new ({validateUrl: false, retryConfig: ()});
+    Error? result = sender.send({url: flakyUrl("once", 1, 503)}, sampleTask());
+    test:assertTrue(result is Error);
+    test:assertEquals(flakyAttempts("once"), 1, "retryConfig: () must send each update once");
 }

@@ -54,6 +54,18 @@ public type PushNotificationSenderConfiguration record {|
     # Java and Go SDKs over Python's opt-in stance; turn off for a
     # deployment whose webhooks legitimately live on a private network.
     boolean validateUrl = true;
+    # How a failed delivery is retried: [specification section 13.2](https://a2a-protocol.org/latest/specification/#132-push-notification-security)
+    # says agents SHOULD retry "with exponential backoff". By default a
+    # connection failure, or a `408`, `429`, or `5xx` gateway answer, is
+    # retried three times, 1, 2 and then 4 seconds apart. Any other non-2xx
+    # answer is not retried. `()` sends each update once.
+    http:RetryConfig? retryConfig = {
+        count: 3,
+        interval: 1,
+        backOffFactor: 2.0,
+        maxWaitInterval: 10,
+        statusCodes: [408, 429, 500, 502, 503, 504]
+    };
 |};
 
 # The default `a2a:PushNotificationSender`: an HTTP POST of the task to the
@@ -69,11 +81,13 @@ public isolated class HttpPushNotificationSender {
 
     private final decimal timeout;
     private final boolean validateUrl;
+    private final http:RetryConfig? & readonly retryConfig;
 
     # + config - Delivery configuration
     public isolated function init(*PushNotificationSenderConfiguration config) {
         self.timeout = config.timeout;
         self.validateUrl = config.validateUrl;
+        self.retryConfig = config.retryConfig.cloneReadOnly();
     }
 
     # + config - The webhook to call
@@ -90,7 +104,9 @@ public isolated class HttpPushNotificationSender {
         // negotiation with a generic, undiagnosable connection error --
         // hit directly against a real endpoint earlier in this module's
         // development. A receiver expecting HTTP/2 still speaks HTTP/1.1.
-        http:Client|error webhook = new (config.url, httpVersion = http:HTTP_1_1, timeout = self.timeout);
+        http:Client|error webhook = new (config.url, httpVersion = http:HTTP_1_1, timeout = self.timeout,
+            retryConfig = self.retryConfig
+        );
         if webhook is error {
             return wrapTransportError(webhook);
         }
@@ -120,6 +136,13 @@ public isolated class HttpPushNotificationSender {
         http:Response|error result = webhook->post("", body, headers);
         if result is error {
             return wrapTransportError(result);
+        }
+        // An `http:Response` target hands back every status, so a webhook that
+        // answered 4xx or 5xx (after any retries) would otherwise count as
+        // delivered. Section 13.2 has the receiver acknowledge with a 2xx.
+        if result.statusCode < 200 || result.statusCode > 299 {
+            string msg = string `push-notification webhook answered HTTP ${result.statusCode}`;
+            return error InternalError(msg, message = msg);
         }
     }
 }
