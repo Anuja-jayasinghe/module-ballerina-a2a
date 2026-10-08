@@ -127,6 +127,45 @@ function testOneHandlerOnTwoListenersServesTheSameTasks() returns error? {
     test:assertEquals(fetched.status.state, TASK_STATE_COMPLETED);
 }
 
+// ---- a declarative service on two listeners ------------------------------
+//
+// The form the README leads with: one `service ... on a, b` declaration. The
+// runtime attaches the same service object to both listeners, so both bind
+// the one shared handler without conflict.
+
+const int DECLARATIVE_PORT_A = 19270;
+const int DECLARATIVE_PORT_B = 19271;
+
+final DefaultHandler declarativeHandler = new (authTestCard);
+
+listener HttpListener declarativeListenerA = new (DECLARATIVE_PORT_A, declarativeHandler);
+
+listener HttpListener declarativeListenerB = new (DECLARATIVE_PORT_B, declarativeHandler);
+
+@ServiceConfig {protocol: REST}
+isolated service Service on declarativeListenerA, declarativeListenerB {
+    isolated remote function onMessage(RequestContext context, TaskUpdater updater) returns Message|Error? {
+        check updater->addArtifact([{text: "declared"}]);
+        check updater->complete();
+    }
+}
+
+@test:Config {}
+function testDeclarativeServiceOnTwoListenersSharesOneHandler() returns error? {
+    HttpClient viaA = check new (string `http://localhost:${DECLARATIVE_PORT_A}`);
+    HttpClient viaB = check new (string `http://localhost:${DECLARATIVE_PORT_B}`);
+
+    Message|Task sent = check viaA->sendMessage({
+        message: {messageId: "m-declarative", role: ROLE_USER, parts: [{text: "hello"}]}
+    });
+    test:assertTrue(sent is Task, "the declared service drives a task");
+    Task created = <Task>sent;
+    test:assertEquals((created.artifacts ?: [])[0].parts[0].text, "declared");
+
+    Task fetched = check viaB->getTask({id: created.id});
+    test:assertEquals(fetched.id, created.id, "both listeners serve the one handler's tasks");
+}
+
 // ---- a replacement event registry ----------------------------------------
 
 // Delegates to the in-memory default, counting the driver claims it is asked
