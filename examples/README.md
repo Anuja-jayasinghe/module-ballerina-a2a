@@ -17,8 +17,9 @@ See [`call-an-agent/README.md`](call-an-agent/README.md).
 ### Serve an Agent
 
 Serves an agent over A2A: one `onMessage` method is the whole business
-logic, with the listener running the rest of the protocol (task
-lifecycle, streaming, push-notification config, card discovery) around
-it. Works with `call-an-agent` pointed at its port, or any other A2A
-HTTP+JSON v1.0 client.
+logic, an `a2a:DefaultHandler` runs the rest of the protocol (task
+lifecycle, streaming, push-notification config) around it, and an
+`a2a:HttpListener` serves it on the wire, card discovery included. Works
+with `call-an-agent` pointed at its port, or any other A2A HTTP+JSON v1.0
+client.
 See [`serve-an-agent/README.md`](serve-an-agent/README.md).

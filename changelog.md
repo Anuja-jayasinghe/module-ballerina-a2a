@@ -15,31 +15,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Add Server-Sent Events Streaming for `sendStreamingMessage` and `subscribeToTask`, with Opt-In Automatic Reconnection
 - Add Credential Resolution by Security-Scheme Name via `CredentialProvider` and `InMemoryCredentialStore`
 - Add the Nine Error Types of Specification Section 5.4 as Distinct Subtypes of `Error`, plus `InternalError` for Unnamed Failures
-- Add `Listener`, an A2A Server over the HTTP+JSON Binding, Where a Single `Service.onMessage` Method Is the Whole Agent
+- Add `HttpListener`, an A2A Server over the HTTP+JSON Binding, Where a Single `Service.onMessage` Method Is the Whole Agent
+- Add `DefaultHandler`, the Transport-Free Engine Holding an Agent's Card, Task Store, and Policies, Built Once and Given to One or More Listeners So Each Serves the Same Tasks
+- Add `@ServiceConfig`, Choosing the Binding a Service Is Served Over: `REST` (HTTP+JSON), with `RPC` Reserved
 - Add `TaskUpdater` for Driving a Task Through Its States, Including Streaming and Input-Required Pauses
 - Add `TaskStore` and the Default `InMemoryTaskStore`, Which Enforces Legal State Transitions
 - Add Task-Scoped Push-Notification Configuration Storage and an Optional Extended Agent Card to the Server
-- Add `TaskOwnerResolver` for Per-Caller Task and Push-Notification-Config Visibility Scoping, per Specification Section 13.1
+- Add `TaskOwnerResolver` for Per-Caller Task and Push-Notification-Config Visibility Scoping, per Specification Section 13.1, Resolving From a Transport-Free `CallerContext` That Carries the Identity Authentication Already Established
 - Add Real Push-Notification Delivery via `PushNotificationSender`, with `HttpPushNotificationSender` Rejecting Non-Public Webhook URLs by Default per Specification Section 13.2
 - Run `onMessage` Detached from the Request That Started It, so a Separate `subscribeToTask` Call Can Follow a Task Still in Progress
 - Stream `sendStreamingMessage` and `subscribeToTask` Live, with Correct Multi-Subscriber Fan-Out per Specification Section 3.5.2
+- Add `EventBroadcaster` and `EventBroadcasterRegistry`, Making Live-Event Fan-Out Pluggable Like `TaskStore`, with `InMemoryEventBroadcasterRegistry` as the Default
 - Add Task Continuation via `message.taskId`, per Specification Sections 3.4.2 and 3.4.3
 - Honor `SendMessageConfiguration.returnImmediately`, Returning a Task Before `onMessage` Finishes
 - Enforce Required Extensions per Specification Sections 3.3.4/4.6.3, via the `A2A-Extensions` Header
 - Serve `securityRequirements` in the Correct v1.0 Wire Shape, and Add Agent Card `Cache-Control`/`ETag` Headers per Specification Section 8.6.1
-- Add `ListenerConfiguration.streamingCapability`/`pushNotificationsCapability`, Letting a Deployment Deliberately Withhold a Capability This Listener Otherwise Always Implements
-- Add `ListenerConfiguration.keepAliveInterval`, Sending SSE Keep-Alive Comments so a Quiet, Long-Running Stream Survives HTTP Idle Timeouts
-- Add `ListenerConfiguration.auth`, Authenticating Every Request Except the Public Card with `ballerina/http`'s JWT, OAuth2 Introspection, and File/LDAP Basic Handlers per Specification Section 7.4, with the Authenticated Identity Scoping Tasks per Section 13.1
-- Derive the Served Agent Card's `securitySchemes` and `securityRequirements` from `ListenerConfiguration.auth` when the Card Declares Neither, per Specification Sections 7.3 and 13.3
+- Add `DefaultHandlerConfiguration.streamingCapability`/`pushNotificationsCapability`, Letting a Deployment Deliberately Withhold a Capability the Server Otherwise Always Implements
+- Add `HttpListenerConfiguration.keepAliveInterval`, Sending SSE Keep-Alive Comments so a Quiet, Long-Running Stream Survives HTTP Idle Timeouts
+- Add `HttpListenerConfiguration.auth`, Authenticating Every Request Except the Public Card with `ballerina/http`'s JWT, OAuth2 Introspection, and File/LDAP Basic Handlers per Specification Section 7.4, with the Authenticated Identity Scoping Tasks per Section 13.1
+- Derive the Served Agent Card's `securitySchemes` and `securityRequirements` from `HttpListenerConfiguration.auth` when the Card Declares Neither, per Specification Sections 7.3 and 13.3
 - Add `AuthenticationError` (401) and `AuthorizationError` (403), Typed from the `ErrorInfo` Reason or the Bare Status, with an `AuthenticationError` Carrying the `WWW-Authenticate` Challenges; the Server Maps Both to Their Statuses
-- Refuse to Start a `Listener` Configured with `extendedAgentCard` but No `auth`, per Specification Section 13.3 (a Breaking Change for Any Such Configuration)
-- Add `ListenerConfiguration.publicUrl`, the Base URL Served as the Card's Interface URL, for a Listener Behind a Proxy or Gateway That Terminates TLS or Rewrites the Host
+- Refuse to Start an `HttpListener` Given a Handler with an `extendedAgentCard` but No `auth`, per Specification Section 13.3 (a Breaking Change for Any Such Configuration)
+- Add `HttpListenerConfiguration.publicUrl`, the Base URL Served as the Card's Interface URL, for a Listener Behind a Proxy or Gateway That Terminates TLS or Rewrites the Host
 
 ### Fixed
 
 - Return an `InternalError`, Not a Panic, from `HttpClient` and `resolveAgentCard` When the Initial OAuth2 Token Cannot Be Obtained (a Wrong Client Secret, an Unreachable Token Endpoint)
-- Return an `InternalError` Naming the Entry, Not a Panic, from `Listener` When an `auth` Entry Cannot Be Initialised (a JWKS That Cannot Be Preloaded, an Unreachable LDAP Server); the Authenticator Is Now Built Before the HTTP Listener
-- A `Listener` Serving TLS Now Advertises an `https` Interface URL in Its Card, Instead of `http`, Which Sent Clients to Plain HTTP on a TLS Port (Specification Section 7.1)
+- Return an `InternalError` Naming the Entry, Not a Panic, from `HttpListener` When an `auth` Entry Cannot Be Initialised (a JWKS That Cannot Be Preloaded, an Unreachable LDAP Server); the Authenticator Is Now Built Before the HTTP Listener
+- An `HttpListener` Serving TLS Now Advertises an `https` Interface URL in Its Card, Instead of `http`, Which Sent Clients to Plain HTTP on a TLS Port (Specification Section 7.1)
 - Serve the Agent Card's `securitySchemes` in the Specification's Wrapped Shape (`{"httpAuthSecurityScheme": {...}}`, with `location` for an API Key), Instead of the Flat Shape with a `type` Discriminator, per Specification Section 4.5
 - A Request to a Path That Is No A2A Operation Is Now a 404 (`METHOD_NOT_FOUND`), and a Request Naming a Tenant the Agent Does Not Serve Is Now a 400 (`INVALID_PARAMS`), Instead of a 500 for Both; the Specification Reserves 5xx for System Failures and an Agent's Own Malformed Response
 - A 401 or 403 Is Now an `AuthenticationError` or `AuthorizationError` Instead of an `InternalError` Carrying That Status as Its Code

@@ -3,9 +3,9 @@
 ## Overview
 
 This example demonstrates how to use the Ballerina A2A module to serve an
-agent over A2A. It declares an `a2a:Listener`, implements the one method
-an agent author writes (`onMessage`), and lets the library run the rest
-of the protocol around it.
+agent over A2A. It builds the agent's `a2a:DefaultHandler`, serves it on an
+`a2a:HttpListener`, implements the one method an agent author writes
+(`onMessage`), and lets the library run the rest of the protocol around it.
 
 ### Features
 
@@ -13,7 +13,7 @@ of the protocol around it.
   implements -- `getTask`, `cancelTask`, `listTasks`,
   `sendStreamingMessage`/`subscribeToTask` as Server-Sent Events, the
   push-notification configuration operations, and the well-known
-  discovery endpoint are all handled by the listener itself.
+  discovery endpoint are all handled by the handler and the listener.
 - **Driving a task**: `updater->working()`/`addArtifact()`/`complete()`
   move a task through its lifecycle from inside `onMessage`.
 - **A real, discoverable Agent Card**: served at
@@ -67,14 +67,17 @@ curl -s http://localhost:9090/message:send \
 
 ## Code Structure
 
-- **The listener**: `listener a2a:Listener agent = new (agentPort, agentCard = {...})`,
+- **The handler**: `final a2a:DefaultHandler weatherAgent = new ({...})` --
+  the agent as the protocol sees it: its card, and where its tasks are kept
+  and who may see them (left at their defaults here).
+  `capabilities`/`supportedInterfaces` in the card literal are placeholders;
+  the listener replaces both with what it actually serves, so the published
+  card can never advertise something this agent does not do.
+- **The listener**: `listener a2a:HttpListener agent = new (agentPort, weatherAgent)`,
   declared at module level -- a listener declared inside `main` does not
-  keep the program alive. `capabilities`/`supportedInterfaces` in the
-  card literal are placeholders; the listener replaces both with what it
-  actually serves, so the published card can never advertise something
-  this agent does not do.
-- **The agent itself**: `WeatherAgent`, an `isolated service class`
-  implementing `*a2a:Service` -- its one `onMessage` method is the entire
-  business logic.
-- **Attaching**: a module-level `function init()` calls `agent.attach(new WeatherAgent())`
-  once the listener has finished initialising.
+  keep the program alive. It owns the wire: the port and, when configured,
+  TLS, authentication, and the address the card advertises.
+- **The agent itself**: an `isolated service a2a:Service on agent` whose one
+  `onMessage` method is the entire business logic. `@a2a:ServiceConfig {protocol: a2a:REST}`
+  chooses the HTTP+JSON binding -- the default, written out here to show
+  where the choice lives.
