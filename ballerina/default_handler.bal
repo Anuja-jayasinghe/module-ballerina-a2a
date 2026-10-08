@@ -924,7 +924,7 @@ public isolated class DefaultHandler {
     #            `owner`
     isolated function createTaskPushNotificationConfig(TaskPushNotificationConfig request, string? owner)
             returns TaskPushNotificationConfig|Error {
-        check validatePushConfigId(request);
+        check validatePushConfigId(request, "id");
         string? taskId = request?.taskId;
         if taskId is () {
             string msg = "TaskPushNotificationConfig.taskId is required to register a config";

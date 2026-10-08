@@ -701,7 +701,7 @@ isolated function queryInt(http:Request req, string name) returns int|Error? {
     }
     int|error parsed = int:fromString(raw);
     if parsed is error {
-        return invalidParams(string `${name} "${raw}" is not an integer`);
+        return invalidParams(string `${name} "${raw}" is not an integer`, name);
     }
     return parsed;
 }
@@ -748,7 +748,7 @@ isolated function queryToListFilter(http:Request req) returns ListTasksRequest|E
     if status is string {
         TaskState|error state = status.ensureType();
         if state is error {
-            return invalidParams(string `status "${status}" is not a valid task state`);
+            return invalidParams(string `status "${status}" is not a valid task state`, "status");
         }
         filter.status = state;
     }
@@ -768,14 +768,15 @@ isolated function queryToListFilter(http:Request req) returns ListTasksRequest|E
     if after is string {
         time:Utc|error parsed = time:utcFromString(after);
         if parsed is error {
-            return invalidParams(string `statusTimestampAfter "${after}" is not a valid RFC 3339 timestamp`);
+            return invalidParams(string `statusTimestampAfter "${after}" is not a valid RFC 3339 timestamp`,
+                "statusTimestampAfter");
         }
         filter.statusTimestampAfter = after;
     }
     string? includeArtifacts = req.getQueryParamValue("includeArtifacts");
     if includeArtifacts is string {
         if includeArtifacts != "true" && includeArtifacts != "false" {
-            return invalidParams(string `includeArtifacts "${includeArtifacts}" is not true or false`);
+            return invalidParams(string `includeArtifacts "${includeArtifacts}" is not true or false`, "includeArtifacts");
         }
         filter.includeArtifacts = includeArtifacts == "true";
     }

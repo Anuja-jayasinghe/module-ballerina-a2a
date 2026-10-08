@@ -123,8 +123,13 @@ isolated function invalidAgentResponse(string message) returns InvalidAgentRespo
 # is a 400, not a 500: the caller's request was the problem, not the agent.
 #
 # + message - What specifically was wrong with the request
+# + fieldName - The request field at fault, when one is; recorded as
+#               `data.field` (see `fieldViolationsOf`)
 # + return - An `InternalError` with code -32600
-isolated function invalidRequest(string message) returns InternalError {
+isolated function invalidRequest(string message, string? fieldName = ()) returns InternalError {
+    if fieldName is string {
+        return error InternalError(message, message = message, code = -32600, data = {"field": fieldName});
+    }
     return error InternalError(message, message = message, code = -32600);
 }
 
@@ -138,9 +143,37 @@ isolated function invalidRequest(string message) returns InternalError {
 # agent failed when the caller's input was the problem.
 #
 # + message - What specifically was wrong with the parameter
+# + fieldName - The parameter at fault, when one is; recorded as
+#               `data.field` (see `fieldViolationsOf`)
 # + return - An `InternalError` with code -32602
-isolated function invalidParams(string message) returns InternalError {
+isolated function invalidParams(string message, string? fieldName = ()) returns InternalError {
+    if fieldName is string {
+        return error InternalError(message, message = message, code = -32602, data = {"field": fieldName});
+    }
     return error InternalError(message, message = message, code = -32602);
+}
+
+# The `google.rpc.BadRequest` field violations a validation error carries.
+#
+# `invalidRequest` and `invalidParams` record the field at fault as
+# `data.field`. `data` is what the REST error body serialises as
+# `ErrorInfo.metadata`, so the field name also reaches the client there; this
+# turns it into the structured entry section 11.6 asks for as well.
+#
+# + err - The error
+# + return - One violation naming the field, or `()` when the error is not a
+#            validation error or names no field
+isolated function fieldViolationsOf(Error err) returns json[]? {
+    int? code = err.detail()?.code;
+    json data = err.detail()?.data;
+    if (code != -32600 && code != -32602) || data !is map<json> {
+        return;
+    }
+    json fieldName = data["field"];
+    if fieldName !is string {
+        return;
+    }
+    return [{"field": fieldName, "description": err.message()}];
 }
 
 # Builds the error for a request to a path that is no A2A operation.

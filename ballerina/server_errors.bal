@@ -117,19 +117,27 @@ isolated function errorBindingFor(Error err) returns ErrorBinding {
 # + return - The body, keyed the same regardless of transport
 isolated function restErrorBody(Error err) returns json {
     ErrorBinding binding = errorBindingFor(err);
-    return rpcStatusBody(binding.status, err.message(), binding.reason, err.detail()?.data);
+    return rpcStatusBody(binding.status, err.message(), binding.reason, err.detail()?.data, fieldViolationsOf(err));
 }
 
 # Builds the `google.rpc.Status` body from its parts. The one place the
 # shape is written down, so an `a2a:Error` and an authentication rejection
 # (which is not an `a2a:Error`) cannot drift apart.
 #
+# A validation error that names its field also gets a `google.rpc.BadRequest`
+# entry, which [specification section 11.6](https://a2a-protocol.org/latest/specification/#116-error-handling)
+# says implementations SHOULD use "to attach structured data to validation
+# errors". It goes after the `ErrorInfo` entry; clients find each by its
+# `@type`, never by position.
+#
 # + status - The HTTP status the response carries
 # + message - The human-readable message
 # + reason - The `ErrorInfo.reason` string
 # + data - Optional structured detail, carried as `ErrorInfo.metadata`
+# + fieldViolations - Optional `{field, description}` entries for a `BadRequest` detail
 # + return - The body
-isolated function rpcStatusBody(int status, string message, string reason, json? data = ()) returns json {
+isolated function rpcStatusBody(int status, string message, string reason, json? data = (),
+        json[]? fieldViolations = ()) returns json {
     map<json> errorInfo = {
         "@type": "type.googleapis.com/google.rpc.ErrorInfo",
         "reason": reason,
@@ -138,11 +146,18 @@ isolated function rpcStatusBody(int status, string message, string reason, json?
     if data != () {
         errorInfo["metadata"] = data;
     }
+    json[] details = [errorInfo];
+    if fieldViolations is json[] && fieldViolations.length() > 0 {
+        details.push({
+            "@type": "type.googleapis.com/google.rpc.BadRequest",
+            "fieldViolations": fieldViolations
+        });
+    }
     return {
         "error": {
             "code": status,
             "message": message,
-            "details": [errorInfo]
+            "details": details
         }
     };
 }

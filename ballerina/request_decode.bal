@@ -35,6 +35,7 @@ isolated function decodeSendMessageRequest(json|error payload) returns SendMessa
     if payload is error {
         return invalidRequest(string `request body is not valid JSON: ${payload.message()}`);
     }
+    check checkMessagePartVariants(payload);
     json|error decoded = decodeRawBytesFromWire(payload);
     if decoded is error {
         // A part with no variant or several, or a `raw` that is not base64:
@@ -46,6 +47,41 @@ isolated function decodeSendMessageRequest(json|error payload) returns SendMessa
         return invalidRequest(string `request body did not match SendMessageRequest: ${request.message()}`);
     }
     return request;
+}
+
+# Refuses a `message.parts` entry with other than exactly one of text, raw,
+# url or data set, naming its position.
+#
+# `decodeRawBytesFromWire` makes the same check while it walks the whole body,
+# but cannot say which part failed; this runs first so the error's
+# `google.rpc.BadRequest` entry names `message.parts[i]`. A body without that
+# shape is left for the decoder and `cloneWithType` to refuse.
+#
+# + payload - The request's parsed JSON body
+# + return - An `invalidRequest` error naming the first bad part, or `()`
+isolated function checkMessagePartVariants(json payload) returns Error? {
+    if payload !is map<json> {
+        return;
+    }
+    json message = payload["message"];
+    if message !is map<json> {
+        return;
+    }
+    json parts = message["parts"];
+    if parts !is json[] {
+        return;
+    }
+    foreach [int, json] [index, part] in parts.enumerate() {
+        if part !is map<json> {
+            continue;
+        }
+        int variants = countSetPartVariantsJson(part);
+        if variants != 1 {
+            return invalidRequest(
+                string `Part must have exactly one of text, raw, url, or data set; found ${variants}`,
+                string `message.parts[${index}]`);
+        }
+    }
 }
 
 # Decodes the body of a `createTaskPushNotificationConfig` request, stamping

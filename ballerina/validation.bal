@@ -83,13 +83,14 @@ isolated function validateOutboundMessage(Message message) returns Error? {
 isolated function validateReceivedMessage(Message message) returns Error? {
     if message.parts.length() == 0 {
         return invalidRequest("Message.parts is a required array and must contain at least one element "
-            + "(specification section 5.7)");
+            + "(specification section 5.7)", "message.parts");
     }
-    foreach Part part in message.parts {
+    foreach [int, Part] [index, part] in message.parts.enumerate() {
         int variants = countSetPartVariants(part);
         if variants != 1 {
             return invalidRequest(
-                string `Part must have exactly one of text, raw, url, or data set; found ${variants}`);
+                string `Part must have exactly one of text, raw, url, or data set; found ${variants}`,
+                string `message.parts[${index}]`);
         }
     }
 }
@@ -101,11 +102,13 @@ isolated function validateReceivedMessage(Message message) returns Error? {
 # empty id is fine: the server assigns one.
 #
 # + config - The config the caller supplied, or `()` if none was
+# + idField - Where the id sits in the request body, for the error's field violation
 # + return - An `invalidRequest` error if the id cannot be used as a path segment
-isolated function validatePushConfigId(TaskPushNotificationConfig? config) returns Error? {
+isolated function validatePushConfigId(TaskPushNotificationConfig? config,
+        string idField = "configuration.taskPushNotificationConfig.id") returns Error? {
     string? id = config?.id;
     if id is string && id.includes("/") {
-        return invalidRequest(string `push notification config id "${id}" must not contain '/'`);
+        return invalidRequest(string `push notification config id "${id}" must not contain '/'`, idField);
     }
 }
 

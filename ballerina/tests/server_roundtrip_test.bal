@@ -1164,6 +1164,59 @@ function testServerRoundTripGetTaskAndPushConfigListRejectInvalidQueryValues() r
     test:assertEquals(ok.statusCode, 200);
 }
 
+// Specification 11.6: implementations SHOULD use google.rpc.BadRequest "to
+// attach structured data to validation errors", naming the field at fault
+// (section 3.3.2). The ErrorInfo entry stays, and stays first.
+@test:Config {}
+function testServerRoundTripValidationErrorsCarryBadRequestDetails() returns error? {
+    http:Client raw = check new (serverUrl);
+
+    http:Response queryResp = check raw->get("/tasks?pageSize=abc", {"A2A-Version": "1.0"});
+    json[] queryDetails = check errorDetailsOf(queryResp);
+    test:assertEquals(queryDetails[0].'\@type, "type.googleapis.com/google.rpc.ErrorInfo");
+    test:assertEquals(check badRequestFieldOf(queryDetails), "pageSize");
+
+    json emptyParts = {"message": {"messageId": "m1", "role": "ROLE_USER", "parts": []}};
+    http:Response bodyResp = check raw->post("/message:send", emptyParts,
+            {"A2A-Version": "1.0", "Content-Type": "application/json"});
+    test:assertEquals(bodyResp.statusCode, 400);
+    test:assertEquals(check badRequestFieldOf(check errorDetailsOf(bodyResp)), "message.parts");
+
+    json twoVariants = {"message": {"messageId": "m2", "role": "ROLE_USER",
+        "parts": [{"text": "fine"}, {"text": "both", "url": "https://example.com/a"}]}};
+    http:Response partResp = check raw->post("/message:send", twoVariants,
+            {"A2A-Version": "1.0", "Content-Type": "application/json"});
+    test:assertEquals(check badRequestFieldOf(check errorDetailsOf(partResp)), "message.parts[1]");
+
+    // A 404 is no validation error: no BadRequest entry.
+    http:Response missing = check raw->get("/tasks/does-not-exist", {"A2A-Version": "1.0"});
+    test:assertTrue(badRequestFieldOf(check errorDetailsOf(missing)) is error);
+
+    // The client still decodes the same error type, and sees the field too.
+    Client c = check echoClient();
+    ListTasksResponse|Error result = c->listTasks({pageSize: 500});
+    test:assertTrue(result is InternalError);
+    InternalError rejected = <InternalError>result;
+    test:assertEquals(rejected.detail()?.code, -32602);
+    test:assertEquals(rejected.detail()?.data, {"field": "pageSize"});
+}
+
+isolated function errorDetailsOf(http:Response resp) returns json[]|error {
+    json body = check resp.getJsonPayload();
+    return <json[]>check body.'error.details;
+}
+
+isolated function badRequestFieldOf(json[] details) returns string|error {
+    foreach json detail in details {
+        map<json> entry = check detail.ensureType();
+        if entry["@type"] == "type.googleapis.com/google.rpc.BadRequest" {
+            json[] violations = check entry["fieldViolations"].ensureType();
+            return violations[0].'field.ensureType();
+        }
+    }
+    return error("no google.rpc.BadRequest entry");
+}
+
 // Specification 3.2.4: at historyLength 0 the `history` field SHOULD be
 // omitted, not sent as an empty array -- on getTask and listTasks alike.
 @test:Config {}

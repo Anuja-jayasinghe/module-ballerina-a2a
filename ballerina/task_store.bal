@@ -235,7 +235,7 @@ public isolated class InMemoryTaskStore {
         if requestedPageSize is int && (requestedPageSize < LIST_TASKS_MIN_PAGE_SIZE
                 || requestedPageSize > LIST_TASKS_MAX_PAGE_SIZE) {
             return invalidParams(string `pageSize must be between ${LIST_TASKS_MIN_PAGE_SIZE} and `
-                + string `${LIST_TASKS_MAX_PAGE_SIZE} inclusive, got ${requestedPageSize}`);
+                + string `${LIST_TASKS_MAX_PAGE_SIZE} inclusive, got ${requestedPageSize}`, "pageSize");
         }
         int pageSize = requestedPageSize ?: LIST_TASKS_DEFAULT_PAGE_SIZE;
         int startIndex = 0;
@@ -248,7 +248,8 @@ public isolated class InMemoryTaskStore {
                 // it is a caller passing back a cursor from a different
                 // query, an expired one, or one it invented. The reference
                 // a2a-sdk agrees (InvalidParams "Invalid page token").
-                return invalidParams(string `pageToken "${pageToken}" does not name a task in this result set`);
+                return invalidParams(string `pageToken "${pageToken}" does not name a task in this result set`,
+                    "pageToken");
             }
             startIndex = found + 1;
         }
