@@ -21,8 +21,30 @@
 // but the specification defines no mechanism for establishing who a caller
 // is. That is deployment policy, not protocol, so this library surfaces a
 // hook rather than inventing an authentication scheme.
+//
+// The resolver sees a `CallerContext`, never a transport's own request type:
+// whichever binding received the call builds the context from its native
+// request, so one resolver serves every binding unchanged.
 
-import ballerina/http;
+# Who is calling, independent of the transport that delivered the call.
+#
+# Built once per inbound request by the binding that received it, after
+# authentication and tenant routing, and handed to `a2a:TaskOwnerResolver`.
+public type CallerContext record {|
+    # The identity inbound authentication already established (a JWT's `sub`,
+    # the introspected `sub` or `username`, or the Basic username), or `()`
+    # when no `auth` is configured. Prefer this over re-deriving an identity
+    # from `headers`: it is the verified one.
+    string? identity;
+    # The tenant segment the request was routed under, or `()`
+    string? tenant;
+    # The request headers, with every name lower-cased, each mapped to all of
+    # its values
+    map<string[]> headers;
+    # The base64-encoded certificate the client presented, when a mutual TLS
+    # handshake passed; `()` otherwise
+    string? clientCertificateBase64;
+|};
 
 # Resolves the caller of an inbound request to an opaque owner scope, for
 # task-visibility scoping.
@@ -34,8 +56,8 @@ import ballerina/http;
 # returns `()` only in that the former matches this server's behavior before
 # this feature existed -- every task in one shared, unscoped pool.
 #
-# Implement this against whatever identifies a caller in your deployment — a
-# bearer token's subject claim, an mTLS certificate's principal, an API key
+# Implement this against whatever identifies a caller in your deployment — the
+# authenticated `identity`, an mTLS certificate's principal, an API key header
 # looked up against a directory. This resolves identity; it does not
 # authenticate it. A resolver that trusts an unverified header is not a
 # security boundary, and satisfying [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping) requires
@@ -46,10 +68,10 @@ public type TaskOwnerResolver isolated object {
 
     # Resolves the request's caller to an owner scope.
     #
-    # + req - The inbound HTTP request
+    # + context - Who is calling, as the receiving binding established it
     # + return - The caller's owner scope, `()` if the request carries no
     #            resolvable identity, or an error if resolution itself failed
     #            (a malformed token, an unreachable directory) — distinct
     #            from a legitimately anonymous `()` result
-    public isolated function resolveOwner(http:Request req) returns string?|Error;
+    public isolated function resolveOwner(CallerContext context) returns string?|Error;
 };

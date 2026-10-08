@@ -262,18 +262,22 @@ isolated class ListenerAuthenticator {
         return self.challenges;
     }
 
-    # Authenticates one request.
+    # Authenticates one request by its credential.
     #
-    # + req - The inbound request
+    # Takes the credential, not the request, so any binding that can produce an
+    # `Authorization` value -- an HTTP header, gRPC metadata -- authenticates
+    # through the same chain.
+    #
+    # + authorizationHeader - The request's `Authorization` value, or `()` if it
+    #                         carried none
     # + return - The caller's identity, or why it was not admitted
-    isolated function authenticate(http:Request req) returns string|AuthFailure {
-        // Without a header there is nothing to check, and the handlers log an
-        // error when asked to look for one that is not there.
-        string|http:HeaderNotFoundError header = req.getHeader("Authorization");
-        if header is http:HeaderNotFoundError {
+    isolated function authenticate(string? authorizationHeader) returns string|AuthFailure {
+        // Without a credential there is nothing to check, and the handlers log
+        // an error when asked to look for one that is not there.
+        if authorizationHeader is () {
             return {forbidden: false};
         }
-        return self.first.authenticateChain(schemeOf(header), header);
+        return self.first.authenticateChain(schemeOf(authorizationHeader), authorizationHeader);
     }
 }
 

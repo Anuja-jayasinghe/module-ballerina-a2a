@@ -1366,9 +1366,9 @@ function testServerRoundTripListPushNotificationConfigsOnATaskWithNoneIsAnEmptyP
 isolated class HeaderOwnerResolver {
     *TaskOwnerResolver;
 
-    public isolated function resolveOwner(http:Request req) returns string?|Error {
-        string|http:HeaderNotFoundError header = req.getHeader("X-Test-Owner");
-        return header is string ? header : ();
+    public isolated function resolveOwner(CallerContext context) returns string?|Error {
+        string[]? owners = context.headers["x-test-owner"];
+        return owners is string[] && owners.length() > 0 ? owners[0] : ();
     }
 }
 

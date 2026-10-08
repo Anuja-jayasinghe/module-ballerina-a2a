@@ -106,7 +106,8 @@ isolated service class DispatcherService {
         string? identity = ();
         ListenerAuthenticator? authenticator = self.authenticator;
         if authenticator is ListenerAuthenticator {
-            string|AuthFailure authenticated = authenticator.authenticate(req);
+            string|http:HeaderNotFoundError authorization = req.getHeader(AUTHORIZATION_HEADER);
+            string|AuthFailure authenticated = authenticator.authenticate(authorization is string ? authorization : ());
             if authenticated is AuthFailure {
                 return toAuthErrorResponse(authenticated.forbidden, authenticator.challengeHeaders());
             }
@@ -138,7 +139,7 @@ isolated service class DispatcherService {
         string? owner;
         TaskOwnerResolver? resolver = self.ownerResolver;
         if resolver is TaskOwnerResolver {
-            string?|Error resolved = resolver.resolveOwner(req);
+            string?|Error resolved = resolver.resolveOwner(callerContextOf(req, identity, tenant));
             if resolved is Error {
                 return toRestErrorResponse(resolved);
             }
@@ -791,4 +792,32 @@ isolated function queryToListFilter(http:Request req) returns ListTasksRequest|E
 # + return - The public URL when configured, otherwise `scheme://host`
 isolated function interfaceUrlFor(string? publicUrl, string scheme, string host) returns string {
     return publicUrl ?: string `${scheme}://${host}`;
+}
+
+# Builds the transport-free view of a request's caller that an
+# `a2a:TaskOwnerResolver` sees.
+#
+# Header names are lower-cased: HTTP treats them case-insensitively, and the
+# same resolver should read `x-api-key` whichever binding delivered it. The
+# client certificate is passed on only when the mutual TLS handshake passed.
+#
+# + req - The inbound request
+# + identity - The identity authentication established, or `()`
+# + tenant - The tenant the request was routed under, or `()`
+# + return - The caller context
+isolated function callerContextOf(http:Request req, string? identity, string? tenant) returns CallerContext {
+    map<string[]> headers = {};
+    foreach string name in req.getHeaderNames() {
+        string key = name.toLowerAscii();
+        // `getHeaders` is itself case-insensitive, so a name already taken
+        // under another casing has all its values already.
+        string[]|http:HeaderNotFoundError values = req.getHeaders(name);
+        if !headers.hasKey(key) && values is string[] {
+            headers[key] = values;
+        }
+    }
+    http:MutualSslHandshake? handshake = req.mutualSslHandshake;
+    string? certificate = handshake is http:MutualSslHandshake && handshake.status == http:PASSED
+        ? handshake.base64EncodedCert : ();
+    return {identity, tenant, headers, clientCertificateBase64: certificate};
 }

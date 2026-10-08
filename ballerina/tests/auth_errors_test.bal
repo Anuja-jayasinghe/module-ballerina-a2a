@@ -76,8 +76,9 @@ service / on statusStub {
 isolated class FailingOwnerResolver {
     *TaskOwnerResolver;
 
-    public isolated function resolveOwner(http:Request req) returns string?|Error {
-        string|http:HeaderNotFoundError mode = req.getHeader("X-Test-Fail");
+    public isolated function resolveOwner(CallerContext context) returns string?|Error {
+        string[]? modes = context.headers["x-test-fail"];
+        string? mode = modes is string[] && modes.length() > 0 ? modes[0] : ();
         if mode == "401" {
             return error AuthenticationError("token could not be verified", message = "token could not be verified");
         }
