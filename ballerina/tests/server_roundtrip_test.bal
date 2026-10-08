@@ -631,8 +631,8 @@ function testServerRoundTripSendMessageHistoryLengthZeroOmitsHistory() returns e
         configuration: {historyLength: 0}
     });
     test:assertTrue(result is Task);
-    Message[] history = (<Task>result)?.history ?: [];
-    test:assertEquals(history, [], "historyLength: 0 must omit history from a blocking sendMessage response");
+    test:assertTrue((<Task>result)?.history is (),
+            "historyLength: 0 must omit history from a blocking sendMessage response (section 3.2.4)");
 }
 
 @test:Config {}
@@ -647,8 +647,7 @@ function testServerRoundTripSendMessageReturnImmediatelyHistoryLengthZero() retu
         configuration: {historyLength: 0, returnImmediately: true}
     });
     test:assertTrue(result is Task);
-    Message[] history = (<Task>result)?.history ?: [];
-    test:assertEquals(history, [], "the returnImmediately snapshot must also respect historyLength");
+    test:assertTrue((<Task>result)?.history is (), "the returnImmediately snapshot must also respect historyLength");
 }
 
 @test:Config {}
@@ -661,8 +660,7 @@ function testServerRoundTripSendStreamingMessageHistoryLengthZeroOmitsHistoryFro
 
     StreamResponse first = check expectStreamValue(events);
     test:assertTrue(first is Task, "the first event must be the newly created task");
-    Message[] history = (<Task>first)?.history ?: [];
-    test:assertEquals(history, [],
+    test:assertTrue((<Task>first)?.history is (),
             "the seed Task event sendStreamingMessage broadcasts live must also respect historyLength");
 
     // Drain the rest so this task's driver finishes cleanly before the
@@ -1139,6 +1137,29 @@ function testServerRoundTripListTasksRejectsInvalidQueryValues() returns error? 
         test:assertEquals(resp.statusCode, 400, query);
         test:assertEquals(check reasonOf(resp), "INVALID_PARAMS", query);
     }
+}
+
+// Specification 3.2.4: at historyLength 0 the `history` field SHOULD be
+// omitted, not sent as an empty array -- on getTask and listTasks alike.
+@test:Config {}
+function testServerRoundTripHistoryLengthZeroOmitsTheHistoryField() returns error? {
+    Client c = check echoClient();
+    Task created = <Task>check c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "remember me"}]}
+    });
+    http:Client raw = check new (serverUrl);
+
+    http:Response fetchedResp = check raw->get(string `/tasks/${created.id}?historyLength=0`, {"A2A-Version": "1.0"});
+    json fetched = check fetchedResp.getJsonPayload();
+    test:assertFalse((<map<json>>fetched).hasKey("history"), "getTask must omit history at historyLength=0");
+
+    string contextId = created.contextId ?: "";
+    http:Response listedResp = check raw->get(string `/tasks?contextId=${contextId}&historyLength=0`,
+            {"A2A-Version": "1.0"});
+    json listed = check listedResp.getJsonPayload();
+    json[] tasks = <json[]>check listed.tasks;
+    test:assertEquals(tasks.length(), 1);
+    test:assertFalse((<map<json>>tasks[0]).hasKey("history"), "listTasks must omit history at historyLength=0");
 }
 
 // ---- extended Agent Card ------------------------------------------------

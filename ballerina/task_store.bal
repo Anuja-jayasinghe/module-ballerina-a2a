@@ -299,7 +299,8 @@ public isolated class InMemoryTaskStore {
 #
 # Section 3.1.4 requires `artifacts` to be omitted entirely — not an empty
 # array — when `includeArtifacts` is false, so this removes the field rather
-# than blanking it.
+# than blanking it. `history` gets the same treatment at `historyLength` 0:
+# section 3.2.4 says the field SHOULD be omitted, not sent empty.
 #
 # + task - The stored task
 # + includeArtifacts - Whether to keep the artifacts field
@@ -312,9 +313,10 @@ isolated function projectTask(Task task, boolean includeArtifacts, int? historyL
     }
     if historyLength is int {
         Message[]? history = copy?.history;
-        if history is Message[] && history.length() > historyLength {
-            copy.history = historyLength <= 0 ? []
-                : history.slice(history.length() - historyLength);
+        if historyLength <= 0 {
+            _ = copy.removeIfHasKey("history");
+        } else if history is Message[] && history.length() > historyLength {
+            copy.history = history.slice(history.length() - historyLength);
         }
     }
     return copy;
