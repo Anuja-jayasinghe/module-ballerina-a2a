@@ -373,7 +373,7 @@ isolated service class DispatcherService {
             if id.includes("/") {
                 return methodNotFound(string `no A2A operation at ${method} ${path}`);
             }
-            int? historyLength = queryInt(req, "historyLength");
+            int? historyLength = check queryInt(req, "historyLength");
             return jsonResponse((check self.handler.getTask({id, historyLength}, owner)).toJson());
         }
         return methodNotFound(string `no A2A operation at ${method} ${path}`);
@@ -502,7 +502,7 @@ isolated service class DispatcherService {
     private isolated function onListTaskPushNotificationConfigs(string taskId, string? owner, http:Request req)
             returns http:Response|Error {
         ListTaskPushNotificationConfigsRequest request = {taskId};
-        int? pageSize = queryInt(req, "pageSize");
+        int? pageSize = check queryInt(req, "pageSize");
         if pageSize is int {
             request.pageSize = pageSize;
         }
@@ -684,18 +684,26 @@ isolated function cardHttpResponse(AgentCard card) returns http:Response {
     return response;
 }
 
-# Reads an integer query parameter, or `()` if absent or unparseable.
+# Reads an integer query parameter.
+#
+# A value that is present but not an integer is refused rather than ignored,
+# so `historyLength=abc` is a 400 and not a silent "no limit"
+# ([specification section 3.3.2](https://a2a-protocol.org/latest/specification/#332-error-handling):
+# servers MUST validate all input parameters).
 #
 # + req - The request
 # + name - The parameter name
-# + return - The integer value, or `()`
-isolated function queryInt(http:Request req, string name) returns int? {
+# + return - The integer value, `()` if absent, or an InvalidParams Error
+isolated function queryInt(http:Request req, string name) returns int|Error? {
     string? raw = req.getQueryParamValue(name);
     if raw is () {
         return;
     }
     int|error parsed = int:fromString(raw);
-    return parsed is int ? parsed : ();
+    if parsed is error {
+        return invalidParams(string `${name} "${raw}" is not an integer`);
+    }
+    return parsed;
 }
 
 # The first two dot-separated components of a version string -- its
@@ -744,24 +752,16 @@ isolated function queryToListFilter(http:Request req) returns ListTasksRequest|E
         }
         filter.status = state;
     }
-    string? rawPageSize = req.getQueryParamValue("pageSize");
-    if rawPageSize is string {
-        int|error pageSize = int:fromString(rawPageSize);
-        if pageSize is error {
-            return invalidParams(string `pageSize "${rawPageSize}" is not an integer`);
-        }
+    int? pageSize = check queryInt(req, "pageSize");
+    if pageSize is int {
         filter.pageSize = pageSize;
     }
     string? pageToken = req.getQueryParamValue("pageToken");
     if pageToken is string {
         filter.pageToken = pageToken;
     }
-    string? rawHistoryLength = req.getQueryParamValue("historyLength");
-    if rawHistoryLength is string {
-        int|error historyLength = int:fromString(rawHistoryLength);
-        if historyLength is error {
-            return invalidParams(string `historyLength "${rawHistoryLength}" is not an integer`);
-        }
+    int? historyLength = check queryInt(req, "historyLength");
+    if historyLength is int {
         filter.historyLength = historyLength;
     }
     string? after = req.getQueryParamValue("statusTimestampAfter");
@@ -774,6 +774,9 @@ isolated function queryToListFilter(http:Request req) returns ListTasksRequest|E
     }
     string? includeArtifacts = req.getQueryParamValue("includeArtifacts");
     if includeArtifacts is string {
+        if includeArtifacts != "true" && includeArtifacts != "false" {
+            return invalidParams(string `includeArtifacts "${includeArtifacts}" is not true or false`);
+        }
         filter.includeArtifacts = includeArtifacts == "true";
     }
     return filter;

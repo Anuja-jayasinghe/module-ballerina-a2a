@@ -1130,13 +1130,38 @@ function testServerRoundTripListTasksRejectsInvalidQueryValues() returns error? 
         "status=nonsense",
         "pageSize=abc",
         "historyLength=abc",
-        "statusTimestampAfter=not-a-timestamp"
+        "statusTimestampAfter=not-a-timestamp",
+        "includeArtifacts=maybe"
     ];
     foreach string query in badQueries {
         http:Response resp = check raw->get(string `/tasks?${query}`, {"A2A-Version": "1.0"});
         test:assertEquals(resp.statusCode, 400, query);
         test:assertEquals(check reasonOf(resp), "INVALID_PARAMS", query);
     }
+}
+
+// The same rule on the other two GET operations that take numeric query
+// values: getTask's historyLength and the push-config list's pageSize used to
+// be dropped when they didn't parse, answering as if they were never sent.
+@test:Config {}
+function testServerRoundTripGetTaskAndPushConfigListRejectInvalidQueryValues() returns error? {
+    Client c = check echoClient();
+    Task created = <Task>check c->sendMessage({
+        message: {messageId: "m1", role: ROLE_USER, parts: [{text: "query me"}]}
+    });
+    http:Client raw = check new (serverUrl);
+    string[] badPaths = [
+        string `/tasks/${created.id}?historyLength=abc`,
+        string `/tasks/${created.id}/pushNotificationConfigs?pageSize=abc`
+    ];
+    foreach string path in badPaths {
+        http:Response resp = check raw->get(path, {"A2A-Version": "1.0"});
+        test:assertEquals(resp.statusCode, 400, path);
+        test:assertEquals(check reasonOf(resp), "INVALID_PARAMS", path);
+    }
+    // includeArtifacts=false still parses: the strict check refuses garbage only.
+    http:Response ok = check raw->get("/tasks?includeArtifacts=false", {"A2A-Version": "1.0"});
+    test:assertEquals(ok.statusCode, 200);
 }
 
 // Specification 3.2.4: at historyLength 0 the `history` field SHOULD be
