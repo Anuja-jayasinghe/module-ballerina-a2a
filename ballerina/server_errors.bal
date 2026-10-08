@@ -187,15 +187,28 @@ isolated function toRestErrorResponse(Error err) returns http:Response {
 # not reveal whether a resource exists ("MUST NOT reveal the existence of
 # resources the client is not authorized to access").
 #
-# + forbidden - True for a 403 (identified, lacks a scope), false for a 401
+# A 403 names the scopes that would have admitted the caller, in the message
+# and as `ErrorInfo.metadata.requiredScopes`: section 3.3.2 says servers SHOULD
+# "indicate what permission or scope is missing". They are the listener's own
+# configured scopes, the same for every request, so they reveal nothing about
+# any resource.
+#
+# + failure - Why the request was not admitted
 # + challenges - The `WWW-Authenticate` values a 401 carries
 # + return - The response
-isolated function toAuthErrorResponse(boolean forbidden, string[] challenges) returns http:Response {
+isolated function toAuthErrorResponse(AuthFailure failure, string[] challenges) returns http:Response {
     http:Response response = new;
-    if forbidden {
+    if failure.forbidden {
+        string[] scopes = failure.requiredScopes;
+        string message = "The authenticated caller is not permitted to perform this operation";
+        json? metadata = ();
+        if scopes.length() > 0 {
+            message = string `The authenticated caller lacks a required scope: `
+                + string `this operation requires one of: ${", ".'join(...scopes)}`;
+            metadata = {"requiredScopes": ", ".'join(...scopes)};
+        }
         response.statusCode = http:STATUS_FORBIDDEN;
-        response.setJsonPayload(rpcStatusBody(http:STATUS_FORBIDDEN,
-                "The authenticated caller is not permitted to perform this operation", "PERMISSION_DENIED"),
+        response.setJsonPayload(rpcStatusBody(http:STATUS_FORBIDDEN, message, "PERMISSION_DENIED", metadata),
                 CONTENT_TYPE_A2A_JSON);
         return response;
     }

@@ -45,6 +45,9 @@ type AuthFailure record {|
     # True when the caller was identified but lacks a required scope (a 403);
     # false when it was not identified at all (a 401)
     boolean forbidden;
+    # For a 403, the scopes the entry that identified the caller requires, any
+    # one of which would have admitted it
+    string[] requiredScopes = [];
 |};
 
 # One configured way of authenticating a request, and the `ballerina/http`
@@ -135,11 +138,22 @@ isolated class AuthEntry {
             // Identified but lacking a scope: no other entry will do better,
             // so say so rather than fall through to a 401.
             if result is http:Forbidden {
-                return {forbidden: true};
+                return {forbidden: true, requiredScopes: self.requiredScopes()};
             }
         }
         AuthEntry? next = self.next;
         return next is AuthEntry ? next.authenticateChain(scheme, header) : {forbidden: false};
+    }
+
+    # The scopes this entry requires, as a list.
+    #
+    # + return - The configured scopes; empty when the entry requires none
+    isolated function requiredScopes() returns string[] {
+        (string|string[])? scopes = self.scopes;
+        if scopes is string {
+            return [scopes];
+        }
+        return scopes is string[] ? scopes.clone() : [];
     }
 
     # Checks one `Authorization` header value against this entry.

@@ -112,7 +112,7 @@ isolated service class DispatcherService {
             string|http:HeaderNotFoundError authorization = req.getHeader(AUTHORIZATION_HEADER);
             string|AuthFailure authenticated = authenticator.authenticate(authorization is string ? authorization : ());
             if authenticated is AuthFailure {
-                return toAuthErrorResponse(authenticated.forbidden, authenticator.challengeHeaders());
+                return toAuthErrorResponse(authenticated, authenticator.challengeHeaders());
             }
             identity = authenticated;
         }

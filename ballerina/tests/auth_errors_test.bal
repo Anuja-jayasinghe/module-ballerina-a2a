@@ -228,6 +228,10 @@ function testAMissingScopeIsAnAuthorizationError() returns error? {
     ListTasksResponse|Error result = c->listTasks({});
     test:assertTrue(result is AuthorizationError, "the credential is valid but the scope is not enough");
     test:assertEquals((<Error>result).detail().code, 403);
+    // Specification 3.3.2: the 403 SHOULD say which scope is missing.
+    test:assertTrue((<Error>result).message().includes("a2a:write"),
+            string `the 403 must name the required scope, got "${(<Error>result).message()}"`);
+    test:assertEquals((<Error>result).detail()?.data, {"requiredScopes": "a2a:write"});
 
     string writer = check bearerToken("alice-typed", scope = "a2a:write");
     HttpClient ok = check new (string `http://localhost:${SCOPED_AUTH_TEST_PORT}`,
