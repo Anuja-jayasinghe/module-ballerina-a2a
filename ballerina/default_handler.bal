@@ -57,7 +57,7 @@ isolated class DefaultHandler {
     // reflects this in capabilities.extendedAgentCard.
     private final (AgentCard & readonly)? extendedCard;
     private final PushNotificationSender pushSender;
-    private final TaskExecutionRegistry registry;
+    private final EventBroadcasterRegistry registry;
     // How long a live tap waits idle before ending its stream -- the
     // backstop for a client that disconnects without the HTTP layer
     // surfacing it as a clean stream close. See `ListenerConfiguration.
@@ -80,7 +80,7 @@ isolated class DefaultHandler {
     private final boolean pushNotificationsCapability;
 
     isolated function init(Service agentService, TaskStore store, (AgentCard & readonly)? extendedCard,
-            PushNotificationSender pushSender, TaskExecutionRegistry registry, decimal streamIdleTimeout,
+            PushNotificationSender pushSender, EventBroadcasterRegistry registry, decimal streamIdleTimeout,
             decimal keepAliveInterval = 0, boolean pushNotificationsCapability = true) {
         self.agentService = agentService;
         self.store = store;

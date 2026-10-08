@@ -279,7 +279,7 @@ public isolated class Listener {
     # + name - Ignored; the A2A paths are fixed by the specification
     # + return - An `a2a:Error` if attachment fails
     public isolated function attach(Service a2aService, string[]|string? name = ()) returns error? {
-        TaskExecutionRegistry registry = new;
+        InMemoryEventBroadcasterRegistry registry = new;
         DefaultHandler handler = new (a2aService, self.store, self.extendedCard, self.pushSender, registry,
                 self.streamIdleTimeout, self.keepAliveInterval, self.card.capabilities.pushNotifications);
         DispatcherService dispatcherService = new (self.card, handler, self.ownerResolver, self.authenticator,

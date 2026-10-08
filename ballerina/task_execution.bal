@@ -19,13 +19,19 @@
 // however many subscribers attach, and a registry so a later, separate
 // request can find the task still being driven.
 //
-// All three types are module-private -- unlike TaskStore/PushNotificationSender/
-// TaskOwnerResolver (each a single-method, genuinely deployment-specific
-// policy), this is three coupled interfaces around an in-process blocking
-// queue. A multi-instance deployment can't implement the same contract with
-// a real broker anyway, so this isn't a seam worth shipping; a deployment
-// that needs to follow a task across instances already can, via push
-// notifications.
+// `EventBroadcaster` and `EventBroadcasterRegistry` are public interfaces, the
+// same kind of seam `TaskStore` is: a deployment can replace where events
+// travel without touching how the protocol drives a task. The in-process
+// defaults, `InMemoryEventBroadcasterRegistry` and the broadcasters it hands
+// out, are what every deployment gets unless it supplies its own. `EventTap`,
+// the queue one subscriber reads, stays a single concrete class: it is what a
+// stream is built from, so any broadcaster hands out the same kind.
+//
+// A replacement must keep the registry's driver interlock (see
+// `EventBroadcasterRegistry.acquire`) and the broadcaster's ordering -- every
+// subscriber gets every event in the same order, per [specification section 3.5.2](https://a2a-protocol.org/latest/specification/#352-streaming-event-delivery).
+// A deployment that only needs to follow a task across instances can already
+// do that with push notifications, without replacing either.
 //
 // Verified against real, empirically-run scratch packages this session,
 // not just read: `start` on an isolated method genuinely detaches an HTTP
@@ -47,9 +53,9 @@ const decimal EVENT_POLL_INTERVAL = 0.05;
 # What a tap's `next` returns, in place of an event, once `keepAliveInterval`
 # has passed with nothing to deliver: "still here, nothing to report".
 #
-# Not a failure. It travels in the error position of `stream<StreamResponse,
-# Error?>` only because that is the one channel the stream type leaves free, and
-# is never visible outside this package: the tap's only consumer is
+# Not a failure. It travels in the error position of the tap's stream only
+# because that is the one channel the stream type leaves free, and is never
+# visible outside this package: the tap's only consumer is
 # `SseFramingGenerator`, which turns it into an SSE comment frame. A distinct
 # subtype so nothing can mistake it for a real `Error`.
 type KeepAliveTick distinct Error;
@@ -66,7 +72,10 @@ type KeepAliveTick distinct Error;
 # The idle time is counted across ticks, not restarted by them: a keep-alive
 # is not activity, so a stream that produces nothing but keep-alives still
 # reaches `idleTimeout`.
-isolated class EventTap {
+#
+# A custom `a2a:EventBroadcaster` hands these out from `newTap`, and feeds
+# each one through `push`, `signalDone`, and `endWithError`.
+public isolated class EventTap {
     private StreamResponse[] queue = [];
     private boolean closed = false;
     // Set by `endWithError`, consumed by the first `next` call that reaches an
@@ -80,11 +89,13 @@ isolated class EventTap {
     // calls so a keep-alive tick does not reset it.
     private decimal silentFor = 0d;
 
+    # Creates a tap.
+    #
     # + idleTimeout - Seconds of no events before `next` gives up and
     #                 ends the stream; `0` disables the timeout
-    # + keepAliveInterval - Seconds of no events before `next` returns a
-    #                       `KeepAliveTick`; `0` disables keep-alives
-    isolated function init(decimal idleTimeout = 0, decimal keepAliveInterval = 0) {
+    # + keepAliveInterval - Seconds of no events before the stream sends a
+    #                       keep-alive; `0` disables keep-alives
+    public isolated function init(decimal idleTimeout = 0, decimal keepAliveInterval = 0) {
         self.idleTimeout = idleTimeout;
         self.keepAliveInterval = keepAliveInterval;
     }
@@ -92,7 +103,7 @@ isolated class EventTap {
     # Queues an event for this subscriber.
     #
     # + event - The event to deliver
-    isolated function push(StreamResponse event) {
+    public isolated function push(StreamResponse event) {
         lock {
             self.queue.push(event.clone());
         }
@@ -100,7 +111,7 @@ isolated class EventTap {
 
     # Queues an event at the *front* of the queue, ahead of anything
     # already pushed -- used to prepend a task's current snapshot after a
-    # subscriber has already attached (see `TaskExecutionRegistry.subscribe`'s
+    # subscriber has already attached (see `InMemoryEventBroadcasterRegistry.subscribe`'s
     # doc comment for why attach must happen before the snapshot read).
     #
     # + event - The event to prepend
@@ -111,9 +122,9 @@ isolated class EventTap {
     }
 
     # No more events will ever be pushed; `next` drains what remains,
-    # then ends. Called by the producer side (`EventBroadcaster`) -- see
+    # then ends. Called by the producer side (an `EventBroadcaster`) -- see
     # `close` for the consumer-side equivalent a stream's own caller uses.
-    isolated function signalDone() {
+    public isolated function signalDone() {
         lock {
             self.closed = true;
         }
@@ -126,14 +137,18 @@ isolated class EventTap {
     # `DefaultHandler.finishDrivenTask`).
     #
     # + err - The error to complete the stream with
-    isolated function endWithError(Error err) {
+    public isolated function endWithError(Error err) {
         lock {
             self.pendingError = err;
             self.closed = true;
         }
     }
 
-    isolated function isClosed() returns boolean {
+    # Whether this tap has been closed, by either side -- a broadcaster stops
+    # pushing to a closed tap, so a subscriber that went away is not fed forever.
+    #
+    # + return - `true` once closed
+    public isolated function isClosed() returns boolean {
         lock {
             return self.closed;
         }
@@ -195,8 +210,39 @@ isolated class EventTap {
 #
 # Per [specification section 3.5.2](https://a2a-protocol.org/latest/specification/#352-streaming-event-delivery): every active stream for a task receives
 # the same events in the same order, and closing one stream must not
-# affect another.
-isolated class EventBroadcaster {
+# affect another. An implementation must keep both guarantees.
+public type EventBroadcaster isolated object {
+
+    # Delivers an event to every subscriber currently attached.
+    #
+    # + event - The event to broadcast
+    public isolated function push(StreamResponse event);
+
+    # No more events will ever be broadcast; ends every subscriber's stream
+    # once it has drained.
+    public isolated function close();
+
+    # Ends every subscriber's stream with `err` once it has drained, instead of
+    # a clean close.
+    #
+    # + err - The error to complete every stream with
+    public isolated function endWithError(Error err);
+
+    # Attaches a new subscriber.
+    #
+    # + idleTimeout - Seconds of no events before the subscriber's stream ends;
+    #                 `0` disables the timeout
+    # + keepAliveInterval - Seconds of no events before the stream sends a
+    #                       keep-alive; `0` disables keep-alives
+    # + return - A tap receiving every event broadcast from here on; already
+    #            closed if the broadcaster has closed
+    public isolated function newTap(decimal idleTimeout = 0, decimal keepAliveInterval = 0) returns EventTap;
+};
+
+# The in-process `EventBroadcaster`: fans events out to taps in this process.
+isolated class InMemoryEventBroadcaster {
+    *EventBroadcaster;
+
     private EventTap[] taps = [];
     private boolean closed = false;
 
@@ -205,7 +251,7 @@ isolated class EventBroadcaster {
     # transient subscribers doesn't accumulate dead queues.
     #
     # + event - The event to broadcast
-    isolated function push(StreamResponse event) {
+    public isolated function push(StreamResponse event) {
         lock {
             EventTap[] stillOpen = [];
             foreach EventTap tap in self.taps {
@@ -219,7 +265,7 @@ isolated class EventBroadcaster {
     }
 
     # No more events will ever be broadcast; closes every open tap.
-    isolated function close() {
+    public isolated function close() {
         lock {
             foreach EventTap tap in self.taps {
                 tap.signalDone();
@@ -232,7 +278,7 @@ isolated class EventBroadcaster {
     # clean close -- see `EventTap.endWithError`.
     #
     # + err - The error to complete every tap with
-    isolated function endWithError(Error err) {
+    public isolated function endWithError(Error err) {
         lock {
             foreach EventTap tap in self.taps {
                 tap.endWithError(err);
@@ -251,7 +297,7 @@ isolated class EventBroadcaster {
     # + idleTimeout - Forwarded to the new tap
     # + keepAliveInterval - Forwarded to the new tap
     # + return - A tap that will receive every event broadcast from here on
-    isolated function newTap(decimal idleTimeout = 0, decimal keepAliveInterval = 0) returns EventTap {
+    public isolated function newTap(decimal idleTimeout = 0, decimal keepAliveInterval = 0) returns EventTap {
         final EventTap tap = new (idleTimeout, keepAliveInterval);
         lock {
             if self.closed {
@@ -264,8 +310,49 @@ isolated class EventBroadcaster {
     }
 }
 
-# Tracks which tasks are actively being driven, so a later, separate
-# request can find and follow one still in progress.
+# Keeps one `EventBroadcaster` per task, and tracks which tasks are actively
+# being driven, so a later, separate request can find and follow one still in
+# progress.
+#
+# Pass an implementation as `DefaultHandlerConfiguration.eventRegistry` to
+# replace the in-process default, `a2a:InMemoryEventBroadcasterRegistry`.
+public type EventBroadcasterRegistry isolated object {
+
+    # Claims the exclusive right to drive a task, creating its broadcaster if
+    # this is the task's first message. While one claim is held, every further
+    # `acquire` for the same task must return `()`: a second concurrent message
+    # to an in-flight task is rejected, never run alongside the first.
+    #
+    # + taskId - The task to drive
+    # + return - The broadcaster to push events to, or `()` if another driver
+    #            already holds this task
+    public isolated function acquire(string taskId) returns EventBroadcaster?;
+
+    # Finds or creates a task's broadcaster without claiming the driver slot,
+    # for a subscriber attaching to a task that may or may not have a driver.
+    #
+    # + taskId - The task to follow
+    # + return - The broadcaster to attach a tap to
+    public isolated function subscribe(string taskId) returns EventBroadcaster;
+
+    # Releases the claim a prior `acquire` took.
+    #
+    # + taskId - The task that finished this driving turn
+    # + terminal - Whether the task reached a terminal state, in which case its
+    #              broadcaster may be dropped too; a paused task keeps its
+    #              broadcaster, so subscribers already attached see it resume
+    public isolated function release(string taskId, boolean terminal);
+
+    # Finds a task's broadcaster if one exists, without creating one or
+    # touching the driver slot.
+    #
+    # + taskId - The task to look up
+    # + return - The existing broadcaster, or `()`
+    public isolated function peekBroadcaster(string taskId) returns EventBroadcaster?;
+};
+
+# The in-process `EventBroadcasterRegistry` every `a2a:DefaultHandler` uses
+# unless configured otherwise. Events reach only subscribers in this process.
 #
 # `acquire` and `subscribe` differ in one thing: `acquire` claims the
 # exclusive right to drive a task (a second concurrent message to the same
@@ -273,7 +360,9 @@ isolated class EventBroadcaster {
 # the first); `subscribe` only needs to find or create the broadcaster to
 # attach a tap to, and never blocks a driver from claiming the task later
 # (a subscriber may legitimately attach to a paused, not-yet-resumed task).
-isolated class TaskExecutionRegistry {
+public isolated class InMemoryEventBroadcasterRegistry {
+    *EventBroadcasterRegistry;
+
     private map<EventBroadcaster> broadcasters = {};
     // Which task ids currently have a driver running. A task can have a
     // broadcaster (because a subscriber attached to a paused task) without
@@ -287,13 +376,13 @@ isolated class TaskExecutionRegistry {
     # + taskId - The task to drive
     # + return - The broadcaster to push events to, or `()` if another
     #            driver already holds this task
-    isolated function acquire(string taskId) returns EventBroadcaster? {
+    public isolated function acquire(string taskId) returns EventBroadcaster? {
         lock {
             if self.driving[taskId] == true {
                 return;
             }
             self.driving[taskId] = true;
-            EventBroadcaster broadcaster = self.broadcasters[taskId] ?: new;
+            EventBroadcaster broadcaster = self.broadcasters[taskId] ?: new InMemoryEventBroadcaster();
             self.broadcasters[taskId] = broadcaster;
             return broadcaster;
         }
@@ -305,9 +394,9 @@ isolated class TaskExecutionRegistry {
     #
     # + taskId - The task to follow
     # + return - The broadcaster to attach a tap to
-    isolated function subscribe(string taskId) returns EventBroadcaster {
+    public isolated function subscribe(string taskId) returns EventBroadcaster {
         lock {
-            EventBroadcaster broadcaster = self.broadcasters[taskId] ?: new;
+            EventBroadcaster broadcaster = self.broadcasters[taskId] ?: new InMemoryEventBroadcaster();
             self.broadcasters[taskId] = broadcaster;
             return broadcaster;
         }
@@ -322,7 +411,7 @@ isolated class TaskExecutionRegistry {
     #              either; a paused (non-terminal) task keeps its
     #              broadcaster, so a later message resuming it reaches
     #              whatever subscribers already attached
-    isolated function release(string taskId, boolean terminal) {
+    public isolated function release(string taskId, boolean terminal) {
         lock {
             _ = self.driving.removeIfHasKey(taskId);
             if terminal {
@@ -349,7 +438,7 @@ isolated class TaskExecutionRegistry {
     # + taskId - The task to look up
     # + return - The existing broadcaster, or `()` if none has been
     #            created yet
-    isolated function peekBroadcaster(string taskId) returns EventBroadcaster? {
+    public isolated function peekBroadcaster(string taskId) returns EventBroadcaster? {
         lock {
             return self.broadcasters[taskId];
         }

@@ -95,7 +95,7 @@ function testEventTapIdleTimeoutEndsStreamWithNoEvents() returns error? {
 
 @test:Config {}
 function testEventBroadcasterFansOutToEveryOpenTap() returns error? {
-    EventBroadcaster broadcaster = new;
+    InMemoryEventBroadcaster broadcaster = new;
     EventTap tapA = broadcaster.newTap();
     EventTap tapB = broadcaster.newTap();
 
@@ -109,7 +109,7 @@ function testEventBroadcasterFansOutToEveryOpenTap() returns error? {
 
 @test:Config {}
 function testEventBroadcasterCloseEndsEveryTap() returns error? {
-    EventBroadcaster broadcaster = new;
+    InMemoryEventBroadcaster broadcaster = new;
     EventTap tapA = broadcaster.newTap();
     EventTap tapB = broadcaster.newTap();
 
@@ -123,7 +123,7 @@ function testEventBroadcasterCloseEndsEveryTap() returns error? {
 
 @test:Config {}
 function testEventBroadcasterNewTapAfterCloseComesPreClosed() returns error? {
-    EventBroadcaster broadcaster = new;
+    InMemoryEventBroadcaster broadcaster = new;
     broadcaster.close();
 
     // A subscriber attaching just as the task finishes must not spin on
@@ -134,8 +134,8 @@ function testEventBroadcasterNewTapAfterCloseComesPreClosed() returns error? {
 }
 
 @test:Config {}
-function testTaskExecutionRegistryAcquireRejectsSecondConcurrentDriver() returns error? {
-    TaskExecutionRegistry registry = new;
+function testInMemoryEventBroadcasterRegistryAcquireRejectsSecondConcurrentDriver() returns error? {
+    InMemoryEventBroadcasterRegistry registry = new;
     EventBroadcaster? first = registry.acquire("t1");
     test:assertTrue(first is EventBroadcaster, "the first acquire for a task must succeed");
 
@@ -144,8 +144,8 @@ function testTaskExecutionRegistryAcquireRejectsSecondConcurrentDriver() returns
 }
 
 @test:Config {}
-function testTaskExecutionRegistryReleaseFreesTheDriverSlot() returns error? {
-    TaskExecutionRegistry registry = new;
+function testInMemoryEventBroadcasterRegistryReleaseFreesTheDriverSlot() returns error? {
+    InMemoryEventBroadcasterRegistry registry = new;
     EventBroadcaster? first = registry.acquire("t1");
     test:assertTrue(first is EventBroadcaster);
 
@@ -157,8 +157,8 @@ function testTaskExecutionRegistryReleaseFreesTheDriverSlot() returns error? {
 }
 
 @test:Config {}
-function testTaskExecutionRegistryNonTerminalReleaseKeepsBroadcaster() returns error? {
-    TaskExecutionRegistry registry = new;
+function testInMemoryEventBroadcasterRegistryNonTerminalReleaseKeepsBroadcaster() returns error? {
+    InMemoryEventBroadcasterRegistry registry = new;
     EventBroadcaster? acquired = registry.acquire("t1");
     test:assertTrue(acquired is EventBroadcaster);
     EventBroadcaster broadcaster = <EventBroadcaster>acquired;
@@ -177,8 +177,8 @@ function testTaskExecutionRegistryNonTerminalReleaseKeepsBroadcaster() returns e
 }
 
 @test:Config {}
-function testTaskExecutionRegistryTerminalReleaseDropsBroadcaster() returns error? {
-    TaskExecutionRegistry registry = new;
+function testInMemoryEventBroadcasterRegistryTerminalReleaseDropsBroadcaster() returns error? {
+    InMemoryEventBroadcasterRegistry registry = new;
     EventBroadcaster? acquired = registry.acquire("t1");
     test:assertTrue(acquired is EventBroadcaster);
 
@@ -189,15 +189,15 @@ function testTaskExecutionRegistryTerminalReleaseDropsBroadcaster() returns erro
 }
 
 @test:Config {}
-function testTaskExecutionRegistryPeekBroadcasterFindsNoneForAnUntouchedTask() returns error? {
-    TaskExecutionRegistry registry = new;
+function testInMemoryEventBroadcasterRegistryPeekBroadcasterFindsNoneForAnUntouchedTask() returns error? {
+    InMemoryEventBroadcasterRegistry registry = new;
     EventBroadcaster? peeked = registry.peekBroadcaster("never-touched");
     test:assertTrue(peeked is (), "a task nobody has driven or subscribed to has no broadcaster yet");
 }
 
 @test:Config {}
-function testTaskExecutionRegistrySubscribeDoesNotClaimDriverSlot() returns error? {
-    TaskExecutionRegistry registry = new;
+function testInMemoryEventBroadcasterRegistrySubscribeDoesNotClaimDriverSlot() returns error? {
+    InMemoryEventBroadcasterRegistry registry = new;
     EventBroadcaster _ = registry.subscribe("t1");
 
     // subscribe must never block a driver from claiming the task later --
@@ -216,7 +216,7 @@ function testSseFramingGeneratorCloseForwardsToItsUnderlyingTap() returns error?
     // not through an actual HTTP disconnect -- there is no reliable,
     // non-flaky way to force one from a well-behaved http:Client -- against
     // the same EventBroadcaster/EventTap pair a live stream really wraps.
-    EventBroadcaster broadcaster = new;
+    InMemoryEventBroadcaster broadcaster = new;
     EventTap tap = broadcaster.newTap();
     stream<StreamResponse, Error?> tapStream = new (tap);
     SseFramingGenerator framing = new (tapStream);

@@ -840,7 +840,7 @@ function testServerRoundTripSubscribeRacingCompletionEndsCleanly() returns error
     // not a wire round trip -- same pattern as
     // testDefaultHandlerGetExtendedAgentCardFailsWhenNoneConfigured above.
     TaskStore store = new BecomesTerminalAfterFirstGet("race-1");
-    DefaultHandler handler = new (new EchoAgent(), store, (), new HttpPushNotificationSender(), new, 300);
+    DefaultHandler handler = new (new EchoAgent(), store, (), new HttpPushNotificationSender(), new InMemoryEventBroadcasterRegistry(), 300);
 
     stream<StreamResponse, Error?>|Error result = handler.subscribeToTask({id: "race-1"}, ());
     if result is Error {
@@ -924,7 +924,7 @@ function testServerRoundTripCancelRacingCompletionIsNotCancelable() returns erro
     // reproducing exactly what a driver that reached COMPLETED first, in
     // between, would leave behind.
     TaskStore store = new RefusesWriteAfterFirstGet("race-2");
-    DefaultHandler handler = new (new EchoAgent(), store, (), new HttpPushNotificationSender(), new, 300);
+    DefaultHandler handler = new (new EchoAgent(), store, (), new HttpPushNotificationSender(), new InMemoryEventBroadcasterRegistry(), 300);
 
     Task|Error canceled = handler.cancelTask({id: "race-2"}, ());
     test:assertTrue(canceled is TaskNotCancelableError,
@@ -1187,7 +1187,7 @@ function testDefaultHandlerGetExtendedAgentCardFailsWhenNoneConfigured() returns
     // against DefaultHandler without that same coupling, so it is
     // exercised directly here rather than left untested.
     TaskStore store = new InMemoryTaskStore();
-    DefaultHandler handler = new (new EchoAgent(), store, (), new HttpPushNotificationSender(), new, 300);
+    DefaultHandler handler = new (new EchoAgent(), store, (), new HttpPushNotificationSender(), new InMemoryEventBroadcasterRegistry(), 300);
     AgentCard|Error result = handler.getExtendedAgentCard();
     test:assertTrue(result is UnsupportedOperationError,
             "capabilities.extendedAgentCard false must be UnsupportedOperationError per specification 3.3.4, " +
