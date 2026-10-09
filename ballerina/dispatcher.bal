@@ -869,5 +869,15 @@ isolated function callerContextOf(http:Request req, string? identity, string? te
     http:MutualSslHandshake? handshake = req.mutualSslHandshake;
     string? certificate = handshake is http:MutualSslHandshake && handshake.status == http:PASSED
         ? handshake.base64EncodedCert : ();
-    return {identity, tenant, headers, clientCertificateBase64: certificate};
+    CallerContext context = {headers};
+    if identity is string {
+        context.identity = identity;
+    }
+    if tenant is string {
+        context.tenant = tenant;
+    }
+    if certificate is string {
+        context.clientCertificateBase64 = certificate;
+    }
+    return context;
 }

@@ -87,13 +87,13 @@ isolated function serviceConfigurationOf(Service a2aService) returns ServiceConf
 public type RequestContext record {|
     # The message the client sent
     Message message;
-    # The tenant segment the request arrived under, or `()`
-    string? tenant;
-    # The caller's resolved owner scope, or `()` when no
+    # The tenant segment the request arrived under, if any
+    string tenant?;
+    # The caller's resolved owner scope; unset when no
     # `a2a:TaskOwnerResolver` is configured, or the resolver itself returned
-    # `()`. Not an authentication result -- `()` is its own scope, shared by
+    # `()`. Not an authentication result -- unset is its own scope, shared by
     # every unscoped caller, not a wildcard.
-    string? owner;
+    string owner?;
     # The send configuration the client attached, if any
-    SendMessageConfiguration? configuration;
+    SendMessageConfiguration configuration?;
 |};

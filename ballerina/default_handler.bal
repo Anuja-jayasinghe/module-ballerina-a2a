@@ -209,7 +209,7 @@ public isolated class DefaultHandler {
         if resolver is TaskOwnerResolver {
             return resolver.resolveOwner(context);
         }
-        return context.identity;
+        return context?.identity;
     }
 
     # Handles sendMessage: create a task (or continue an existing one named
@@ -273,12 +273,7 @@ public isolated class DefaultHandler {
             TaskPushNotificationConfig _ = self.registerPushConfig(taskId, inlineConfig);
         }
 
-        final RequestContext context = {
-            message: request.message,
-            tenant,
-            owner,
-            configuration: request?.configuration
-        };
+        final RequestContext context = requestContextOf(request.message, tenant, owner, request?.configuration);
         // Specification 3.2.2/3.2.4: unset imposes no limit, 0 omits
         // history entirely. Threaded into the updater too, so the one Task
         // snapshot sendStreamingMessage's stream broadcasts respects it as
@@ -740,12 +735,7 @@ public isolated class DefaultHandler {
         // existing.
         EventTap tap = broadcaster.newTap(timing.idleTimeout, timing.keepAliveInterval);
 
-        final RequestContext context = {
-            message: request.message,
-            tenant,
-            owner,
-            configuration: request?.configuration
-        };
+        final RequestContext context = requestContextOf(request.message, tenant, owner, request?.configuration);
         // Specification 3.2.2/3.2.4: applies to the one Task snapshot this
         // stream ever broadcasts (the seed, on the agent's first touch of
         // updater) -- see task_updater.bal's own handling of it.
@@ -1091,6 +1081,29 @@ public isolated class DefaultHandler {
             }
         }
     }
+}
+
+# Builds the `RequestContext` handed to `onMessage`, leaving out whichever of
+# `tenant`, `owner` and `configuration` the request did not carry.
+#
+# + message - The message the client sent
+# + tenant - The tenant the request was routed under, or `()`
+# + owner - The caller's resolved owner scope, or `()`
+# + configuration - The send configuration the client attached, or `()`
+# + return - The context
+isolated function requestContextOf(Message message, string? tenant, string? owner,
+        SendMessageConfiguration? configuration) returns RequestContext {
+    RequestContext context = {message};
+    if tenant is string {
+        context.tenant = tenant;
+    }
+    if owner is string {
+        context.owner = owner;
+    }
+    if configuration is SendMessageConfiguration {
+        context.configuration = configuration;
+    }
+    return context;
 }
 
 # The service a `DefaultHandler` is bound to.

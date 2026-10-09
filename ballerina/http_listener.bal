@@ -146,7 +146,7 @@ public isolated class HttpListener {
     private final http:Listener httpListener;
     private final DefaultHandler handler;
     private final AgentCard & readonly card;
-    private final (AgentCard & readonly)? extendedCard;
+    private final (AgentCard? & readonly) extendedCard;
     private final ListenerAuthenticator? authenticator;
     private final StreamTiming & readonly streamTiming;
     // What the served card's interface URL is built from: the scheme this

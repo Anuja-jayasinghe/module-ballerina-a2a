@@ -33,7 +33,7 @@ isolated class RecordingOwnerResolver {
         lock {
             lastCallerContext = context.clone();
         }
-        return context.identity;
+        return context?.identity;
     }
 }
 
@@ -65,10 +65,10 @@ function testResolverReceivesTheAuthenticatedIdentity() returns error? {
     CallerContext? recorded = recordedCallerContext();
     test:assertTrue(recorded is CallerContext, "the resolver was never called");
     CallerContext seen = <CallerContext>recorded;
-    test:assertEquals(seen.identity, "alice");
+    test:assertEquals(seen?.identity, "alice");
     test:assertEquals(seen.headers["x-api-key"], ["key-1"]);
-    test:assertEquals(seen.tenant, ());
-    test:assertEquals(seen.clientCertificateBase64, ());
+    test:assertEquals(seen?.tenant, ());
+    test:assertEquals(seen?.clientCertificateBase64, ());
 }
 
 @test:Config {}
@@ -79,8 +79,8 @@ function testCallerContextOfLowerCasesHeaderNamesAndKeepsEveryValue() {
     request.addHeader("Accept", "application/json");
 
     CallerContext context = callerContextOf(request, "bob", "acme");
-    test:assertEquals(context.identity, "bob");
-    test:assertEquals(context.tenant, "acme");
+    test:assertEquals(context?.identity, "bob");
+    test:assertEquals(context?.tenant, "acme");
     test:assertEquals(context.headers["x-api-key"], ["k1"]);
     test:assertEquals(context.headers["accept"], ["text/plain", "application/json"]);
     test:assertFalse(context.headers.hasKey("X-Api-Key"));
@@ -90,12 +90,12 @@ function testCallerContextOfLowerCasesHeaderNamesAndKeepsEveryValue() {
 function testCallerContextOfPassesACertificateOnlyFromAPassedHandshake() {
     http:Request passed = new;
     passed.mutualSslHandshake = {status: http:PASSED, base64EncodedCert: "Y2VydA=="};
-    test:assertEquals(callerContextOf(passed, (), ()).clientCertificateBase64, "Y2VydA==");
+    test:assertEquals(callerContextOf(passed, (), ())?.clientCertificateBase64, "Y2VydA==");
 
     http:Request failed = new;
     failed.mutualSslHandshake = {status: http:FAILED, base64EncodedCert: "Y2VydA=="};
-    test:assertEquals(callerContextOf(failed, (), ()).clientCertificateBase64, ());
+    test:assertEquals(callerContextOf(failed, (), ())?.clientCertificateBase64, ());
 
     http:Request plain = new;
-    test:assertEquals(callerContextOf(plain, (), ()).clientCertificateBase64, ());
+    test:assertEquals(callerContextOf(plain, (), ())?.clientCertificateBase64, ());
 }

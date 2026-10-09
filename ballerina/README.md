@@ -482,7 +482,7 @@ isolated class TeamOwnerResolver {
         // Scope by team rather than by individual caller. `identity` is the
         // caller `auth` already verified; a resolver that trusts an
         // unverified header instead is not a security boundary.
-        string? caller = context.identity;
+        string? caller = context?.identity;
         return caller is string ? teamOf(caller) : ();
     }
 }

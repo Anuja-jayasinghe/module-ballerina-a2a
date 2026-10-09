@@ -32,18 +32,18 @@
 # authentication and tenant routing, and handed to `a2a:TaskOwnerResolver`.
 public type CallerContext record {|
     # The identity inbound authentication already established (a JWT's `sub`,
-    # the introspected `sub` or `username`, or the Basic username), or `()`
+    # the introspected `sub` or `username`, or the Basic username); unset
     # when no `auth` is configured. Prefer this over re-deriving an identity
     # from `headers`: it is the verified one.
-    string? identity;
-    # The tenant segment the request was routed under, or `()`
-    string? tenant;
+    string identity?;
+    # The tenant segment the request was routed under, if any
+    string tenant?;
     # The request headers, with every name lower-cased, each mapped to all of
     # its values
     map<string[]> headers;
     # The base64-encoded certificate the client presented, when a mutual TLS
-    # handshake passed; `()` otherwise
-    string? clientCertificateBase64;
+    # handshake passed; unset otherwise
+    string clientCertificateBase64?;
 |};
 
 # Resolves the caller of an inbound request to an opaque owner scope, for
