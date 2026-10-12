@@ -17,10 +17,10 @@
 import ballerina/time;
 import ballerina/uuid;
 
-# Drives one task through its lifecycle from inside `a2a:Service.onMessage`.
+# Drives one task through its lifecycle from inside `a2a:AgentExecutor.execute`.
 #
 # The library hands the developer a `TaskUpdater` already bound to a freshly
-# created task. Each method advances the task's state and persists it through
+# created task, or to the existing task a message continues. Each method advances the task's state and persists it through
 # the store, so a client polling `getTask` sees the progression. `addArtifact`
 # accumulates output; the terminal calls — `complete`, `failed`, `reject` —
 # and the interrupted calls — `requireInput`, `requireAuth` — set the final or
@@ -41,8 +41,8 @@ public isolated client class TaskUpdater {
     // history/metadata forward instead of silently dropping them, and so
     // the final value is available without a separate store read.
     private Task base;
-    // Whether onMessage has driven the task through this updater at least
-    // once. `false` when onMessage returns a direct Message without
+    // Whether execute has driven the task through this updater at least
+    // once. `false` when execute returns a direct Message without
     // touching the updater -- exactly what distinguishes "one Message
     // event, nothing else" from "the agent never drove this task at all."
     private boolean touchedFlag = false;
@@ -238,8 +238,8 @@ public isolated client class TaskUpdater {
         self.broadcaster.push(event);
     }
 
-    # Whether `onMessage` has driven this task through the updater at
-    # least once -- `false` only when `onMessage` returns a direct
+    # Whether `execute` has driven this task through the updater at
+    # least once -- `false` only when `execute` returns a direct
     # `Message` without ever calling a remote method on this updater.
     #
     # Package-private -- `sendMessage`/`sendStreamingMessage` use this to
@@ -254,9 +254,9 @@ public isolated client class TaskUpdater {
     }
 
     # The task's current state -- the last value written via `transition`,
-    # or the original `base` if `onMessage` never touched the updater.
+    # or the original `base` if `execute` never touched the updater.
     #
-    # Package-private -- read after `onMessage` returns, when a caller
+    # Package-private -- read after `execute` returns, when a caller
     # needs the final task without a separate store read (e.g. after a
     # direct `Message` reply, when the store copy was already removed).
     #

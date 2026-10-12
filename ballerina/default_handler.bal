@@ -14,20 +14,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Runs the task lifecycle for an `a2a:Service`.
+// The template behind an `a2a:Service`'s operations.
 //
 // This is the `DefaultRequestHandler` equivalent: the developer's
-// `onMessage` is the only business logic, and this turns its result into the
-// operations a client can call. sendMessage creates a task and drives it
-// (or passes a direct Message straight back); getTask/cancelTask/listTasks
+// `a2a:AgentExecutor` is the only business logic, and this turns its result
+// into the operations a client can call. sendMessage creates a task and drives
+// it (or passes a direct Message straight back); getTask/cancelTask/listTasks
 // read and mutate through the `TaskStore`.
 //
-// It knows nothing of any transport. A developer builds one per agent and
-// hands it to a listener (`a2a:HttpListener`); the listener owns the wire --
-// authentication, the served card's URLs and security schemes, stream
-// keep-alives -- and calls in here. The operations stay package-private: the
-// handler is constructed by developers, but driven only by this package's
-// own listeners.
+// It knows nothing of any transport and nothing of the agent card. A developer
+// builds one per agent, holds it in the service, and has each operation the
+// service defines hand its request here; the listener owns the wire --
+// authentication, the served card, stream keep-alives -- and builds the
+// `Context` every operation receives.
 
 import ballerina/log;
 import ballerina/uuid;
@@ -56,19 +55,17 @@ public type DefaultHandlerConfiguration record {|
     # for durable storage.
     TaskStore taskStore = new InMemoryTaskStore();
     # The richer card `getExtendedAgentCard` returns to callers who request
-    # it. Unset means the agent does not implement the operation: the
-    # derived card declares `capabilities.extendedAgentCard` false, and a
-    # request for it fails with `a2a:UnsupportedOperationError`.
+    # it. Unset, the operation fails with `a2a:ExtendedAgentCardNotConfiguredError`.
+    # The listener derives the capabilities and interfaces of what is served.
     #
-    # Requires authentication: the operation is for authenticated callers, so a
-    # listener given a handler with an extended card and no `auth` refuses to
-    # start ([specification section 13.3](https://a2a-protocol.org/latest/specification/#133-extended-agent-card-access-control)).
+    # A service that defines `onGetExtendedAgentCard` requires authentication:
+    # the operation is for authenticated callers, so its listener refuses to
+    # start without `auth` ([specification section 13.3](https://a2a-protocol.org/latest/specification/#133-extended-agent-card-access-control)).
     AgentCard? extendedAgentCard = ();
     # Resolves each request's caller to an owner scope, for task-visibility
     # scoping per [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping). Unset, the identity the
     # listener's `auth` established is the owner, and with no `auth` either,
-    # every task is visible to every caller. Applies to every listener this
-    # handler is given. See `a2a:TaskOwnerResolver`.
+    # every task is visible to every caller. See `a2a:TaskOwnerResolver`.
     TaskOwnerResolver? ownerResolver = ();
     # Delivers task updates to registered push-notification webhooks.
     # Defaults to `a2a:HttpPushNotificationSender`, a real HTTP POST — unlike
@@ -79,28 +76,12 @@ public type DefaultHandlerConfiguration record {|
     # to `a2a:InMemoryEventBroadcasterRegistry`, which reaches subscribers in
     # this process; see `a2a:EventBroadcasterRegistry` for replacing it.
     EventBroadcasterRegistry eventRegistry = new InMemoryEventBroadcasterRegistry();
-    # Whether the served card advertises `capabilities.streaming`. `true`
-    # by default, since `sendStreamingMessage`/`subscribeToTask` are
-    # always implemented regardless of what any individual `onMessage`
-    # actually does with the `TaskUpdater` it is handed. Set `false` only
-    # when a deployment deliberately wants to withhold the capability --
-    # once `false`, both operations are rejected server-side with
-    # `a2a:UnsupportedOperationError`, per [specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation),
-    # the same as a card that never claimed to support them.
-    boolean streamingCapability = true;
-    # Whether the served card advertises `capabilities.pushNotifications`.
-    # `true` by default, since the push-notification-config operations
-    # and real webhook delivery are always implemented. Set `false` only
-    # when a deployment deliberately wants to withhold the capability --
-    # e.g. no outbound network access for webhooks, or an operator policy
-    # against it -- once `false`, the four config operations are rejected
-    # server-side with `a2a:PushNotificationNotSupportedError`.
-    boolean pushNotificationsCapability = true;
 |};
 
 # How one live stream behaves while nothing is happening: the listener's
-# policy, which the handler applies to each stream it hands out.
-type StreamTiming record {|
+# policy, which the handler applies to each stream it hands out. Carried to the
+# handler in `a2a:Context.streamTiming`.
+public type StreamTiming record {|
     # Seconds of no events before the stream ends; `0` disables the timeout
     decimal idleTimeout = 0;
     # Seconds of no events before the stream sends a keep-alive; `0` sends none
@@ -110,39 +91,26 @@ type StreamTiming record {|
 # Runs the A2A protocol for one agent: its tasks, their lifecycle, live
 # streams, and push-notification configuration.
 #
-# Build one per agent, then give it to a listener, which attaches the
-# agent's `a2a:Service`:
+# Hold one in the agent's service and have each operation hand its request here:
 #
 # ```ballerina
-# final a2a:DefaultHandler handler = new ({
-#     name: "Weather Agent",
-#     description: "Answers weather questions",
-#     version: "1.0.0",
-#     skills: [],
-#     defaultInputModes: ["text"],
-#     defaultOutputModes: ["text"],
-#     capabilities: {},         // derived by the listener
-#     supportedInterfaces: []   // derived by the listener
-# });
+# isolated service /rest on agent {
+#     private final a2a:DefaultHandler handler = new (new WeatherExecutor());
 #
-# listener a2a:HttpListener agent = new (9090, handler);
+#     isolated remote function onGetTask(a2a:Context context, a2a:GetTaskRequest request)
+#             returns a2a:Task|a2a:Error {
+#         return self.handler.getTask(context, request);
+#     }
+#     // ...
+# }
 # ```
 #
-# A handler serves one agent: every listener it is given must attach the same
-# service. Giving it to more than one listener serves the same tasks over each.
+# Every operation resolves the caller's owner scope from the `a2a:Context`
+# itself, so it is the only per-call input.
 public isolated class DefaultHandler {
-    # The agent's card, as the developer supplied it; each listener derives
-    # what it serves from this
-    final AgentCard & readonly agentCard;
-    # The extended card, as configured, or `()`
-    final (AgentCard & readonly)? extendedAgentCard;
-    # `DefaultHandlerConfiguration.streamingCapability`
-    final boolean streamingCapability;
-    # `DefaultHandlerConfiguration.pushNotificationsCapability`; also gates the
-    # inline config on a send request, which is functionally a Create
-    final boolean pushNotificationsCapability;
-    // Bound when a listener attaches the agent's service; one per handler.
-    private ServiceBinding? binding = ();
+    // The extended card, as configured, or `()`
+    private final (AgentCard & readonly)? extendedAgentCard;
+    private final AgentExecutor executor;
     private final TaskStore store;
     // Push-notification config storage: registered, never delivered to (see
     // decision in the server plan -- outbound webhook delivery is a later
@@ -157,44 +125,17 @@ public isolated class DefaultHandler {
 
     # Creates a handler.
     #
-    # + agentCard - The agent's card; `supportedInterfaces` and `capabilities`
-    #               are derived by each listener, so a caller supplies
-    #               identity, skills, and I/O modes
-    # + config - Where the agent's tasks are kept, who may see them, and what
-    #            the agent advertises
-    public isolated function init(AgentCard agentCard, *DefaultHandlerConfiguration config) {
-        self.agentCard = agentCard.cloneReadOnly();
+    # + executor - The agent's logic, run for every message the handler accepts
+    # + config - Where the agent's tasks are kept, who may see them, and how
+    #            their updates are delivered
+    public isolated function init(AgentExecutor executor, *DefaultHandlerConfiguration config) {
+        self.executor = executor;
         AgentCard? extended = config.extendedAgentCard;
         self.extendedAgentCard = extended is AgentCard ? extended.cloneReadOnly() : ();
-        self.streamingCapability = config.streamingCapability;
-        self.pushNotificationsCapability = config.pushNotificationsCapability;
         self.store = config.taskStore;
         self.ownerResolver = config.ownerResolver;
         self.pushSender = config.pushSender;
         self.registry = config.eventRegistry;
-    }
-
-    # Binds the agent's service to this handler, when a listener attaches it.
-    #
-    # The first service binds; the same service again (one agent attached to
-    # several listeners) is accepted; a different one is refused, since a
-    # handler's tasks and card belong to one agent.
-    #
-    # + agentService - The service being attached
-    # + return - An `a2a:InternalError` if a different service is already bound
-    isolated function bindService(Service agentService) returns Error? {
-        lock {
-            ServiceBinding? bound = self.binding;
-            if bound is () {
-                self.binding = new (agentService);
-                return;
-            }
-            if bound.agentService !== agentService {
-                string msg = "this a2a:DefaultHandler already serves a different a2a:Service; "
-                    + "build one DefaultHandler per agent";
-                return error InternalError(msg, message = msg);
-            }
-        }
     }
 
     # Resolves a caller's owner scope: the configured `a2a:TaskOwnerResolver`'s
@@ -204,7 +145,7 @@ public isolated class DefaultHandler {
     # + context - Who is calling, as the receiving listener established it
     # + return - The owner scope, `()` for the shared unscoped pool, or an
     #            error if the resolver failed
-    isolated function resolveOwner(CallerContext context) returns string?|Error {
+    private isolated function resolveOwner(Context context) returns string?|Error {
         TaskOwnerResolver? resolver = self.ownerResolver;
         if resolver is TaskOwnerResolver {
             return resolver.resolveOwner(context);
@@ -213,7 +154,7 @@ public isolated class DefaultHandler {
     }
 
     # Handles sendMessage: create a task (or continue an existing one named
-    # by `message.taskId`), run the developer's `onMessage` against it, and
+    # by `message.taskId`), run the developer's `execute` against it, and
     # return the finished task — or the direct `Message` the agent returned
     # instead.
     #
@@ -221,17 +162,14 @@ public isolated class DefaultHandler {
     # carried on the task, as [section 3.4.1](https://a2a-protocol.org/latest/specification/#341-context-identifier-semantics) requires.
     #
     # + request - The decoded send request
-    # + tenant - The tenant the request was routed under, or `()`
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, and the tenant the request was routed under
     # + return - The finished Task or a direct Message, or an error
-    isolated function sendMessage(SendMessageRequest request, string? tenant, string? owner)
+    public isolated function sendMessage(Context context, SendMessageRequest request)
             returns Task|Message|Error {
+        string? tenant = context?.tenant;
+        string? owner = check self.resolveOwner(context);
         check validateReceivedMessage(request.message);
         check validatePushConfigId(request?.configuration?.taskPushNotificationConfig);
-        if request?.configuration?.taskPushNotificationConfig is TaskPushNotificationConfig
-                && !self.pushNotificationsCapability {
-            return serverPushNotificationsUnsupportedError("sendMessage");
-        }
 
         ResolvedSendTarget target = check self.resolveSendTarget(request, owner);
         string taskId = target.taskId;
@@ -273,7 +211,7 @@ public isolated class DefaultHandler {
             TaskPushNotificationConfig _ = self.registerPushConfig(taskId, inlineConfig);
         }
 
-        final RequestContext context = requestContextOf(request.message, tenant, owner, request?.configuration);
+        final RequestContext requestContext = requestContextOf(request.message, tenant, owner, request?.configuration);
         // Specification 3.2.2/3.2.4: unset imposes no limit, 0 omits
         // history entirely. Threaded into the updater too, so the one Task
         // snapshot sendStreamingMessage's stream broadcasts respects it as
@@ -292,12 +230,12 @@ public isolated class DefaultHandler {
             // `updater`'s own `base`, which must keep the task's full
             // history for later writes to carry forward.
             future<()> _ = start self.finishDrivenTask(
-                    taskId, owner, context.clone(), updater, broadcaster, target.isNewTask, true);
+                    taskId, owner, requestContext.clone(), updater, broadcaster, target.isNewTask, true);
             return projectTask(seed, true, historyLength);
         }
 
         future<Task|Message|Error> f =
-            start self.driveTask(taskId, owner, context.clone(), updater, broadcaster, target.isNewTask, false);
+            start self.driveTask(taskId, owner, requestContext.clone(), updater, broadcaster, target.isNewTask, false);
         [Task|Message|Error, boolean] [result, drivenToThisState] =
             self.settledResult(taskId, owner, self.awaitDriveTask(f));
         boolean stopped = resultStopped(result, target.isNewTask);
@@ -421,7 +359,7 @@ public isolated class DefaultHandler {
 
     # Persists a target `resolveSendTarget` resolved, once the caller holds
     # `registry.acquire`'s exclusive claim on driving it -- so this is the
-    # only write to the task between the claim being taken and `onMessage`
+    # only write to the task between the claim being taken and `execute`
     # starting, and nothing else can be concurrently writing the same task
     # underneath it (a running driver would itself hold that same claim).
     #
@@ -432,14 +370,14 @@ public isolated class DefaultHandler {
         check self.store.put(target.seed, owner);
     }
 
-    # Runs `onMessage` for one task, detached from the request that started
+    # Runs `execute` for one task, detached from the request that started
     # it -- so a slow agent never blocks the strand a separate
     # `subscribeToTask` call needs to attach to the same task's live events.
     #
     # A panic in agent code is trapped rather than left to propagate: with
     # `returnImmediately: true`, or once a subscriber is watching live,
     # there is no synchronous caller left to receive it if it escapes.
-    # Both a trapped panic and `onMessage` returning an `Error` transition
+    # Both a trapped panic and `execute` returning an `Error` transition
     # the task to `TASK_STATE_FAILED` via the same `updater-&gt;failed(...)`
     # an agent itself would call, and forward that Error to whoever
     # eventually reads this call's result -- the only way a live or later
@@ -448,7 +386,7 @@ public isolated class DefaultHandler {
     #
     # + taskId - The task being driven
     # + owner - The caller's resolved owner scope, or `()`
-    # + context - The message and request context to hand to `onMessage`
+    # + context - The message and request context to hand to `execute`
     # + updater - The bound updater; already carries the broadcaster and base
     # + broadcaster - The task's broadcaster -- `updater` only ever
     #                 broadcasts a `Task`-lifecycle event, so a direct
@@ -460,7 +398,7 @@ public isolated class DefaultHandler {
     #               controls whether a direct `Message` reply removes it
     #               from the store, below
     # + returnImmediately - Whether `sendMessage`'s caller already
-    #                        received this task's id before `onMessage`
+    #                        received this task's id before `execute`
     #                        even started -- if so, a direct `Message`
     #                        reply can no longer make the task disappear
     #                        as if it never existed (see below). Always
@@ -474,25 +412,13 @@ public isolated class DefaultHandler {
     # + return - The direct `Message`, the finished `Task`, or an `Error`
     private isolated function driveTask(string taskId, string? owner, RequestContext context, TaskUpdater updater,
             EventBroadcaster broadcaster, boolean isNewTask, boolean returnImmediately) returns Task|Message|Error {
-        ServiceBinding? bound;
-        lock {
-            bound = self.binding;
-        }
-        Message|Error?|error direct;
-        if bound is ServiceBinding {
-            direct = trap bound.onMessage(context, updater);
-        } else {
-            // Unreachable through a listener, which binds before it dispatches;
-            // failing the task beats a nil dereference if it ever happens.
-            string msg = "no a2a:Service is attached to this a2a:DefaultHandler";
-            direct = error InternalError(msg, message = msg);
-        }
+        Message|Error?|error direct = trap self.executor.execute(context, updater);
 
         if direct is Message {
             if returnImmediately {
                 // The caller already received (and may already be
                 // relying on) this task's id, from the immediate-return
-                // snapshot sendMessage handed back before onMessage even
+                // snapshot sendMessage handed back before execute even
                 // started. A direct reply can no longer make the task
                 // disappear as if it never existed -- complete it with
                 // the Message as its final status.message instead, so a
@@ -531,7 +457,7 @@ public isolated class DefaultHandler {
             failure = wrapTransportError(direct);
         } else if !updater.touched() {
             failure = invalidAgentResponse(
-                    string `onMessage returned without driving the task to a state for ${taskId}`);
+                    string `execute returned without driving the task to a state for ${taskId}`);
         }
         if failure is Error {
             // The agent's own failure, which otherwise only reaches the
@@ -604,7 +530,7 @@ public isolated class DefaultHandler {
     #
     # + taskId - The task being driven
     # + owner - The caller's resolved owner scope, or `()`
-    # + context - The message and request context to hand to `onMessage`
+    # + context - The message and request context to hand to `execute`
     # + updater - The bound updater; already carries the broadcaster and base
     # + broadcaster - The task's broadcaster
     # + isNewTask - Forwarded to `driveTask`
@@ -650,7 +576,7 @@ public isolated class DefaultHandler {
     # but the store is the truth: `cancelTask` (or any other writer) may have
     # moved the task since the updater last wrote it, and the store then
     # refuses the updater's later writes -- so its copy stays behind. A task
-    # canceled while its `onMessage` was still running would otherwise be
+    # canceled while its `execute` was still running would otherwise be
     # reported, and webhooked, as whatever state the agent last reached
     # (say WORKING), after the CANCELED that `cancelTask` already announced.
     #
@@ -689,23 +615,21 @@ public isolated class DefaultHandler {
     # Per specification 3.1.2, what reaches the wire is: the just-seeded
     # Task (emitted lazily by `updater`, only once the agent actually
     # touches it -- see `TaskUpdater`) followed by the status/artifact
-    # events `onMessage` drives the task through, or -- for a direct
+    # events `execute` drives the task through, or -- for a direct
     # reply, which never touches `updater` -- exactly one Message event,
     # pushed by `driveTask` itself.
     #
     # + request - The decoded send request
-    # + tenant - The tenant the request was routed under, or `()`
-    # + owner - The caller's resolved owner scope, or `()`
-    # + timing - The listener's idle-timeout and keep-alive policy for the stream
+    # + context - Who is calling, the tenant the request was routed under, and
+    #             the listener's idle-timeout and keep-alive policy for the stream
     # + return - A live stream of the task's events, or an error
-    isolated function sendStreamingMessage(SendMessageRequest request, string? tenant, string? owner,
-            StreamTiming timing = {}) returns stream<StreamResponse, Error?>|Error {
+    public isolated function sendStreamingMessage(Context context, SendMessageRequest request)
+            returns stream<StreamResponse, Error?>|Error {
+        string? tenant = context?.tenant;
+        string? owner = check self.resolveOwner(context);
+        StreamTiming timing = context?.streamTiming ?: {};
         check validateReceivedMessage(request.message);
         check validatePushConfigId(request?.configuration?.taskPushNotificationConfig);
-        if request?.configuration?.taskPushNotificationConfig is TaskPushNotificationConfig
-                && !self.pushNotificationsCapability {
-            return serverPushNotificationsUnsupportedError("sendStreamingMessage");
-        }
 
         ResolvedSendTarget target = check self.resolveSendTarget(request, owner);
         string taskId = target.taskId;
@@ -735,7 +659,7 @@ public isolated class DefaultHandler {
         // existing.
         EventTap tap = broadcaster.newTap(timing.idleTimeout, timing.keepAliveInterval);
 
-        final RequestContext context = requestContextOf(request.message, tenant, owner, request?.configuration);
+        final RequestContext requestContext = requestContextOf(request.message, tenant, owner, request?.configuration);
         // Specification 3.2.2/3.2.4: applies to the one Task snapshot this
         // stream ever broadcasts (the seed, on the agent's first touch of
         // updater) -- see task_updater.bal's own handling of it.
@@ -745,7 +669,7 @@ public isolated class DefaultHandler {
         // returnImmediately has no effect on streaming per the
         // specification -- always false here; see driveTask's own doc.
         future<()> _ = start self.finishDrivenTask(
-                taskId, owner, context.clone(), updater, broadcaster, target.isNewTask, false);
+                taskId, owner, requestContext.clone(), updater, broadcaster, target.isNewTask, false);
 
         stream<StreamResponse, Error?> result = new (tap);
         return result;
@@ -770,12 +694,14 @@ public isolated class DefaultHandler {
     # stream ends when that turn reaches the next interrupted or terminal state.
     #
     # + request - The task identifier
-    # + owner - The caller's resolved owner scope, or `()`
-    # + timing - The listener's idle-timeout and keep-alive policy for the stream
+    # + context - Who is calling, and the listener's idle-timeout and keep-alive
+    #             policy for the stream
     # + return - The live stream, a TaskNotFoundError, or an
     #            UnsupportedOperationError if the task is already terminal
-    isolated function subscribeToTask(SubscribeToTaskRequest request, string? owner, StreamTiming timing = {})
+    public isolated function subscribeToTask(Context context, SubscribeToTaskRequest request)
             returns stream<StreamResponse, Error?>|Error {
+        string? owner = check self.resolveOwner(context);
+        StreamTiming timing = context?.streamTiming ?: {};
         Task? task = check self.store.get(request.id, owner);
         if task is () {
             return taskNotFound(request.id);
@@ -830,9 +756,10 @@ public isolated class DefaultHandler {
     # Handles getTask.
     #
     # + request - The task identifier and optional history length
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, as the listener established it
     # + return - The task, or a TaskNotFoundError
-    isolated function getTask(GetTaskRequest request, string? owner) returns Task|Error {
+    public isolated function getTask(Context context, GetTaskRequest request) returns Task|Error {
+        string? owner = check self.resolveOwner(context);
         Task? task = check self.store.get(request.id, owner);
         if task is () {
             return taskNotFound(request.id);
@@ -846,9 +773,10 @@ public isolated class DefaultHandler {
     # that is a TaskNotCancelableError.
     #
     # + request - The task identifier
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, as the listener established it
     # + return - The canceled task, or an error
-    isolated function cancelTask(CancelTaskRequest request, string? owner) returns Task|Error {
+    public isolated function cancelTask(Context context, CancelTaskRequest request) returns Task|Error {
+        string? owner = check self.resolveOwner(context);
         Task? task = check self.store.get(request.id, owner);
         if task is () {
             return taskNotFound(request.id);
@@ -900,9 +828,11 @@ public isolated class DefaultHandler {
     # Handles listTasks.
     #
     # + request - The filter and pagination parameters
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, as the listener established it
     # + return - A page of tasks
-    isolated function listTasks(ListTasksRequest request, string? owner) returns ListTasksResponse|Error {
+    public isolated function listTasks(Context context, ListTasksRequest request)
+            returns ListTasksResponse|Error {
+        string? owner = check self.resolveOwner(context);
         return self.store.list(request, owner);
     }
 
@@ -912,12 +842,13 @@ public isolated class DefaultHandler {
     #
     # + request - The config to register; `taskId` must be set and name an
     #             existing task
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, as the listener established it
     # + return - The stored config, with `id` filled in, or a
     #            TaskNotFoundError if `taskId` names no task visible to
     #            `owner`
-    isolated function createTaskPushNotificationConfig(TaskPushNotificationConfig request, string? owner)
-            returns TaskPushNotificationConfig|Error {
+    public isolated function createTaskPushNotificationConfig(Context context,
+            TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
+        string? owner = check self.resolveOwner(context);
         check validatePushConfigId(request, "id");
         string? taskId = request?.taskId;
         if taskId is () {
@@ -969,11 +900,12 @@ public isolated class DefaultHandler {
     # shape, per [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping).
     #
     # + request - The parent task id and the config's own id
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, as the listener established it
     # + return - The config, or a TaskNotFoundError if either id is unknown,
     #            or the task is not visible to `owner`
-    isolated function getTaskPushNotificationConfig(GetTaskPushNotificationConfigRequest request, string? owner)
-            returns TaskPushNotificationConfig|Error {
+    public isolated function getTaskPushNotificationConfig(Context context,
+            GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
+        string? owner = check self.resolveOwner(context);
         Task? task = check self.store.get(request.taskId, owner);
         if task is () {
             return taskPushNotificationConfigNotFound(request.taskId, request.id);
@@ -999,11 +931,12 @@ public isolated class DefaultHandler {
     # [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping).
     #
     # + request - The parent task id
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, as the listener established it
     # + return - Every config registered for the task, or an empty page if
     #            the task is not visible to `owner`
-    isolated function listTaskPushNotificationConfigs(ListTaskPushNotificationConfigsRequest request, string? owner)
-            returns ListTaskPushNotificationConfigsResponse|Error {
+    public isolated function listTaskPushNotificationConfigs(Context context,
+            ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
+        string? owner = check self.resolveOwner(context);
         Task? task = check self.store.get(request.taskId, owner);
         if task is () {
             return {configs: [], nextPageToken: ""};
@@ -1033,10 +966,11 @@ public isolated class DefaultHandler {
     # `owner`; both are a silent no-op, never distinguished from each other.
     #
     # + request - The parent task id and the config's own id
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, as the listener established it
     # + return - Nil; always succeeds
-    isolated function deleteTaskPushNotificationConfig(DeleteTaskPushNotificationConfigRequest request,
-            string? owner) returns Error? {
+    public isolated function deleteTaskPushNotificationConfig(Context context,
+            DeleteTaskPushNotificationConfigRequest request) returns Error? {
+        string? owner = check self.resolveOwner(context);
         Task? task = check self.store.get(request.taskId, owner);
         if task is () {
             return;
@@ -1047,6 +981,24 @@ public isolated class DefaultHandler {
                 _ = forTask.removeIfHasKey(request.id);
             }
         }
+    }
+
+    # Handles getExtendedAgentCard: the richer card configured as
+    # `DefaultHandlerConfiguration.extendedAgentCard`. The listener derives the
+    # served capabilities and interfaces from it.
+    #
+    # + request - The (empty) request
+    # + context - Who is calling; the listener has already authenticated them
+    # + return - The extended card, or an `a2a:ExtendedAgentCardNotConfiguredError`
+    #            if none was configured
+    public isolated function getExtendedAgentCard(Context context, GetExtendedAgentCardRequest request)
+            returns AgentCard|Error {
+        AgentCard? extended = self.extendedAgentCard;
+        if extended is () {
+            string msg = "no extended AgentCard is configured for this agent";
+            return error ExtendedAgentCardNotConfiguredError(msg, message = msg, code = -32007);
+        }
+        return extended;
     }
 
     # Notifies every push-notification config registered for a task that it
@@ -1083,7 +1035,7 @@ public isolated class DefaultHandler {
     }
 }
 
-# Builds the `RequestContext` handed to `onMessage`, leaving out whichever of
+# Builds the `RequestContext` handed to `execute`, leaving out whichever of
 # `tenant`, `owner` and `configuration` the request did not carry.
 #
 # + message - The message the client sent
@@ -1104,29 +1056,6 @@ isolated function requestContextOf(Message message, string? tenant, string? owne
         context.configuration = configuration;
     }
     return context;
-}
-
-# The service a `DefaultHandler` is bound to.
-#
-# A holder rather than a field on the handler itself: the binding happens
-# after construction, so it cannot be a `final` field there, and a remote
-# method call on a service object compiles only through a `final` field of
-# `self` -- not through a local variable, however it is narrowed.
-isolated class ServiceBinding {
-    final Service agentService;
-
-    isolated function init(Service agentService) {
-        self.agentService = agentService;
-    }
-
-    # Runs the agent's `onMessage`.
-    #
-    # + context - The message and request context
-    # + updater - The task's updater
-    # + return - What `onMessage` returned
-    isolated function onMessage(RequestContext context, TaskUpdater updater) returns Message|Error? {
-        return self.agentService->onMessage(context, updater);
-    }
 }
 
 # Whether a driven task's result marks a stopping point for its

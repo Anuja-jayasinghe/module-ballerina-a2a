@@ -30,7 +30,7 @@ import ballerina/uuid;
 const int SERVER_TEST_PORT = 19234;
 final string serverUrl = string `http://localhost:${SERVER_TEST_PORT}`;
 
-final DefaultHandler echoHandler = new ({
+final AgentCard echoHandlerCard = {
     name: "Echo Agent",
     description: "Echoes its input",
     version: "1.0.0",
@@ -40,9 +40,11 @@ final DefaultHandler echoHandler = new ({
     // Placeholders: the listener derives both from what it serves.
     capabilities: {},
     supportedInterfaces: []
-});
+};
 
-listener HttpListener echoListener = new (SERVER_TEST_PORT, echoHandler);
+final DefaultHandler echoHandler = new (new EchoAgent());
+
+listener HttpListener echoListener = new (SERVER_TEST_PORT);
 
 // A second listener, on its own port, configured with an extended card --
 // separate from echoListener so that one's own extendedAgentCard:false
@@ -52,7 +54,7 @@ listener HttpListener echoListener = new (SERVER_TEST_PORT, echoHandler);
 const int EXTENDED_CARD_TEST_PORT = 19235;
 final string extendedCardServerUrl = string `http://localhost:${EXTENDED_CARD_TEST_PORT}`;
 
-final DefaultHandler extendedCardHandler = new ({
+final AgentCard extendedCardHandlerCard = {
     name: "Echo Agent",
     description: "Echoes its input",
     version: "1.0.0",
@@ -61,8 +63,9 @@ final DefaultHandler extendedCardHandler = new ({
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-},
-    extendedAgentCard = {
+};
+
+final DefaultHandler extendedCardHandler = new (new EchoAgent(), extendedAgentCard = {
     name: "Echo Agent (extended)",
     description: "Echoes its input -- extended card reveals an internal-only skill",
     version: "1.0.0",
@@ -74,12 +77,9 @@ final DefaultHandler extendedCardHandler = new ({
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-}
-);
+});
 
-listener HttpListener extendedCardListener = new (EXTENDED_CARD_TEST_PORT, extendedCardHandler,
-    auth = [{jwtValidatorConfig: authTestJwtValidator}]
-);
+listener HttpListener extendedCardListener = new (EXTENDED_CARD_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
 
 // A minimal agent: echoes the inbound text back as a completed task's
 // artifact, with a handful of trigger texts for the checkpoints live
@@ -93,10 +93,10 @@ listener HttpListener extendedCardListener = new (EXTENDED_CARD_TEST_PORT, exten
 // - "paced:<key>": blocks at each of three checkpoints on the Gate
 //   registered under <key> (see testutil.bal's registerGate), for
 //   deterministic live-streaming and multi-subscriber fan-out tests.
-isolated service class EchoAgent {
-    *Service;
+isolated class EchoAgent {
+    *AgentExecutor;
 
-    isolated remote function onMessage(RequestContext context, TaskUpdater updater)
+    public isolated function execute(RequestContext context, TaskUpdater updater)
             returns Message|Error? {
         string text = "";
         foreach Part part in context.message.parts {
@@ -157,8 +157,8 @@ isolated service class EchoAgent {
 
 @test:BeforeSuite
 function startEchoServer() returns error? {
-    check echoListener.attach(new EchoAgent());
-    check extendedCardListener.attach(new EchoAgent());
+    check echoListener.attach(new FullService(echoHandler, echoHandlerCard), "rest");
+    check extendedCardListener.attach(new ExtendedService(extendedCardHandler, extendedCardHandlerCard), "rest");
 }
 
 isolated function echoClient() returns HttpClient|error => new (serverUrl);
@@ -197,7 +197,7 @@ function testServerResponsesUseA2AJsonContentType() returns error? {
     http:Response cardResp = check raw->get("/.well-known/agent-card.json");
     test:assertEquals(cardResp.getContentType(), "application/a2a+json");
 
-    http:Response errorResp = check raw->get("/tasks/does-not-exist", {"A2A-Version": "1.0"});
+    http:Response errorResp = check raw->get("/rest/tasks/does-not-exist", {"A2A-Version": "1.0"});
     test:assertEquals(errorResp.getContentType(), "application/a2a+json");
 }
 
@@ -210,7 +210,7 @@ function testServerResponsesUseA2AJsonContentType() returns error? {
 @test:Config {}
 function testServerAcceptsAPatchQualifiedVersion() returns error? {
     http:Client raw = check new (serverUrl);
-    http:Response resp = check raw->get("/tasks/does-not-exist", {"A2A-Version": "1.0.5"});
+    http:Response resp = check raw->get("/rest/tasks/does-not-exist", {"A2A-Version": "1.0.5"});
     // 404 (task not found) proves the request was actually processed as
     // v1.0, not refused as an unsupported version.
     test:assertEquals(resp.statusCode, 404);
@@ -223,7 +223,7 @@ function testServerAcceptsAPatchQualifiedVersion() returns error? {
 @test:Config {}
 function testServerStillRejectsADifferentMinorVersion() returns error? {
     http:Client raw = check new (serverUrl);
-    http:Response resp = check raw->get("/tasks/does-not-exist", {"A2A-Version": "1.1"});
+    http:Response resp = check raw->get("/rest/tasks/does-not-exist", {"A2A-Version": "1.1"});
     test:assertEquals(resp.statusCode, 400);
     test:assertEquals(check reasonOf(resp), "VERSION_NOT_SUPPORTED");
 }
@@ -246,7 +246,7 @@ function testServerRoundTripFileBytesReachTheAgentAsBytes() returns error? {
     http:Client raw = check new (serverUrl);
     json body = {"message": {"messageId": "raw-2", "role": "ROLE_USER",
         "parts": [{"raw": "dGNr", "mediaType": "application/x-unsupported-tck-type"}]}};
-    http:Response resp = check raw->post("/message:send", body,
+    http:Response resp = check raw->post("/rest/message:send", body,
             {"A2A-Version": "1.0", "Content-Type": "application/json"});
     test:assertEquals(resp.statusCode, 200);
     json payload = check resp.getJsonPayload();
@@ -283,7 +283,7 @@ function testServerRejectsMalformedRequestBodiesWith400() returns error? {
         "{\"message\": {\"messageId\": \"m\", \"role\": \"ROLE_USER\", \"parts\": [{\"text\": \"a\", \"url\": \"http://x\"}]}}",
         "{\"message\": {\"messageId\": \"m\", \"role\": \"ROLE_USER\", \"parts\": []}}"
     ];
-    foreach string path in ["/message:send", "/message:stream"] {
+    foreach string path in ["/rest/message:send", "/rest/message:stream"] {
         foreach string body in badBodies {
             http:Response resp = check raw->post(path, body, headers);
             test:assertEquals(resp.statusCode, 400, string `${path} with ${body}`);
@@ -301,7 +301,7 @@ function testServerRejectsMalformedRequestBodiesWith400() returns error? {
         message: {messageId: "m-bad-cfg", role: ROLE_USER, parts: [{text: "x"}]}
     });
     foreach string body in ["[1, 2]", "{\"token\": \"t\"}"] {
-        http:Response resp = check raw->post(string `/tasks/${created.id}/pushNotificationConfigs`, body, headers);
+        http:Response resp = check raw->post(string `/rest/tasks/${created.id}/pushNotificationConfigs`, body, headers);
         test:assertEquals(resp.statusCode, 400, string `push config with ${body}`);
     }
 }
@@ -557,7 +557,7 @@ function testServerRoundTripErrorStatusCodesMatchSpecTable() returns error? {
     Task created = <Task>check (check echoClient())->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "already done"}]}
     });
-    http:Response cancelResponse = check raw->post(string `/tasks/${created.id}:cancel`, (), headers);
+    http:Response cancelResponse = check raw->post(string `/rest/tasks/${created.id}:cancel`, (), headers);
     test:assertEquals(cancelResponse.statusCode, http:STATUS_BAD_REQUEST,
             "TaskNotCancelableError must be 400 Bad Request per the spec's error table");
 
@@ -565,7 +565,7 @@ function testServerRoundTripErrorStatusCodesMatchSpecTable() returns error? {
     // capabilities.extendedAgentCard reads false and this is
     // UnsupportedOperationError (see getExtendedAgentCard's own doc) --
     // still 400, not 404, either way.
-    http:Response cardResponse = check raw->get("/extendedAgentCard", headers);
+    http:Response cardResponse = check raw->get("/rest/extendedAgentCard", headers);
     test:assertEquals(cardResponse.statusCode, http:STATUS_BAD_REQUEST,
             "an unconfigured extended card's rejection must be 400, not 404 -- it's the server's own " +
             "configuration, not a missing resource the request named");
@@ -846,9 +846,10 @@ function testServerRoundTripSubscribeRacingCompletionEndsCleanly() returns error
     // not a wire round trip -- same pattern as
     // testServedExtendedCardFailsWhenNoneConfigured above.
     TaskStore store = new BecomesTerminalAfterFirstGet("race-1");
-    DefaultHandler handler = new (authTestCard, taskStore = store);
+    DefaultHandler handler = new (new CountingAgent(), taskStore = store);
 
-    stream<StreamResponse, Error?>|Error result = handler.subscribeToTask({id: "race-1"}, (), {idleTimeout: 300});
+    stream<StreamResponse, Error?>|Error result =
+        handler.subscribeToTask({headers: {}, streamTiming: {idleTimeout: 300}}, {id: "race-1"});
     if result is Error {
         test:assertFail(result.message());
     }
@@ -930,9 +931,9 @@ function testServerRoundTripCancelRacingCompletionIsNotCancelable() returns erro
     // reproducing exactly what a driver that reached COMPLETED first, in
     // between, would leave behind.
     TaskStore store = new RefusesWriteAfterFirstGet("race-2");
-    DefaultHandler handler = new (authTestCard, taskStore = store);
+    DefaultHandler handler = new (new CountingAgent(), taskStore = store);
 
-    Task|Error canceled = handler.cancelTask({id: "race-2"}, ());
+    Task|Error canceled = handler.cancelTask({headers: {}}, {id: "race-2"});
     test:assertTrue(canceled is TaskNotCancelableError,
             "a cancel that loses the race to the task's own completion must be TaskNotCancelableError, not a bare 500");
 }
@@ -1134,7 +1135,7 @@ function testServerRoundTripListTasksRejectsInvalidQueryValues() returns error? 
         "includeArtifacts=maybe"
     ];
     foreach string query in badQueries {
-        http:Response resp = check raw->get(string `/tasks?${query}`, {"A2A-Version": "1.0"});
+        http:Response resp = check raw->get(string `/rest/tasks?${query}`, {"A2A-Version": "1.0"});
         test:assertEquals(resp.statusCode, 400, query);
         test:assertEquals(check reasonOf(resp), "INVALID_PARAMS", query);
     }
@@ -1151,8 +1152,8 @@ function testServerRoundTripGetTaskAndPushConfigListRejectInvalidQueryValues() r
     });
     http:Client raw = check new (serverUrl);
     string[] badPaths = [
-        string `/tasks/${created.id}?historyLength=abc`,
-        string `/tasks/${created.id}/pushNotificationConfigs?pageSize=abc`
+        string `/rest/tasks/${created.id}?historyLength=abc`,
+        string `/rest/tasks/${created.id}/pushNotificationConfigs?pageSize=abc`
     ];
     foreach string path in badPaths {
         http:Response resp = check raw->get(path, {"A2A-Version": "1.0"});
@@ -1160,7 +1161,7 @@ function testServerRoundTripGetTaskAndPushConfigListRejectInvalidQueryValues() r
         test:assertEquals(check reasonOf(resp), "INVALID_PARAMS", path);
     }
     // includeArtifacts=false still parses: the strict check refuses garbage only.
-    http:Response ok = check raw->get("/tasks?includeArtifacts=false", {"A2A-Version": "1.0"});
+    http:Response ok = check raw->get("/rest/tasks?includeArtifacts=false", {"A2A-Version": "1.0"});
     test:assertEquals(ok.statusCode, 200);
 }
 
@@ -1171,25 +1172,25 @@ function testServerRoundTripGetTaskAndPushConfigListRejectInvalidQueryValues() r
 function testServerRoundTripValidationErrorsCarryBadRequestDetails() returns error? {
     http:Client raw = check new (serverUrl);
 
-    http:Response queryResp = check raw->get("/tasks?pageSize=abc", {"A2A-Version": "1.0"});
+    http:Response queryResp = check raw->get("/rest/tasks?pageSize=abc", {"A2A-Version": "1.0"});
     json[] queryDetails = check errorDetailsOf(queryResp);
     test:assertEquals(queryDetails[0].'\@type, "type.googleapis.com/google.rpc.ErrorInfo");
     test:assertEquals(check badRequestFieldOf(queryDetails), "pageSize");
 
     json emptyParts = {"message": {"messageId": "m1", "role": "ROLE_USER", "parts": []}};
-    http:Response bodyResp = check raw->post("/message:send", emptyParts,
+    http:Response bodyResp = check raw->post("/rest/message:send", emptyParts,
             {"A2A-Version": "1.0", "Content-Type": "application/json"});
     test:assertEquals(bodyResp.statusCode, 400);
     test:assertEquals(check badRequestFieldOf(check errorDetailsOf(bodyResp)), "message.parts");
 
     json twoVariants = {"message": {"messageId": "m2", "role": "ROLE_USER",
         "parts": [{"text": "fine"}, {"text": "both", "url": "https://example.com/a"}]}};
-    http:Response partResp = check raw->post("/message:send", twoVariants,
+    http:Response partResp = check raw->post("/rest/message:send", twoVariants,
             {"A2A-Version": "1.0", "Content-Type": "application/json"});
     test:assertEquals(check badRequestFieldOf(check errorDetailsOf(partResp)), "message.parts[1]");
 
     // A 404 is no validation error: no BadRequest entry.
-    http:Response missing = check raw->get("/tasks/does-not-exist", {"A2A-Version": "1.0"});
+    http:Response missing = check raw->get("/rest/tasks/does-not-exist", {"A2A-Version": "1.0"});
     test:assertTrue(badRequestFieldOf(check errorDetailsOf(missing)) is error);
 
     // The client still decodes the same error type, and sees the field too.
@@ -1246,12 +1247,12 @@ function testServerRoundTripHistoryLengthZeroOmitsTheHistoryField() returns erro
     });
     http:Client raw = check new (serverUrl);
 
-    http:Response fetchedResp = check raw->get(string `/tasks/${created.id}?historyLength=0`, {"A2A-Version": "1.0"});
+    http:Response fetchedResp = check raw->get(string `/rest/tasks/${created.id}?historyLength=0`, {"A2A-Version": "1.0"});
     json fetched = check fetchedResp.getJsonPayload();
     test:assertFalse((<map<json>>fetched).hasKey("history"), "getTask must omit history at historyLength=0");
 
     string contextId = created.contextId ?: "";
-    http:Response listedResp = check raw->get(string `/tasks?contextId=${contextId}&historyLength=0`,
+    http:Response listedResp = check raw->get(string `/rest/tasks?contextId=${contextId}&historyLength=0`,
             {"A2A-Version": "1.0"});
     json listed = check listedResp.getJsonPayload();
     json[] tasks = <json[]>check listed.tasks;
@@ -1298,25 +1299,23 @@ function testServerRoundTripGetExtendedAgentCardWhenConfigured() returns error? 
     test:assertEquals(extended.capabilities.extendedAgentCard, true,
             "the extended card, being itself, has one configured");
     test:assertEquals(extended.supportedInterfaces.length(), 1);
-    test:assertEquals(extended.supportedInterfaces[0].url, extendedCardServerUrl,
+    test:assertEquals(extended.supportedInterfaces[0].url, extendedCardServerUrl + "/rest",
             "the extended card's own interface URL must be filled in from the request, same as the public card's");
 }
 
 @test:Config {}
-function testServedExtendedCardFailsWhenNoneConfigured() {
-    // Direct unit test, not a wire round trip: deriveServedCard ties
-    // capabilities.extendedAgentCard to whether a card was configured, so
-    // this request never actually reaches a Client through echoListener's
-    // own wiring -- the Client already refuses client-side with the same
-    // UnsupportedOperationError this asserts, per the test above. The
-    // branch is still real code for a future binding that serves the
-    // extended card without that same coupling, so it is exercised
-    // directly here rather than left untested.
-    AgentCard|Error result = servedExtendedCard(());
+function testExtendedCardNotDefinedByTheServiceIsUnsupported() {
+    // Direct unit test, not a wire round trip: a service without
+    // onGetExtendedAgentCard declares capabilities.extendedAgentCard false, so
+    // the Client already refuses client-side with the same
+    // UnsupportedOperationError this asserts, per the test above. The binding's
+    // stand-in for an undefined operation is still the code that answers a
+    // caller that does not honour the card, so it is exercised directly.
+    OperationBinding binding = new (new MessageOnlyService(new DefaultHandler(new CountingAgent()), authTestCard));
+    AgentCard|Error result = binding.getExtendedAgentCard({headers: {}}, {});
     test:assertTrue(result is UnsupportedOperationError,
             "capabilities.extendedAgentCard false must be UnsupportedOperationError per specification 3.3.4, " +
-            "not ExtendedAgentCardNotConfiguredError -- that's reserved for capability true but still unconfigured, " +
-            "a state this listener's own deriveServedCard never lets happen");
+            "not ExtendedAgentCardNotConfiguredError -- that's reserved for capability true but still unconfigured");
 }
 
 // ---- push-notification config CRUD --------------------------------------
@@ -1490,7 +1489,7 @@ function testServerRoundTripListPushNotificationConfigsOnATaskWithNoneIsAnEmptyP
 isolated class HeaderOwnerResolver {
     *TaskOwnerResolver;
 
-    public isolated function resolveOwner(CallerContext context) returns string?|Error {
+    public isolated function resolveOwner(Context context) returns string?|Error {
         string[]? owners = context.headers["x-test-owner"];
         return owners is string[] && owners.length() > 0 ? owners[0] : ();
     }
@@ -1499,7 +1498,7 @@ isolated class HeaderOwnerResolver {
 const int OWNER_SCOPED_TEST_PORT = 19236;
 final string ownerScopedServerUrl = string `http://localhost:${OWNER_SCOPED_TEST_PORT}`;
 
-final DefaultHandler ownerScopedHandler = new ({
+final AgentCard ownerScopedHandlerCard = {
     name: "Echo Agent",
     description: "Echoes its input",
     version: "1.0.0",
@@ -1508,15 +1507,15 @@ final DefaultHandler ownerScopedHandler = new ({
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-},
-    ownerResolver = new HeaderOwnerResolver()
-);
+};
 
-listener HttpListener ownerScopedListener = new (OWNER_SCOPED_TEST_PORT, ownerScopedHandler);
+final DefaultHandler ownerScopedHandler = new (new EchoAgent(), ownerResolver = new HeaderOwnerResolver());
+
+listener HttpListener ownerScopedListener = new (OWNER_SCOPED_TEST_PORT);
 
 @test:BeforeSuite
 function startOwnerScopedServer() returns error? {
-    check ownerScopedListener.attach(new EchoAgent());
+    check ownerScopedListener.attach(new FullService(ownerScopedHandler, ownerScopedHandlerCard), "rest");
 }
 
 isolated function ownerScopedRawClient() returns http:Client|error => new (ownerScopedServerUrl);
@@ -1526,7 +1525,7 @@ isolated function sendAsOwner(http:Client raw, string owner, string text) return
     json body = {
         "message": {"messageId": "m1", "role": "ROLE_USER", "parts": [{"text": text}]}
     };
-    json result = check raw->post("/message:send", body, headers);
+    json result = check raw->post("/rest/message:send", body, headers);
     map<json> envelope = check result.ensureType();
     json? taskJson = envelope["task"];
     if taskJson is () {
@@ -1591,7 +1590,7 @@ function testOwnerScopedPushNotificationConfigAsymmetry() returns error? {
 
     json createBody = {"url": "https://example.com/webhook"};
     json createResult = check alice->post(
-            string `/tasks/${created.id}/pushNotificationConfigs`, createBody, aliceHeaders);
+            string `/rest/tasks/${created.id}/pushNotificationConfigs`, createBody, aliceHeaders);
     TaskPushNotificationConfig config = check createResult.cloneWithType(TaskPushNotificationConfig);
     string id = <string>config.id;
 
@@ -1599,7 +1598,7 @@ function testOwnerScopedPushNotificationConfigAsymmetry() returns error? {
     // an unknown task -- create already checked task existence before this
     // feature, and now it also checks visibility.
     http:Response bobCreate = check alice->post(
-            string `/tasks/${created.id}/pushNotificationConfigs`, createBody, bobHeaders);
+            string `/rest/tasks/${created.id}/pushNotificationConfigs`, createBody, bobHeaders);
     test:assertEquals(bobCreate.statusCode, http:STATUS_NOT_FOUND,
             "creating a config against a task not visible to the caller must be rejected");
 
@@ -1607,7 +1606,7 @@ function testOwnerScopedPushNotificationConfigAsymmetry() returns error? {
     // task-visibility check at all, so this closes a real gap, not just a
     // consistency nicety.
     http:Response bobGet = check alice->get(
-            string `/tasks/${created.id}/pushNotificationConfigs/${id}`, bobHeaders);
+            string `/rest/tasks/${created.id}/pushNotificationConfigs/${id}`, bobHeaders);
     test:assertEquals(bobGet.statusCode, http:STATUS_NOT_FOUND,
             "getting a config on a task not visible to the caller must be rejected");
 
@@ -1615,7 +1614,7 @@ function testOwnerScopedPushNotificationConfigAsymmetry() returns error? {
     // matches the existing behavior for a genuinely unknown task, so bob
     // cannot distinguish "not yours" from "doesn't exist" by response shape.
     json bobListResult = check alice->get(
-            string `/tasks/${created.id}/pushNotificationConfigs`, bobHeaders);
+            string `/rest/tasks/${created.id}/pushNotificationConfigs`, bobHeaders);
     ListTaskPushNotificationConfigsResponse bobList =
         check bobListResult.cloneWithType(ListTaskPushNotificationConfigsResponse);
     test:assertEquals((bobList.configs ?: []).length(), 0,
@@ -1625,13 +1624,13 @@ function testOwnerScopedPushNotificationConfigAsymmetry() returns error? {
     // real deletion -- matches the existing idempotent-delete behavior for
     // an unknown config.
     http:Response bobDelete = check alice->delete(
-            string `/tasks/${created.id}/pushNotificationConfigs/${id}`, headers = bobHeaders);
+            string `/rest/tasks/${created.id}/pushNotificationConfigs/${id}`, headers = bobHeaders);
     test:assertEquals(bobDelete.statusCode, http:STATUS_OK,
             "deleting a config on a task not visible to the caller must silently succeed, not error");
 
     // The config must genuinely still exist for alice: bob's delete did nothing.
     json aliceGetAfter = check alice->get(
-            string `/tasks/${created.id}/pushNotificationConfigs/${id}`, aliceHeaders);
+            string `/rest/tasks/${created.id}/pushNotificationConfigs/${id}`, aliceHeaders);
     TaskPushNotificationConfig stillThere = check aliceGetAfter.cloneWithType(TaskPushNotificationConfig);
     test:assertEquals(stillThere.id, id, "bob's no-op delete must not have actually removed alice's config");
 }
@@ -1649,7 +1648,7 @@ const int PUSH_NOTIFICATION_TEST_PORT = 19238;
 final string pushNotificationServerUrl = string `http://localhost:${PUSH_NOTIFICATION_TEST_PORT}`;
 final string testWebhookUrl = string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`;
 
-final DefaultHandler pushNotificationHandler = new ({
+final AgentCard pushNotificationHandlerCard = {
     name: "Echo Agent",
     description: "Echoes its input",
     version: "1.0.0",
@@ -1658,11 +1657,11 @@ final DefaultHandler pushNotificationHandler = new ({
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-},
-    pushSender = new HttpPushNotificationSender({validateUrl: false})
-);
+};
 
-listener HttpListener pushNotificationListener = new (PUSH_NOTIFICATION_TEST_PORT, pushNotificationHandler);
+final DefaultHandler pushNotificationHandler = new (new PushNotificationAgent(), pushSender = new HttpPushNotificationSender({validateUrl: false}));
+
+listener HttpListener pushNotificationListener = new (PUSH_NOTIFICATION_TEST_PORT);
 
 // Completes normally, except for:
 // - "pause": leaves the task at TASK_STATE_WORKING -- non-terminal, so
@@ -1671,10 +1670,10 @@ listener HttpListener pushNotificationListener = new (PUSH_NOTIFICATION_TEST_POR
 //   tries one more write and simply finishes whether or not it was accepted --
 //   what an agent does when it does not check the result of every update. A
 //   test cancels the task while the agent is held, so that write is refused.
-isolated service class PushNotificationAgent {
-    *Service;
+isolated class PushNotificationAgent {
+    *AgentExecutor;
 
-    isolated remote function onMessage(RequestContext context, TaskUpdater updater)
+    public isolated function execute(RequestContext context, TaskUpdater updater)
             returns Message|Error? {
         string text = "";
         foreach Part part in context.message.parts {
@@ -1708,7 +1707,7 @@ isolated service class PushNotificationAgent {
 
 @test:BeforeSuite
 function startPushNotificationServer() returns error? {
-    check pushNotificationListener.attach(new PushNotificationAgent());
+    check pushNotificationListener.attach(new FullService(pushNotificationHandler, pushNotificationHandlerCard), "rest");
 }
 
 @test:Config {}
@@ -1961,7 +1960,7 @@ function testServerRoundTripPushNotificationDeliveryOnCancel() returns error? {
 const int SECURITY_REQUIREMENTS_TEST_PORT = 19239;
 final string securityRequirementsServerUrl = string `http://localhost:${SECURITY_REQUIREMENTS_TEST_PORT}`;
 
-final DefaultHandler securityRequirementsHandler = new ({
+final AgentCard securityRequirementsHandlerCard = {
     name: "Echo Agent",
     description: "Echoes its input",
     version: "1.0.0",
@@ -1974,13 +1973,15 @@ final DefaultHandler securityRequirementsHandler = new ({
         "bearerAuth": <HttpAuthSecurityScheme>{scheme: "bearer", bearerFormat: "JWT"}
     },
     securityRequirements: [{"bearerAuth": ["read", "write"]}, {"bearerAuth": []}]
-});
+};
 
-listener HttpListener securityRequirementsListener = new (SECURITY_REQUIREMENTS_TEST_PORT, securityRequirementsHandler);
+final DefaultHandler securityRequirementsHandler = new (new EchoAgent());
+
+listener HttpListener securityRequirementsListener = new (SECURITY_REQUIREMENTS_TEST_PORT);
 
 @test:BeforeSuite
 function startSecurityRequirementsServer() returns error? {
-    check securityRequirementsListener.attach(new EchoAgent());
+    check securityRequirementsListener.attach(new FullService(securityRequirementsHandler, securityRequirementsHandlerCard), "rest");
 }
 
 @test:Config {}
@@ -2020,7 +2021,7 @@ const int EXTENSIONS_TEST_PORT = 19240;
 final string extensionsServerUrl = string `http://localhost:${EXTENSIONS_TEST_PORT}`;
 const string REQUIRED_EXTENSION_URI = "https://example.com/extensions/geolocation/v1";
 
-final DefaultHandler extensionsHandler = new ({
+final AgentCard extensionsHandlerCard = {
     name: "Echo Agent",
     description: "Echoes its input",
     version: "1.0.0",
@@ -2034,13 +2035,15 @@ final DefaultHandler extensionsHandler = new ({
         ]
     },
     supportedInterfaces: []
-});
+};
 
-listener HttpListener extensionsListener = new (EXTENSIONS_TEST_PORT, extensionsHandler);
+final DefaultHandler extensionsHandler = new (new EchoAgent());
+
+listener HttpListener extensionsListener = new (EXTENSIONS_TEST_PORT);
 
 @test:BeforeSuite
 function startExtensionsServer() returns error? {
-    check extensionsListener.attach(new EchoAgent());
+    check extensionsListener.attach(new FullService(extensionsHandler, extensionsHandlerCard), "rest");
 }
 
 @test:Config {}
@@ -2075,7 +2078,7 @@ function testServerRoundTripRequiredExtensionAcceptsDeclaredClient() returns err
 const int WITHHELD_CAPABILITIES_TEST_PORT = 19241;
 final string withheldCapabilitiesServerUrl = string `http://localhost:${WITHHELD_CAPABILITIES_TEST_PORT}`;
 
-final DefaultHandler withheldCapabilitiesHandler = new ({
+final AgentCard withheldCapabilitiesHandlerCard = {
     name: "Echo Agent",
     description: "Echoes its input",
     version: "1.0.0",
@@ -2084,16 +2087,15 @@ final DefaultHandler withheldCapabilitiesHandler = new ({
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-},
-    streamingCapability = false,
-    pushNotificationsCapability = false
-);
+};
 
-listener HttpListener withheldCapabilitiesListener = new (WITHHELD_CAPABILITIES_TEST_PORT, withheldCapabilitiesHandler);
+final DefaultHandler withheldCapabilitiesHandler = new (new EchoAgent());
+
+listener HttpListener withheldCapabilitiesListener = new (WITHHELD_CAPABILITIES_TEST_PORT);
 
 @test:BeforeSuite
 function startWithheldCapabilitiesServer() returns error? {
-    check withheldCapabilitiesListener.attach(new EchoAgent());
+    check withheldCapabilitiesListener.attach(new MessageOnlyService(withheldCapabilitiesHandler, withheldCapabilitiesHandlerCard), "rest");
 }
 
 @test:Config {}
@@ -2113,7 +2115,7 @@ function testServerRoundTripWithheldStreamingIsRejectedServerSide() returns erro
     // specification 3.3.4, not just that the client happens not to try.
     http:Client raw = check new (withheldCapabilitiesServerUrl);
     json body = {"message": {"messageId": "m1", "role": "ROLE_USER", "parts": [{"text": "hello"}]}};
-    http:Response resp = check raw->post("/message:stream", body, {"A2A-Version": "1.0"});
+    http:Response resp = check raw->post("/rest/message:stream", body, {"A2A-Version": "1.0"});
     test:assertEquals(resp.statusCode, http:STATUS_BAD_REQUEST,
             "sendStreamingMessage on a listener with streamingCapability: false must be rejected server-side");
 }
@@ -2126,7 +2128,7 @@ function testServerRoundTripWithheldPushNotificationsIsRejectedServerSide() retu
     // per this codebase's own testing convention for exactly this case.
     http:Client raw = check new (withheldCapabilitiesServerUrl);
     json body = {"url": "https://example.com/webhook"};
-    http:Response resp = check raw->post("/tasks/does-not-matter/pushNotificationConfigs", body,
+    http:Response resp = check raw->post("/rest/tasks/does-not-matter/pushNotificationConfigs", body,
             {"A2A-Version": "1.0"});
     test:assertEquals(resp.statusCode, http:STATUS_BAD_REQUEST,
             "push-notification-config operations on a listener with pushNotificationsCapability: false " +
@@ -2150,7 +2152,7 @@ function testServerRoundTripInlinePushConfigOnSendMessageIsRejectedWhenCapabilit
         "message": {"messageId": "m1", "role": "ROLE_USER", "parts": [{"text": "hello"}]},
         "configuration": {"taskPushNotificationConfig": {"url": "https://example.com/webhook"}}
     };
-    http:Response resp = check raw->post("/message:send", body, {"A2A-Version": "1.0"});
+    http:Response resp = check raw->post("/rest/message:send", body, {"A2A-Version": "1.0"});
     test:assertEquals(resp.statusCode, http:STATUS_BAD_REQUEST,
             "an inline push config must be rejected the same as the dedicated routes are, " +
             "not silently registered against a capability the card says is off");
@@ -2204,15 +2206,15 @@ function testUnknownPathIs404NotFound() returns error? {
 function testTaskIdWithASlashIs404NotACrossSegmentLookup() returns error? {
     http:Client raw = check new (serverUrl);
 
-    http:Response getResp = check raw->get("/tasks/a/b/c", {"A2A-Version": "1.0"});
+    http:Response getResp = check raw->get("/rest/tasks/a/b/c", {"A2A-Version": "1.0"});
     test:assertEquals(getResp.statusCode, 404);
     test:assertEquals(check reasonOf(getResp), "METHOD_NOT_FOUND");
 
-    http:Response cancelResp = check raw->post("/tasks/a/b:cancel", (), {"A2A-Version": "1.0"});
+    http:Response cancelResp = check raw->post("/rest/tasks/a/b:cancel", (), {"A2A-Version": "1.0"});
     test:assertEquals(cancelResp.statusCode, 404);
     test:assertEquals(check reasonOf(cancelResp), "METHOD_NOT_FOUND");
 
-    http:Response subscribeResp = check raw->get("/tasks/a/b:subscribe", {"A2A-Version": "1.0"});
+    http:Response subscribeResp = check raw->get("/rest/tasks/a/b:subscribe", {"A2A-Version": "1.0"});
     test:assertEquals(subscribeResp.statusCode, 404);
     test:assertEquals(check reasonOf(subscribeResp), "METHOD_NOT_FOUND");
 }
@@ -2224,7 +2226,7 @@ function testUnknownPushConfigSubRouteIs404() returns error? {
     // GET; DELETE is only for an item). Not PUT: the HTTP layer answers that
     // 405 itself, before the dispatcher is reached.
     http:Client raw = check new (serverUrl);
-    http:Response resp = check raw->delete("/tasks/t1/pushNotificationConfigs",
+    http:Response resp = check raw->delete("/rest/tasks/t1/pushNotificationConfigs",
             headers = {"A2A-Version": "1.0"});
     test:assertEquals(resp.statusCode, 404);
     test:assertEquals(check reasonOf(resp), "METHOD_NOT_FOUND");
@@ -2232,7 +2234,7 @@ function testUnknownPushConfigSubRouteIs404() returns error? {
 
 @test:Config {}
 function testBarePushConfigPathWithNoTaskIdIs404NotACrash() returns error? {
-    // onPushNotificationConfigs assumes a "/tasks/{taskId}/pushNotificationConfigs..."
+    // onPushNotificationConfigs assumes a "/rest/tasks/{taskId}/pushNotificationConfigs..."
     // shape and slices the path on that assumption (TASKS_PATH_PREFIX.length() as the
     // start index); routing a bare "/pushNotificationConfigs" (no task id, no /tasks/
     // prefix at all) into it took that start index past the slice's own end.
@@ -2244,16 +2246,16 @@ function testBarePushConfigPathWithNoTaskIdIs404NotACrash() returns error? {
 
 @test:Config {}
 function testTenantLookingPrefixIsNotMistakenForTheBareTasksRoute() returns error? {
-    // "/tasks-eu/..." must not be recognized as the tenant-less "/tasks" family just
+    // "/rest/tasks-eu/..." must not be recognized as the tenant-less "/rest/tasks" family just
     // because it happens to start with the same six characters -- it names a tenant,
     // "tasks-eu", same as "/acme-corp/..." does below. This listener declares no
     // tenant, so it is the same "agent does not serve this tenant" 400 either way;
     // what this guards is that it reaches that check at all, instead of 404ing as an
-    // unmatched "/tasks..." route (a Listener cannot yet serve any tenant at all --
+    // unmatched "/rest/tasks..." route (a Listener cannot yet serve any tenant at all --
     // deriveServedCard always replaces supportedInterfaces with a tenant-less entry --
     // so a "declared and matched" positive case is not something to test here).
     http:Client raw = check new (serverUrl);
-    http:Response resp = check raw->post("/tasks-eu/message:send",
+    http:Response resp = check raw->post("/rest/tasks-eu/message:send",
             {"message": {"messageId": "m1", "role": "ROLE_USER", "parts": [{"text": "hi"}]}},
             {"A2A-Version": "1.0", "Content-Type": "application/json"});
     test:assertEquals(resp.statusCode, 400, "a tenant prefix, not an unmatched route");
@@ -2263,7 +2265,7 @@ function testTenantLookingPrefixIsNotMistakenForTheBareTasksRoute() returns erro
 @test:Config {}
 function testUnservedTenantIs400InvalidParams() returns error? {
     http:Client raw = check new (serverUrl);
-    http:Response resp = check raw->get("/acme-corp/tasks", {"A2A-Version": "1.0"});
+    http:Response resp = check raw->get("/rest/acme-corp/tasks", {"A2A-Version": "1.0"});
     test:assertEquals(resp.statusCode, 400, "naming a tenant the agent does not serve is the caller's mistake");
     test:assertEquals(check reasonOf(resp), "INVALID_PARAMS");
     test:assertNotEquals(check reasonOf(resp), "INVALID_AGENT_RESPONSE",
@@ -2275,7 +2277,7 @@ function testUnknownRouteAndUnknownTaskStayDistinguishable() returns error? {
     // Both are 404, but they mean different things and must say so.
     http:Client raw = check new (serverUrl);
     http:Response route = check raw->get("/nope", {"A2A-Version": "1.0"});
-    http:Response task = check raw->get("/tasks/does-not-exist", {"A2A-Version": "1.0"});
+    http:Response task = check raw->get("/rest/tasks/does-not-exist", {"A2A-Version": "1.0"});
     test:assertEquals(route.statusCode, 404);
     test:assertEquals(task.statusCode, 404);
     test:assertEquals(check reasonOf(route), "METHOD_NOT_FOUND");

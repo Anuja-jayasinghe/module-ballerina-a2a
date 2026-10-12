@@ -15,27 +15,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Add Server-Sent Events Streaming for `sendStreamingMessage` and `subscribeToTask`, with Opt-In Automatic Reconnection
 - Add Credential Resolution by Security-Scheme Name via `CredentialProvider` and `InMemoryCredentialStore`
 - Add the Nine Error Types of Specification Section 5.4 as Distinct Subtypes of `Error`, plus `InternalError` for Unnamed Failures
-- Add `HttpListener`, an A2A Server over the HTTP+JSON Binding, Where a Single `Service.onMessage` Method Is the Whole Agent
-- Add `DefaultHandler`, the Transport-Free Engine Holding an Agent's Card, Task Store, and Policies, Built Once and Given to One or More Listeners So Each Serves the Same Tasks
-- Add `@ServiceConfig`, Choosing the Binding a Service Is Served Over: `REST` (HTTP+JSON), with `RPC` Reserved
+- Add `HttpListener`, an A2A Server over the HTTP+JSON Binding That Carries Traffic Only, with the Agent Declared as a Service at `/rest` That Holds the Agent Card and Defines the A2A Operations It Supports (`onSendMessage`, `onGetTask`, ...); an Operation It Does Not Define Answers `UnsupportedOperationError`
+- Let Every Service Operation Take the Caller's `Context` as an Optional First Parameter (`onGetTask(Context context, GetTaskRequest request)` or `onGetTask(GetTaskRequest request)`)
+- Add `DefaultHandler`, the Transport-Free Template a Service's Operations Delegate To, Running the Task Lifecycle Around an `AgentExecutor` with a Task Store, Owner Resolver, Push Sender and Event Registry
+- Add `AgentExecutor`, the Agent's Own Logic (`execute`), Run by the `DefaultHandler` for Every Message
+- Add `@ServiceConfig {agentCard}`, Declaring a Service's Agent Card with Constant Values, or an Optional `onGetAgentCard` Function for a Card Built from Configuration; the Path a Service Is Declared At Names Its Binding (`/rest` for HTTP+JSON, `/rpc` Reserved)
 - Add `TaskUpdater` for Driving a Task Through Its States, Including Streaming and Input-Required Pauses
 - Add `TaskStore` and the Default `InMemoryTaskStore`, Which Enforces Legal State Transitions
 - Add Task-Scoped Push-Notification Configuration Storage and an Optional Extended Agent Card to the Server
-- Add `TaskOwnerResolver` for Per-Caller Task and Push-Notification-Config Visibility Scoping, per Specification Section 13.1, Resolving From a Transport-Free `CallerContext` That Carries the Identity Authentication Already Established
+- Add `TaskOwnerResolver` for Per-Caller Task and Push-Notification-Config Visibility Scoping, per Specification Section 13.1, Resolving From a Transport-Free `Context` That Carries the Identity Authentication Already Established
 - Add Real Push-Notification Delivery via `PushNotificationSender`, with `HttpPushNotificationSender` Rejecting Non-Public Webhook URLs by Default per Specification Section 13.2
-- Run `onMessage` Detached from the Request That Started It, so a Separate `subscribeToTask` Call Can Follow a Task Still in Progress
+- Run `AgentExecutor.execute` Detached from the Request That Started It, so a Separate `subscribeToTask` Call Can Follow a Task Still in Progress
 - Stream `sendStreamingMessage` and `subscribeToTask` Live, with Correct Multi-Subscriber Fan-Out per Specification Section 3.5.2
 - Add `EventBroadcaster` and `EventBroadcasterRegistry`, Making Live-Event Fan-Out Pluggable Like `TaskStore`, with `InMemoryEventBroadcasterRegistry` as the Default
 - Add Task Continuation via `message.taskId`, per Specification Sections 3.4.2 and 3.4.3
-- Honor `SendMessageConfiguration.returnImmediately`, Returning a Task Before `onMessage` Finishes
+- Honor `SendMessageConfiguration.returnImmediately`, Returning a Task Before `execute` Finishes
 - Enforce Required Extensions per Specification Sections 3.3.4/4.6.3, via the `A2A-Extensions` Header
 - Serve `securityRequirements` in the Correct v1.0 Wire Shape, and Add Agent Card `Cache-Control`/`ETag` Headers per Specification Section 8.6.1
-- Add `DefaultHandlerConfiguration.streamingCapability`/`pushNotificationsCapability`, Letting a Deployment Deliberately Withhold a Capability the Server Otherwise Always Implements
+- Derive the Served Card's Streaming and Push-Notification Capabilities from the Operations a Service Defines, so a Deployment Withholds One by Leaving Its Operations Out and the Card Never Claims What the Agent Does Not Do
 - Add `HttpListenerConfiguration.keepAliveInterval`, Sending SSE Keep-Alive Comments so a Quiet, Long-Running Stream Survives HTTP Idle Timeouts
 - Add `HttpListenerConfiguration.auth`, Authenticating Every Request Except the Public Card with `ballerina/http`'s JWT, OAuth2 Introspection, and File/LDAP Basic Handlers per Specification Section 7.4, with the Authenticated Identity Scoping Tasks per Section 13.1
 - Derive the Served Agent Card's `securitySchemes` and `securityRequirements` from `HttpListenerConfiguration.auth` when the Card Declares Neither, per Specification Sections 7.3 and 13.3
 - Add `AuthenticationError` (401) and `AuthorizationError` (403), Typed from the `ErrorInfo` Reason or the Bare Status, with an `AuthenticationError` Carrying the `WWW-Authenticate` Challenges; the Server Maps Both to Their Statuses
-- Refuse to Start an `HttpListener` Given a Handler with an `extendedAgentCard` but No `auth`, per Specification Section 13.3 (a Breaking Change for Any Such Configuration)
+- Refuse to Attach a Service That Defines `onGetExtendedAgentCard` to an `HttpListener` Without `auth`, per Specification Section 13.3 (a Breaking Change for Any Such Configuration)
 - Add `HttpListenerConfiguration.publicUrl`, the Base URL Served as the Card's Interface URL, for a Listener Behind a Proxy or Gateway That Terminates TLS or Rewrites the Host
 - Retry Push-Notification Delivery With Exponential Backoff per Specification Section 13.2, via `PushNotificationSenderConfiguration.retryConfig` (Three Retries, 1, 2 and 4 Seconds Apart, by Default; `()` Sends Once)
 - Attach a `google.rpc.BadRequest` Entry Naming the Field at Fault to Validation Errors, per Specification Section 11.6, With the Field Also in `ErrorInfo.metadata.field`
@@ -57,7 +59,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - A Request to a Path That Is No A2A Operation Is Now a 404 (`METHOD_NOT_FOUND`), and a Request Naming a Tenant the Agent Does Not Serve Is Now a 400 (`INVALID_PARAMS`), Instead of a 500 for Both; the Specification Reserves 5xx for System Failures and an Agent's Own Malformed Response
 - A 401 or 403 Is Now an `AuthenticationError` or `AuthorizationError` Instead of an `InternalError` Carrying That Status as Its Code
 - `subscribeToTask` on an Already-Terminal Task Now Correctly Answers `UnsupportedOperationError` per Specification Section 3.1.6, Instead of a One-Event Snapshot
-- A Panic or Returned `Error` from `onMessage` Now Transitions the Task to `TASK_STATE_FAILED` Instead of Leaving It at Whatever State It Was Left In
+- A Panic or Returned `Error` from `execute` Now Transitions the Task to `TASK_STATE_FAILED` Instead of Leaving It at Whatever State It Was Left In
 - A Second Concurrent Message to a Task Already Being Driven Is Now Rejected Before Its Text Is Written to History or Its Inline Push Config Is Registered, Instead of After
 - Subscribing to a Task Just as It Reaches a Terminal State No Longer Leaks a Broadcaster That Nothing Will Ever Close (Specification Section 3.1.6)
 - `notifyPushConfigs` Now Runs Detached from `sendMessage`/`cancelTask`'s Response, So a Slow or Unresponsive Registered Webhook No Longer Holds Up the Caller
@@ -71,7 +73,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - A Client Disconnecting From a Live Stream Now Actually Closes the Server-Side Subscription, Instead of Leaving It Idle Until `streamIdleTimeout`
 - `listTaskPushNotificationConfigs` on a Task With No Registered Configs No Longer Panics
 - The Webhook SSRF Guard Now Rejects a Numbers-and-Dots IPv4 Form a Real Resolver Still Accepts (`127.1`, `10.1`, a Single 32-Bit Decimal, or the Cloud Metadata Address Folded Into One Number), and a Hostname With a Trailing Dot, Both of Which Previously Bypassed It
-- A Task That Fails (`onMessage` Returns an `Error`, or Panics) Now Notifies Its Registered Webhooks, Matching Every Other State Transition
+- A Task That Fails (`execute` Returns an `Error`, or Panics) Now Notifies Its Registered Webhooks, Matching Every Other State Transition
 - An Inline `taskPushNotificationConfig` on `sendMessage`/`sendStreamingMessage` Is Now Rejected When `capabilities.pushNotifications` Is `false`, Instead of Being Silently Registered
 - `sendMessage` and `sendStreamingMessage` Now Honor `configuration.historyLength`, Trimming `task.history` the Same Way `getTask` and `listTasks` Already Did (Specification Sections 3.1.3, 3.2.2, 3.2.4); Previously the Full History Was Always Returned, Including the One Task Snapshot a Streaming Send Broadcasts Live
 - `HttpClient` No Longer Builds a Double-Slashed Path (`//message:send`) Against an Agent Whose Card Interface URL Ends in `/`, a Real Shape a Root-Mounted `@a2a-js/sdk` Agent Advertises

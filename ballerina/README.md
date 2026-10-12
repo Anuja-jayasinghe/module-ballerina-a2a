@@ -291,22 +291,12 @@ Anything the protocol does not name — a dropped connection, a malformed body, 
 
 ```ballerina
 import ballerina/a2a;
+import ballerina/io;
 
-final a2a:DefaultHandler weatherAgent = new ({
-    name: "Weather Agent",
-    description: "Answers weather questions",
-    version: "1.0.0",
-    skills: [{id: "forecast", name: "Forecast", description: "Multi-day forecasts", tags: ["weather"]}],
-    defaultInputModes: ["text"],
-    defaultOutputModes: ["text"],
-    capabilities: {},
-    supportedInterfaces: []
-});
+isolated class WeatherExecutor {
+    *a2a:AgentExecutor;
 
-listener a2a:HttpListener agent = new (9090, weatherAgent);
-
-isolated service a2a:Service on agent {
-    isolated remote function onMessage(a2a:RequestContext context, a2a:TaskUpdater updater)
+    public isolated function execute(a2a:RequestContext context, a2a:TaskUpdater updater)
             returns a2a:Message|a2a:Error? {
         check updater->working();
         check updater->addArtifact([{text: "Sunny, 22°C"}]);
@@ -314,32 +304,110 @@ isolated service a2a:Service on agent {
         return;
     }
 }
-```
 
-Serving an agent takes three pieces, each with one job:
+@a2a:ServiceConfig {
+    agentCard: {
+        name: "Weather Agent",
+        description: "Answers weather questions",
+        version: "1.0.0",
+        provider: {organization: "Example Co", url: "https://example.com"},
+        skills: [
+            {id: "forecast", name: "Forecast", description: "Multi-day forecasts", tags: ["weather"]}
+        ],
+        defaultInputModes: ["text"],
+        defaultOutputModes: ["text"],
+        capabilities: {},
+        supportedInterfaces: []
+    }
+}
+isolated service /rest on new a2a:HttpListener(9090) {
 
-- **`a2a:DefaultHandler`** is the agent as the protocol sees it: its card, where its tasks are kept, who may see them, what it advertises. It knows nothing about the wire.
-- **`a2a:HttpListener`** is how requests reach it: the port, TLS, authentication, the address the card advertises, stream keep-alives.
-- **The `a2a:Service`** is your logic: one method, `onMessage`.
+    private final a2a:DefaultHandler handler = new (new WeatherExecutor());
 
-Declare the listener at module level: a listener declared inside `main` does not keep the program alive. `capabilities` and `supportedInterfaces` on the card are placeholders; the listener replaces both with what it actually serves, so the published card can never advertise something the server does not do. A `service class` works too, attached with `check agent.attach(new WeatherAgent())` from a module-level `function init()`.
+    isolated remote function onSendMessage(a2a:Context context, a2a:SendMessageRequest request)
+            returns a2a:Task|a2a:Message|a2a:Error {
+        return self.handler.sendMessage(context, request);
+    }
 
-One method, `onMessage`, is the entire agent. The handler runs the rest of the protocol around it: `getTask`, `cancelTask` and `listTasks` over the task `onMessage` created; `sendStreamingMessage` and `subscribeToTask` as Server-Sent Events; and the push-notification configuration operations. The listener adds the well-known discovery endpoint and version and capability gating. Errors are serialized exactly as the client half of this module decodes them, so this module's `HttpClient` can be pointed at its own `HttpListener`. Only HTTP+JSON at protocol version 1.0 is served in this release.
+    isolated remote function onSendStreamingMessage(a2a:Context context, a2a:SendMessageRequest request)
+            returns stream<a2a:StreamResponse, a2a:Error?>|a2a:Error {
+        return self.handler.sendStreamingMessage(context, request);
+    }
 
-A service chooses its binding with `@a2a:ServiceConfig`. `a2a:REST` (HTTP+JSON) is the default; `a2a:RPC` (JSON-RPC) is reserved, and attaching a service that asks for it fails:
+    isolated remote function onSubscribeToTask(a2a:Context context, a2a:SubscribeToTaskRequest request)
+            returns stream<a2a:StreamResponse, a2a:Error?>|a2a:Error {
+        return self.handler.subscribeToTask(context, request);
+    }
 
-```ballerina
-@a2a:ServiceConfig {protocol: a2a:REST}
-isolated service a2a:Service on agent {
-    // ...
+    isolated remote function onGetTask(a2a:Context context, a2a:GetTaskRequest request)
+            returns a2a:Task|a2a:Error {
+        return self.handler.getTask(context, request);
+    }
+
+    isolated remote function onListTasks(a2a:Context context, a2a:ListTasksRequest request)
+            returns a2a:ListTasksResponse|a2a:Error {
+        return self.handler.listTasks(context, request);
+    }
+
+    isolated remote function onCancelTask(a2a:Context context, a2a:CancelTaskRequest request)
+            returns a2a:Task|a2a:Error {
+        return self.handler.cancelTask(context, request);
+    }
+
+    isolated remote function onCreateTaskPushNotificationConfig(a2a:Context context,
+            a2a:TaskPushNotificationConfig request)
+            returns a2a:TaskPushNotificationConfig|a2a:Error {
+        return self.handler.createTaskPushNotificationConfig(context, request);
+    }
+
+    isolated remote function onGetTaskPushNotificationConfig(a2a:Context context,
+            a2a:GetTaskPushNotificationConfigRequest request)
+            returns a2a:TaskPushNotificationConfig|a2a:Error {
+        return self.handler.getTaskPushNotificationConfig(context, request);
+    }
+
+    isolated remote function onListTaskPushNotificationConfigs(a2a:Context context,
+            a2a:ListTaskPushNotificationConfigsRequest request)
+            returns a2a:ListTaskPushNotificationConfigsResponse|a2a:Error {
+        return self.handler.listTaskPushNotificationConfigs(context, request);
+    }
+
+    isolated remote function onDeleteTaskPushNotificationConfig(a2a:Context context,
+            a2a:DeleteTaskPushNotificationConfigRequest request)
+            returns a2a:Error? {
+        return self.handler.deleteTaskPushNotificationConfig(context, request);
+    }
+}
+
+function init() {
+    io:println(string `Weather Agent listening on http://localhost:9090`);
 }
 ```
 
-A handler serves one agent, but can be given to more than one listener. Declaring the service on each, `isolated service a2a:Service on publicListener, internalListener { ... }`, serves the same tasks over both: a task created through one is visible through the other. Giving one handler a second, different service is an error.
+An agent is a service attached to a listener, and it takes four pieces, each with one job:
+
+- **`a2a:AgentExecutor`** is your logic: one `execute` method that drives a task through the `a2a:TaskUpdater` or returns a direct `a2a:Message`.
+- **`a2a:DefaultHandler`** is the template behind the operations: where tasks are kept, who may see them, live event fan-out and push delivery. It knows nothing about the wire or the card.
+- **`a2a:HttpListener`** is how requests reach the agent: the port, TLS, authentication, the address the card advertises, stream keep-alives. It holds no agent.
+- **The service** carries the agent card and defines the A2A operations the agent supports, each a `remote` function that either runs your own code or hands its request to the handler.
+
+The path the service is declared at names its binding: `service /rest` serves HTTP+JSON under `/rest`. `/rpc` (JSON-RPC) is reserved, and attaching a service there fails. The card is always served at `/.well-known/agent-card.json`, with an interface URL that ends in `/rest`, so a client given only the agent's root URL, such as this module's `HttpClient`, finds the right address from the card.
+
+The operations are `onSendMessage`, `onSendStreamingMessage`, `onSubscribeToTask`, `onGetTask`, `onListTasks`, `onCancelTask`, `onCreateTaskPushNotificationConfig`, `onGetTaskPushNotificationConfig`, `onListTaskPushNotificationConfigs`, `onDeleteTaskPushNotificationConfig` and `onGetExtendedAgentCard`. Each takes the operation's request record, and may take an `a2a:Context` before it: `onGetTask(a2a:Context context, a2a:GetTaskRequest request)` or just `onGetTask(a2a:GetTaskRequest request)`. The context says who is calling (the identity authentication established, the tenant, the headers); leave it out when the operation doesn't need it. A service must define `onSendMessage`. An operation it does not define answers `UnsupportedOperationError` (`PushNotificationNotSupportedError` for the push operations). Streaming is one capability and push notifications another, so each group is all or nothing: `onSendStreamingMessage` with `onSubscribeToTask`, and the four push operations together.
+
+The agent card comes from `@a2a:ServiceConfig {agentCard: ...}`, whose values must be constants, or from an optional `onGetAgentCard()` function when the card is built from configuration. Define one or the other, not both. `capabilities` and `supportedInterfaces` on the card are placeholders: the listener derives the capabilities from the operations the service defines and the interface from the path and its address, so the published card can never advertise something the agent does not do.
+
+`service /rest on new a2a:HttpListener(9090)` creates the listener, and the Ballerina runtime attaches the service and starts it, so no `main` is needed. To give the listener options (`auth`, TLS, `publicUrl`) or share it between services, declare it at module level, `listener a2a:HttpListener agent = new (9090, auth = [...]);`, and write `service /rest on agent`. A listener declared inside `main` does not keep the program alive. A `service class` also works: attach it with `check agent.attach(new WeatherService(), "rest")` and start the listener with `check agent.'start()` from `main`.
+
+Declaring the service on two listeners, `isolated service /rest on publicListener, internalListener { ... }`, serves the same tasks over both, because the service holds the one handler. A listener serves one agent: a second service on the same path is an error. The listener adds authentication, the well-known discovery endpoint, and version and capability gating around your service. Errors are serialized exactly as the client half of this module decodes them. Only HTTP+JSON at protocol version 1.0 is served in this release.
+
+### Bringing your own handler
+
+`a2a:DefaultHandler` is a convenience, not a requirement. A service can answer an operation from any code it likes: define the `remote` function and return the operation's result. Operations the service does not define answer `UnsupportedOperationError`, and the served card advertises only the capabilities its operations imply. The [`bring-your-own-handler`](../examples/bring-your-own-handler/README.md) example serves an agent from its own class and storage with three operations. To change one operation and keep the rest, hold a `DefaultHandler` in the service and delegate the others to it.
 
 ### 7.1 Driving a task
 
-`a2a:TaskUpdater` moves a long-running task through its states from inside `onMessage`:
+`a2a:TaskUpdater` moves a long-running task through its states from inside `execute`:
 
 ```ballerina
 check updater->working();
@@ -348,13 +416,13 @@ check updater->requireInput(promptMessage);
 check updater->complete();
 ```
 
-`requireInput` pauses the task at `TASK_STATE_INPUT_REQUIRED`; a later message continuing the same task (see [section 7.2](#72-live-streaming-and-continuing-a-task)) runs `onMessage` again. Every call is persisted through the attached `a2a:TaskStore`. `requireAuth` is the same shape as `requireInput`, for a task that needs the caller to authorize.
+`requireInput` pauses the task at `TASK_STATE_INPUT_REQUIRED`; a later message continuing the same task (see [section 7.2](#72-live-streaming-and-continuing-a-task)) runs `execute` again. Every call is persisted through the attached `a2a:TaskStore`. `requireAuth` is the same shape as `requireInput`, for a task that needs the caller to authorize.
 
-`onMessage` runs detached from the request that started it, so a slow or long-running agent never blocks a separate `subscribeToTask` call from attaching to the same task's events as they happen. A panic in `onMessage` is caught and transitions the task to `TASK_STATE_FAILED` with the panic's message, the same as returning an `a2a:Error` does -- neither crashes the server or strands the task at whatever state it was left in.
+`execute` runs detached from the request that started it, so a slow or long-running agent never blocks a separate `subscribeToTask` call from attaching to the same task's events as they happen. A panic in `execute` is caught and transitions the task to `TASK_STATE_FAILED` with the panic's message, the same as returning an `a2a:Error` does -- neither crashes the server or strands the task at whatever state it was left in.
 
 ### 7.2 Live streaming and continuing a task
 
-`sendStreamingMessage` and `subscribeToTask` both return a live stream: events arrive as `onMessage` produces them, not replayed after the fact. Two callers following the same task -- a `sendStreamingMessage` caller and a later `subscribeToTask` caller, or several `subscribeToTask` callers -- each see every event from the point they attached, in the same order; closing one stream does not affect another (specification section 3.5.2). `subscribeToTask` on a task already in a terminal state is `UnsupportedOperationError`, not a snapshot -- there is nothing further it could ever stream (specification section 3.1.6).
+`sendStreamingMessage` and `subscribeToTask` both return a live stream: events arrive as `execute` produces them, not replayed after the fact. Two callers following the same task -- a `sendStreamingMessage` caller and a later `subscribeToTask` caller, or several `subscribeToTask` callers -- each see every event from the point they attached, in the same order; closing one stream does not affect another (specification section 3.5.2). `subscribeToTask` on a task already in a terminal state is `UnsupportedOperationError`, not a snapshot -- there is nothing further it could ever stream (specification section 3.1.6).
 
 A client continues an existing, non-terminal task by setting `message.taskId` on a later `sendMessage`/`sendStreamingMessage` call:
 
@@ -370,9 +438,9 @@ a2a:Task|a2a:Message reply = check agent->sendMessage({
 });
 ```
 
-`onMessage` runs again against the same task, with the continuing message appended to its `history`. An unrecognized `taskId` is `TaskNotFoundError` -- a client cannot name a new task into existence this way (specification section 3.4.2); a `contextId` that disagrees with the task's own is rejected; a task already terminal cannot be continued (`UnsupportedOperationError`), the same rejection a second concurrent message to a task still being driven gets. Any non-terminal state can be continued, not only `TASK_STATE_INPUT_REQUIRED`/`TASK_STATE_AUTH_REQUIRED`.
+`execute` runs again against the same task, with the continuing message appended to its `history`. An unrecognized `taskId` is `TaskNotFoundError` -- a client cannot name a new task into existence this way (specification section 3.4.2); a `contextId` that disagrees with the task's own is rejected; a task already terminal cannot be continued (`UnsupportedOperationError`), the same rejection a second concurrent message to a task still being driven gets. Any non-terminal state can be continued, not only `TASK_STATE_INPUT_REQUIRED`/`TASK_STATE_AUTH_REQUIRED`.
 
-`sendMessage`'s default behavior is unchanged: it blocks until the task reaches a terminal or interrupted state, or `onMessage` replies with a direct `a2a:Message`. Set `configuration.returnImmediately: true` to instead get the task back as soon as it exists, without waiting:
+`sendMessage`'s default behavior is unchanged: it blocks until the task reaches a terminal or interrupted state, or `execute` replies with a direct `a2a:Message`. Set `configuration.returnImmediately: true` to instead get the task back as soon as it exists, without waiting:
 
 ```ballerina
 a2a:Task submitted = <a2a:Task>check agent->sendMessage({
@@ -381,7 +449,7 @@ a2a:Task submitted = <a2a:Task>check agent->sendMessage({
 });
 ```
 
-`onMessage` keeps running detached either way. This removes the implicit backpressure a blocking `sendMessage` gave for free -- every concurrent task used to hold a worker for its full duration -- so a deployment expecting many concurrent long-running tasks under `returnImmediately: true` should plan capacity accordingly. `returnImmediately` has no effect on `sendStreamingMessage`, which already runs detached and streams live regardless (specification's own text); if `onMessage` replies with a direct `a2a:Message` under `returnImmediately: true`, the caller already holds the task's id from the immediate-return snapshot, so the task completes with that `a2a:Message` as its final `status.message` instead of the task disappearing as if it never existed.
+`execute` keeps running detached either way. This removes the implicit backpressure a blocking `sendMessage` gave for free -- every concurrent task used to hold a worker for its full duration -- so a deployment expecting many concurrent long-running tasks under `returnImmediately: true` should plan capacity accordingly. `returnImmediately` has no effect on `sendStreamingMessage`, which already runs detached and streams live regardless (specification's own text); if `execute` replies with a direct `a2a:Message` under `returnImmediately: true`, the caller already holds the task's id from the immediate-return snapshot, so the task completes with that `a2a:Message` as its final `status.message` instead of the task disappearing as if it never existed.
 
 `streamIdleTimeout` on `HttpListenerConfiguration` (default 300 seconds) bounds how long a live stream may sit with no event before the server ends it -- the backstop for a client that disconnects without the transport surfacing it as a clean close.
 
@@ -394,7 +462,7 @@ Given a port, `HttpListenerConfiguration` also carries every `http:ListenerConfi
 The interface URL the served card gives clients is built from the request's `Host` header and the scheme the listener really serves: `https` when `secureSocket` is configured, `http` otherwise. When clients do not reach the listener directly, say where they do with `publicUrl`, for a proxy or gateway that terminates TLS or rewrites the host, or for an `http:Listener` passed in whose public address the package cannot know:
 
 ```ballerina
-listener a2a:HttpListener agent = new (9090, handler, publicUrl = "https://agents.example.com/travel");
+listener a2a:HttpListener agent = new (9090, publicUrl = "https://agents.example.com/travel");
 ```
 
 `publicUrl` must start with `http://` or `https://` and carry no query or fragment; a trailing `/` is dropped. `X-Forwarded-*` headers are not consulted, since any caller can send them.
@@ -402,7 +470,7 @@ listener a2a:HttpListener agent = new (9090, handler, publicUrl = "https://agent
 ### 7.3 Task storage
 
 ```ballerina
-final a2a:DefaultHandler handler = new (card, taskStore = new MyDatabaseTaskStore());
+final a2a:DefaultHandler handler = new (new WeatherExecutor(), taskStore = new MyDatabaseTaskStore());
 ```
 
 `a2a:InMemoryTaskStore` is the default, and its tasks do not survive a restart. Implement `a2a:TaskStore` (`put`, `get`, `list`, `remove`) to back an agent with real storage. `list` must sort by status timestamp, newest first, and omit `artifacts` unless asked.
@@ -410,7 +478,7 @@ final a2a:DefaultHandler handler = new (card, taskStore = new MyDatabaseTaskStor
 Live streams reach their subscribers through an `a2a:EventBroadcasterRegistry`. The default, `a2a:InMemoryEventBroadcasterRegistry`, reaches subscribers in the same process. A deployment that needs something else, such as a broker so a subscriber on one instance follows a task driven on another, supplies its own as `eventRegistry`:
 
 ```ballerina
-final a2a:DefaultHandler handler = new (card, eventRegistry = new MyBrokerEventRegistry());
+final a2a:DefaultHandler handler = new (new WeatherExecutor(), eventRegistry = new MyBrokerEventRegistry());
 ```
 
 A replacement must keep two guarantees: only one driver at a time per in-flight task (`acquire` returns `()` while another holds it), and every subscriber gets every event in the same order (specification section 3.5.2). To follow a task across instances without replacing anything, use push notifications ([section 7.5](#75-push-notifications)).
@@ -418,12 +486,19 @@ A replacement must keep two guarantees: only one driver at a time per in-flight 
 ### 7.4 The extended Agent Card
 
 ```ballerina
-final a2a:DefaultHandler handler = new (publicCard, extendedAgentCard = richerCard);
+final a2a:DefaultHandler handler = new (new WeatherExecutor(), extendedAgentCard = richerCard);
 ```
 
-Left unset, `capabilities.extendedAgentCard` is `false` and a request for it fails with `UnsupportedOperationError`. Configuring one flips the capability on and serves the card from `GET /extendedAgentCard`.
+```ballerina
+isolated remote function onGetExtendedAgentCard(a2a:Context context,
+        a2a:GetExtendedAgentCardRequest request) returns a2a:AgentCard|a2a:Error {
+    return self.handler.getExtendedAgentCard(context, request);
+}
+```
 
-Specification section 13.3 requires this operation to require authentication: an extended card exists to reveal what the *public* card deliberately doesn't. So a listener given a handler with an `extendedAgentCard` must also be configured with `auth` ([section 7.7](#77-authenticating-callers)); without it, `new a2a:HttpListener(...)` returns an error and nothing is served.
+A service that does not define `onGetExtendedAgentCard` declares `capabilities.extendedAgentCard` as `false`, and a request for it fails with `UnsupportedOperationError`. Defining it flips the capability on and serves the card from `GET /rest/extendedAgentCard`. The handler returns the `extendedAgentCard` it was configured with, or `ExtendedAgentCardNotConfiguredError` if none was; the listener derives the served capabilities and interfaces the same way as for the public card.
+
+Specification section 13.3 requires this operation to require authentication: an extended card exists to reveal what the *public* card deliberately doesn't. So a service that defines `onGetExtendedAgentCard` must be attached to a listener configured with `auth` ([section 7.7](#77-authenticating-callers)); without it, `attach` returns an error and nothing is served.
 
 ### 7.5 Push notifications
 
@@ -454,7 +529,7 @@ a2a:TaskPushNotificationConfig config = check agent->createTaskPushNotificationC
 Delivery uses `a2a:HttpPushNotificationSender` by default, an HTTP POST with a configurable timeout. It rejects a webhook URL that is not `http`/`https`, or whose host is a loopback, link-local, private (RFC 1918), carrier-grade-NAT, or otherwise non-public address — specification section 13.2's SSRF-protection obligation — before ever connecting:
 
 ```ballerina
-final a2a:DefaultHandler handler = new (card,
+final a2a:DefaultHandler handler = new (new WeatherExecutor(),
     pushSender = new a2a:HttpPushNotificationSender({validateUrl: false, timeout: 5}));
 ```
 
@@ -462,13 +537,7 @@ A failed delivery is retried with exponential backoff (specification section 13.
 
 `validateUrl: false` is the escape hatch a deployment with a legitimately internal webhook host needs. The check is by URL form, not by resolving the hostname — a name that only resolves to a private address at connect time (DNS rebinding) is not caught; supply your own `a2a:PushNotificationSender` to close that gap with whatever resolution your deployment trusts.
 
-Streaming and push notifications are always *implemented* by this listener, but each is only *advertised* — and accepted — when its `DefaultHandlerConfiguration` flag is left at its `true` default:
-
-```ballerina
-final a2a:DefaultHandler handler = new (card, streamingCapability = false, pushNotificationsCapability = false);
-```
-
-Set one `false` when a deployment deliberately wants to withhold that capability — no outbound network access for webhooks, an operator policy against it, whatever the reason. The served card then declares `capabilities.streaming`/`capabilities.pushNotifications` as `false`, and the corresponding operations are rejected server-side (`UnsupportedOperationError` / `PushNotificationNotSupportedError`) exactly as if this listener had never implemented them — never a card that quietly claims something the server then refuses.
+Streaming and push notifications are advertised, and accepted, only when the service defines their operations. To withhold one, leave its operations out: a service without `onSendStreamingMessage` and `onSubscribeToTask` declares `capabilities.streaming` as `false`, and one without the four push-notification operations declares `capabilities.pushNotifications` as `false`. A request for an operation that is not defined is rejected (`UnsupportedOperationError` / `PushNotificationNotSupportedError`), and an inline push config on a send request is rejected too. The card never quietly claims something the server then refuses.
 
 ### 7.6 Task ownership and authorization scoping
 
@@ -478,7 +547,7 @@ Specification section 13.1 requires that "clients can only access authorized tas
 isolated class TeamOwnerResolver {
     *a2a:TaskOwnerResolver;
 
-    public isolated function resolveOwner(a2a:CallerContext context) returns string?|a2a:Error {
+    public isolated function resolveOwner(a2a:Context context) returns string?|a2a:Error {
         // Scope by team rather than by individual caller. `identity` is the
         // caller `auth` already verified; a resolver that trusts an
         // unverified header instead is not a security boundary.
@@ -487,10 +556,10 @@ isolated class TeamOwnerResolver {
     }
 }
 
-final a2a:DefaultHandler handler = new (card, ownerResolver = new TeamOwnerResolver());
+final a2a:DefaultHandler handler = new (new WeatherExecutor(), ownerResolver = new TeamOwnerResolver());
 ```
 
-The resolver is given an `a2a:CallerContext`, not an HTTP request: the `identity` inbound authentication established, the `tenant` the request was routed under, its `headers` (names lower-cased), and the client certificate when a mutual TLS handshake passed. The same resolver therefore works for any binding a listener serves. It is configured on the handler, so every listener given that handler shares it.
+The resolver is given an `a2a:Context`, not an HTTP request: the `identity` inbound authentication established, the `tenant` the request was routed under, and its `headers` (names lower-cased). The same resolver therefore works for any binding a listener serves. It is configured on the `DefaultHandler`, so every operation that delegates to it shares it.
 
 Once configured, `getTask`, `cancelTask`, `listTasks`, `subscribeToTask`, and the four push-notification config operations all become owner-scoped: a task, or a task's push configs, created under one resolved owner are invisible to every other owner — indistinguishable from not existing at all, per the same section's requirement that a server "MUST NOT reveal the existence of resources the client is not authorized to access." `TaskUpdater` stamps every write with the owner the task was created under, so an agent's own driven updates stay in the right scope automatically.
 
@@ -501,7 +570,7 @@ Once configured, `getTask`, `cancelTask`, `listTasks`, `subscribeToTask`, and th
 Specification section 7.4 requires a server to authenticate every incoming request. Configure `auth` with the same entries a service's `@http:ServiceConfig` takes; the listener runs the `ballerina/http` listener auth handlers for you:
 
 ```ballerina
-listener a2a:HttpListener agent = new (9090, handler, auth = [
+listener a2a:HttpListener agent = new (9090, auth = [
     {
         jwtValidatorConfig: {
             issuer: "https://idp.example.com",

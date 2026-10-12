@@ -43,24 +43,27 @@ isolated function silentAgentCard(string name) returns AgentCard => {
     supportedInterfaces: []
 };
 
-final DefaultHandler keepAliveHandler = new (silentAgentCard("Keep-alive Agent"));
+final AgentCard keepAliveHandlerCard = silentAgentCard("Keep-alive Agent");
 
-listener HttpListener keepAliveListener = new (KEEPALIVE_TEST_PORT, keepAliveHandler, keepAliveInterval = 0.4);
-final DefaultHandler noKeepAliveHandler = new (silentAgentCard("No keep-alive Agent"));
+final DefaultHandler keepAliveHandler = new (new SilentAgent());
 
-listener HttpListener noKeepAliveListener = new (NO_KEEPALIVE_TEST_PORT, noKeepAliveHandler, keepAliveInterval = 0);
-final DefaultHandler backstopHandler = new (silentAgentCard("Backstop Agent"));
+listener HttpListener keepAliveListener = new (KEEPALIVE_TEST_PORT, keepAliveInterval = 0.4);
+final AgentCard noKeepAliveHandlerCard = silentAgentCard("No keep-alive Agent");
 
-listener HttpListener backstopListener = new (BACKSTOP_TEST_PORT, backstopHandler,
-    keepAliveInterval = 0.4,
-    streamIdleTimeout = 2
-);
+final DefaultHandler noKeepAliveHandler = new (new SilentAgent());
+
+listener HttpListener noKeepAliveListener = new (NO_KEEPALIVE_TEST_PORT, keepAliveInterval = 0);
+final AgentCard backstopHandlerCard = silentAgentCard("Backstop Agent");
+
+final DefaultHandler backstopHandler = new (new SilentAgent());
+
+listener HttpListener backstopListener = new (BACKSTOP_TEST_PORT, keepAliveInterval = 0.4, streamIdleTimeout = 2);
 
 @test:BeforeSuite
 function startKeepAliveServers() returns error? {
-    check keepAliveListener.attach(new SilentAgent());
-    check noKeepAliveListener.attach(new SilentAgent());
-    check backstopListener.attach(new SilentAgent());
+    check keepAliveListener.attach(new FullService(keepAliveHandler, keepAliveHandlerCard), "rest");
+    check noKeepAliveListener.attach(new FullService(noKeepAliveHandler, noKeepAliveHandlerCard), "rest");
+    check backstopListener.attach(new FullService(backstopHandler, backstopHandlerCard), "rest");
 }
 
 // Opens a message:stream on `port` for an agent held on gate `key`, as a raw
@@ -68,7 +71,7 @@ function startKeepAliveServers() returns error? {
 isolated function openHeldStream(int port, string key) returns stream<http:SseEvent, error?>|error {
     http:Client raw = check new (string `http://localhost:${port}`);
     json body = {"message": {"messageId": "ka-" + key, "role": "ROLE_USER", "parts": [{"text": "hold:" + key}]}};
-    http:Response resp = check raw->post("/message:stream", body,
+    http:Response resp = check raw->post("/rest/message:stream", body,
             {"A2A-Version": "1.0", "Content-Type": "application/json"});
     return resp.getSseEventStream();
 }

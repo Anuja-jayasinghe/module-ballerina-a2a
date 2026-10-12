@@ -428,13 +428,13 @@ public isolated class InMemoryEventBroadcasterRegistry {
     # task nobody has ever driven or subscribed to, and must not claim or
     # touch the driver slot: a driver may genuinely still be running (a
     # live `sendStreamingMessage` subscriber can learn a taskId, and race
-    # a `cancelTask` against it, before `onMessage` returns), and
+    # a `cancelTask` against it, before `execute` returns), and
     # `release`-ing that slot early here would let a second, concurrent
     # `acquire` for the same task id succeed while the first driver is
     # still actually running -- exactly the two-`TaskUpdater`s-racing
     # situation the interlock exists to prevent. `InMemoryTaskStore`'s own
     # terminal-state guard is what actually stops a still-running
-    # `onMessage`'s further writes once `cancelTask`'s own `store.put`
+    # `execute`'s further writes once `cancelTask`'s own `store.put`
     # below lands; the driver's own eventual `finishDrivenTask` still
     # releases the slot once it returns, whatever it returns.
     #

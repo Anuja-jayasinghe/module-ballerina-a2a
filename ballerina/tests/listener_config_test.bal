@@ -30,7 +30,7 @@ import ballerina/time;
 const int LISTENER_CONFIG_TEST_PORT = 19242;
 final string listenerConfigServerUrl = string `http://localhost:${LISTENER_CONFIG_TEST_PORT}`;
 
-final DefaultHandler shortTimeoutHandler = new ({
+final AgentCard shortTimeoutHandlerCard = {
     name: "Silent Agent",
     description: "Says one thing, then nothing until told to finish",
     version: "1.0.0",
@@ -39,19 +39,18 @@ final DefaultHandler shortTimeoutHandler = new ({
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-});
+};
 
-listener HttpListener shortTimeoutListener = new (LISTENER_CONFIG_TEST_PORT, shortTimeoutHandler,
-    timeout = 2,
-    keepAliveInterval = 0
-);
+final DefaultHandler shortTimeoutHandler = new (new SilentAgent());
+
+listener HttpListener shortTimeoutListener = new (LISTENER_CONFIG_TEST_PORT, timeout = 2, keepAliveInterval = 0);
 
 // Reports WORKING, then holds on the Gate registered under the key in its
 // message ("hold:<key>") until a test releases it, then completes.
-isolated service class SilentAgent {
-    *Service;
+isolated class SilentAgent {
+    *AgentExecutor;
 
-    isolated remote function onMessage(RequestContext context, TaskUpdater updater)
+    public isolated function execute(RequestContext context, TaskUpdater updater)
             returns Message|Error? {
         string text = context.message.parts[0]?.text ?: "";
         check updater->working();
@@ -66,7 +65,7 @@ isolated service class SilentAgent {
 
 @test:BeforeSuite
 function startShortTimeoutServer() returns error? {
-    check shortTimeoutListener.attach(new SilentAgent());
+    check shortTimeoutListener.attach(new FullService(shortTimeoutHandler, shortTimeoutHandlerCard), "rest");
 }
 
 @test:Config {}

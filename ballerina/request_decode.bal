@@ -27,7 +27,7 @@
 #
 # File bytes arrive as base64 in `Part.raw`; they are decoded to `byte[]`
 # before conversion, the same step the client applies to what an agent sends,
-# so an agent's `onMessage` receives the bytes and not a string.
+# so an agent's `execute` receives the bytes and not a string.
 #
 # + payload - The request's parsed JSON body, or the error parsing it raised
 # + return - The typed request, or an `invalidRequest` error

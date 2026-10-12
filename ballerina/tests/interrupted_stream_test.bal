@@ -29,7 +29,7 @@ import ballerina/time;
 const int INTERRUPTED_STREAM_PORT = 19272;
 const decimal INTERRUPTED_STREAM_IDLE_TIMEOUT = 4;
 
-final DefaultHandler interruptedStreamHandler = new ({
+final AgentCard interruptedStreamHandlerCard = {
     name: "Interrupting Agent",
     description: "Pauses for input or for authorization",
     version: "1.0.0",
@@ -38,19 +38,18 @@ final DefaultHandler interruptedStreamHandler = new ({
     defaultOutputModes: ["text"],
     capabilities: {},
     supportedInterfaces: []
-});
+};
 
-listener HttpListener interruptedStreamListener = new (INTERRUPTED_STREAM_PORT, interruptedStreamHandler,
-    keepAliveInterval = 0,
-    streamIdleTimeout = INTERRUPTED_STREAM_IDLE_TIMEOUT
-);
+final DefaultHandler interruptedStreamHandler = new (new InterruptingAgent());
+
+listener HttpListener interruptedStreamListener = new (INTERRUPTED_STREAM_PORT, keepAliveInterval = 0, streamIdleTimeout = INTERRUPTED_STREAM_IDLE_TIMEOUT);
 
 // "ask" pauses on INPUT_REQUIRED, "authorize" on AUTH_REQUIRED, anything else
 // completes.
-isolated service class InterruptingAgent {
-    *Service;
+isolated class InterruptingAgent {
+    *AgentExecutor;
 
-    isolated remote function onMessage(RequestContext context, TaskUpdater updater) returns Message|Error? {
+    public isolated function execute(RequestContext context, TaskUpdater updater) returns Message|Error? {
         string? text = context.message.parts[0]?.text;
         check updater->working();
         if text == "ask" {
@@ -68,7 +67,7 @@ isolated service class InterruptingAgent {
 
 @test:BeforeSuite
 function startInterruptingAgent() returns error? {
-    check interruptedStreamListener.attach(new InterruptingAgent());
+    check interruptedStreamListener.attach(new FullService(interruptedStreamHandler, interruptedStreamHandlerCard), "rest");
 }
 
 // Streams one message and reads the SSE stream until the server ends it.
@@ -80,7 +79,7 @@ isolated function streamToEnd(json body) returns [string[], decimal]|error {
         timeout = INTERRUPTED_STREAM_IDLE_TIMEOUT * 3
     );
     time:Seconds started = time:monotonicNow();
-    http:Response response = check raw->post("/message:stream", body,
+    http:Response response = check raw->post("/rest/message:stream", body,
             {"A2A-Version": "1.0", "Content-Type": "application/json"});
     stream<http:SseEvent, error?> events = check response.getSseEventStream();
     string[] payloads = [];

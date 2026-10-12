@@ -25,17 +25,15 @@ const int TWO_JWT_AUTH_TEST_PORT = 19254;
 const int DECLARED_SECURITY_TEST_PORT = 19255;
 
 // Two entries of the same kind, with different scopes.
-final DefaultHandler twoJwtAuthHandler = new (authTestCard);
+final DefaultHandler twoJwtAuthHandler = new (new CountingAgent());
 
-listener HttpListener twoJwtAuthListener = new (TWO_JWT_AUTH_TEST_PORT, twoJwtAuthHandler,
-    auth = [
+listener HttpListener twoJwtAuthListener = new (TWO_JWT_AUTH_TEST_PORT, auth = [
         {jwtValidatorConfig: authTestJwtValidator, scopes: "a2a:read"},
         {jwtValidatorConfig: authTestJwtValidator, scopes: ["a2a:write", "a2a:admin"]}
-    ]
-);
+    ]);
 
 // The developer declares their own security: nothing is derived over it.
-final DefaultHandler declaredSecurityHandler = new ({
+final AgentCard declaredSecurityHandlerCard = {
     name: "Declared Security Agent",
     description: "Declares an OpenID Connect scheme itself",
     version: "1.0.0",
@@ -48,16 +46,16 @@ final DefaultHandler declaredSecurityHandler = new ({
         "oidc": <OpenIdConnectSecurityScheme>{openIdConnectUrl: "https://idp.example.com/.well-known/openid-configuration"}
     },
     securityRequirements: [{"oidc": ["openid"]}]
-});
+};
 
-listener HttpListener declaredSecurityListener = new (DECLARED_SECURITY_TEST_PORT, declaredSecurityHandler,
-    auth = [{jwtValidatorConfig: authTestJwtValidator}]
-);
+final DefaultHandler declaredSecurityHandler = new (new CountingAgent());
+
+listener HttpListener declaredSecurityListener = new (DECLARED_SECURITY_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
 
 @test:BeforeSuite
 function startCardDerivationServers() returns error? {
-    check twoJwtAuthListener.attach(new CountingAgent());
-    check declaredSecurityListener.attach(new CountingAgent());
+    check twoJwtAuthListener.attach(new FullService(twoJwtAuthHandler, authTestCard), "rest");
+    check declaredSecurityListener.attach(new FullService(declaredSecurityHandler, declaredSecurityHandlerCard), "rest");
 }
 
 isolated function servedCardOf(int port) returns map<json>|error {
@@ -126,7 +124,7 @@ function testDeclaredSecurityIsNeverOverwritten() returns error? {
 @test:Config {}
 function testDerivedSecurityIsOnTheExtendedCardToo() returns error? {
     string token = check bearerToken("alice");
-    http:Response r = check authCall(JWT_AUTH_TEST_PORT, "GET", "/extendedAgentCard", "Bearer " + token);
+    http:Response r = check authCall(JWT_AUTH_TEST_PORT, "GET", "/rest/extendedAgentCard", "Bearer " + token);
     json payload = check r.getJsonPayload();
     map<json> card = check payload.ensureType();
     test:assertEquals((check schemesOf(card)).keys(), ["bearerAuth"],
@@ -140,7 +138,7 @@ function testDerivedSecurityIsOnTheExtendedCardToo() returns error? {
 @test:Config {}
 function testTheExtendedCardIsPrivatelyCacheable() returns error? {
     string token = check bearerToken("alice");
-    http:Response extended = check authCall(JWT_AUTH_TEST_PORT, "GET", "/extendedAgentCard", "Bearer " + token);
+    http:Response extended = check authCall(JWT_AUTH_TEST_PORT, "GET", "/rest/extendedAgentCard", "Bearer " + token);
     test:assertEquals(extended.statusCode, 200);
     test:assertEquals(check extended.getHeader("Cache-Control"), "private, max-age=300");
 

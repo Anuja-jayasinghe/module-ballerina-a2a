@@ -743,3 +743,239 @@ public isolated function gateFor(string key) returns Gate? {
         return paceGates[key];
     }
 }
+
+// ---- test services ---------------------------------------------------------
+//
+// Each delegates the operations it defines to a DefaultHandler and returns its
+// card from onGetAgentCard, so a test chooses the card per instance.
+
+// Every operation but the extended card.
+isolated service class FullService {
+    *Service;
+
+    private final DefaultHandler handler;
+    private final AgentCard & readonly card;
+
+    isolated function init(DefaultHandler handler, AgentCard card) {
+        self.handler = handler;
+        self.card = card.cloneReadOnly();
+    }
+
+    remote isolated function onGetAgentCard() returns AgentCard|Error {
+        return self.card;
+    }
+
+    remote isolated function onSendMessage(Context context, SendMessageRequest request) returns Task|Message|Error {
+        return self.handler.sendMessage(context, request);
+    }
+
+    remote isolated function onSendStreamingMessage(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
+        return self.handler.sendStreamingMessage(context, request);
+    }
+
+    remote isolated function onSubscribeToTask(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
+        return self.handler.subscribeToTask(context, request);
+    }
+
+    remote isolated function onGetTask(Context context, GetTaskRequest request) returns Task|Error {
+        return self.handler.getTask(context, request);
+    }
+
+    remote isolated function onListTasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
+        return self.handler.listTasks(context, request);
+    }
+
+    remote isolated function onCancelTask(Context context, CancelTaskRequest request) returns Task|Error {
+        return self.handler.cancelTask(context, request);
+    }
+
+    remote isolated function onCreateTaskPushNotificationConfig(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
+        return self.handler.createTaskPushNotificationConfig(context, request);
+    }
+
+    remote isolated function onGetTaskPushNotificationConfig(Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
+        return self.handler.getTaskPushNotificationConfig(context, request);
+    }
+
+    remote isolated function onListTaskPushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
+        return self.handler.listTaskPushNotificationConfigs(context, request);
+    }
+
+    remote isolated function onDeleteTaskPushNotificationConfig(Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
+        return self.handler.deleteTaskPushNotificationConfig(context, request);
+    }
+}
+
+// Every operation, including the extended card.
+isolated service class ExtendedService {
+    *Service;
+
+    private final DefaultHandler handler;
+    private final AgentCard & readonly card;
+
+    isolated function init(DefaultHandler handler, AgentCard card) {
+        self.handler = handler;
+        self.card = card.cloneReadOnly();
+    }
+
+    remote isolated function onGetAgentCard() returns AgentCard|Error {
+        return self.card;
+    }
+
+    remote isolated function onSendMessage(Context context, SendMessageRequest request) returns Task|Message|Error {
+        return self.handler.sendMessage(context, request);
+    }
+
+    remote isolated function onSendStreamingMessage(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
+        return self.handler.sendStreamingMessage(context, request);
+    }
+
+    remote isolated function onSubscribeToTask(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
+        return self.handler.subscribeToTask(context, request);
+    }
+
+    remote isolated function onGetTask(Context context, GetTaskRequest request) returns Task|Error {
+        return self.handler.getTask(context, request);
+    }
+
+    remote isolated function onListTasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
+        return self.handler.listTasks(context, request);
+    }
+
+    remote isolated function onCancelTask(Context context, CancelTaskRequest request) returns Task|Error {
+        return self.handler.cancelTask(context, request);
+    }
+
+    remote isolated function onCreateTaskPushNotificationConfig(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
+        return self.handler.createTaskPushNotificationConfig(context, request);
+    }
+
+    remote isolated function onGetTaskPushNotificationConfig(Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
+        return self.handler.getTaskPushNotificationConfig(context, request);
+    }
+
+    remote isolated function onListTaskPushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
+        return self.handler.listTaskPushNotificationConfigs(context, request);
+    }
+
+    remote isolated function onDeleteTaskPushNotificationConfig(Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
+        return self.handler.deleteTaskPushNotificationConfig(context, request);
+    }
+
+    remote isolated function onGetExtendedAgentCard(Context context, GetExtendedAgentCardRequest request) returns AgentCard|Error {
+        return self.handler.getExtendedAgentCard(context, request);
+    }
+}
+
+// No streaming: card says streaming false.
+isolated service class NoStreamingService {
+    *Service;
+
+    private final DefaultHandler handler;
+    private final AgentCard & readonly card;
+
+    isolated function init(DefaultHandler handler, AgentCard card) {
+        self.handler = handler;
+        self.card = card.cloneReadOnly();
+    }
+
+    remote isolated function onGetAgentCard() returns AgentCard|Error {
+        return self.card;
+    }
+
+    remote isolated function onSendMessage(Context context, SendMessageRequest request) returns Task|Message|Error {
+        return self.handler.sendMessage(context, request);
+    }
+
+    remote isolated function onGetTask(Context context, GetTaskRequest request) returns Task|Error {
+        return self.handler.getTask(context, request);
+    }
+
+    remote isolated function onListTasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
+        return self.handler.listTasks(context, request);
+    }
+
+    remote isolated function onCancelTask(Context context, CancelTaskRequest request) returns Task|Error {
+        return self.handler.cancelTask(context, request);
+    }
+
+    remote isolated function onCreateTaskPushNotificationConfig(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
+        return self.handler.createTaskPushNotificationConfig(context, request);
+    }
+
+    remote isolated function onGetTaskPushNotificationConfig(Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
+        return self.handler.getTaskPushNotificationConfig(context, request);
+    }
+
+    remote isolated function onListTaskPushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
+        return self.handler.listTaskPushNotificationConfigs(context, request);
+    }
+
+    remote isolated function onDeleteTaskPushNotificationConfig(Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
+        return self.handler.deleteTaskPushNotificationConfig(context, request);
+    }
+}
+
+// No push notifications: card says pushNotifications false.
+isolated service class NoPushService {
+    *Service;
+
+    private final DefaultHandler handler;
+    private final AgentCard & readonly card;
+
+    isolated function init(DefaultHandler handler, AgentCard card) {
+        self.handler = handler;
+        self.card = card.cloneReadOnly();
+    }
+
+    remote isolated function onGetAgentCard() returns AgentCard|Error {
+        return self.card;
+    }
+
+    remote isolated function onSendMessage(Context context, SendMessageRequest request) returns Task|Message|Error {
+        return self.handler.sendMessage(context, request);
+    }
+
+    remote isolated function onSendStreamingMessage(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
+        return self.handler.sendStreamingMessage(context, request);
+    }
+
+    remote isolated function onSubscribeToTask(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
+        return self.handler.subscribeToTask(context, request);
+    }
+
+    remote isolated function onGetTask(Context context, GetTaskRequest request) returns Task|Error {
+        return self.handler.getTask(context, request);
+    }
+
+    remote isolated function onListTasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
+        return self.handler.listTasks(context, request);
+    }
+
+    remote isolated function onCancelTask(Context context, CancelTaskRequest request) returns Task|Error {
+        return self.handler.cancelTask(context, request);
+    }
+}
+
+// Only sendMessage, for tests about the card, auth or the wire.
+isolated service class MessageOnlyService {
+    *Service;
+
+    private final DefaultHandler handler;
+    private final AgentCard & readonly card;
+
+    isolated function init(DefaultHandler handler, AgentCard card) {
+        self.handler = handler;
+        self.card = card.cloneReadOnly();
+    }
+
+    remote isolated function onGetAgentCard() returns AgentCard|Error {
+        return self.card;
+    }
+
+    remote isolated function onSendMessage(Context context, SendMessageRequest request)
+            returns Task|Message|Error {
+        return self.handler.sendMessage(context, request);
+    }
+}
+

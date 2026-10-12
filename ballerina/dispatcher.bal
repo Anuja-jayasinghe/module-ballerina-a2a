@@ -52,23 +52,26 @@ isolated service class DispatcherService {
     *http:Service;
 
     private final AgentCard & readonly card;
-    private final (AgentCard & readonly)? extendedCard;
-    private final DefaultHandler handler;
+    private final OperationBinding binding;
+    private final ServedCards cards;
     private final ListenerAuthenticator? authenticator;
     private final string interfaceScheme;
     private final string? publicUrl;
     private final StreamTiming & readonly streamTiming;
+    // The path the service is mounted at, which the served interface URL ends in
+    private final string mountPath;
 
-    isolated function init(AgentCard card, (AgentCard & readonly)? extendedCard, DefaultHandler handler,
-            ListenerAuthenticator? authenticator = (), string interfaceScheme = "http", string? publicUrl = (),
-            StreamTiming streamTiming = {}) {
+    isolated function init(AgentCard card, OperationBinding binding, ServedCards cards,
+            ListenerAuthenticator? authenticator, string interfaceScheme, string? publicUrl,
+            StreamTiming streamTiming, string mountPath) {
         self.card = card.cloneReadOnly();
-        self.extendedCard = extendedCard;
-        self.handler = handler;
+        self.binding = binding;
+        self.cards = cards;
         self.authenticator = authenticator;
         self.interfaceScheme = interfaceScheme;
         self.publicUrl = publicUrl;
         self.streamTiming = streamTiming.cloneReadOnly();
+        self.mountPath = mountPath;
     }
 
     isolated resource function get [string... path](http:Request req)
@@ -95,15 +98,6 @@ isolated service class DispatcherService {
     # + return - The response to send
     private isolated function dispatch(string method, string rawPath, http:Request req)
             returns http:Response|stream<http:SseEvent, error?> {
-        // Discovery is unversioned and untenanted. The served card's
-        // interface URL is filled from the Host the client reached us on —
-        // the server knows its port but not its externally-visible host, so
-        // the request that fetches the card is what reveals it. This is how a
-        // client that resolves the card then gets a usable URL to call.
-        if method == "GET" && rawPath == "/.well-known/agent-card.json" {
-            return cardHttpResponse(self.cardWithInterfaceUrl(self.card, req));
-        }
-
         // Authentication comes before everything else, so a caller that has
         // not proved who it is learns nothing about the server -- not even
         // whether a path or a tenant exists (specification section 7.4).
@@ -137,16 +131,13 @@ isolated service class DispatcherService {
         }
         [string, string?] [path, tenant] = routed;
 
-        // Resolved once per request, after the tenant is known (a resolver
-        // may want it) and before any operation runs. With no resolver
-        // configured on the handler, the authenticated identity is the owner
-        // (section 13.1); with no `auth` either, the one shared, unscoped pool.
-        string?|Error owner = self.handler.resolveOwner(callerContextOf(req, identity, tenant));
-        if owner is Error {
-            return toRestErrorResponse(owner);
-        }
+        // The caller as the operations see it: who authentication established,
+        // the tenant, the headers, and the stream policy. Built once per request,
+        // after the tenant is known; each operation resolves the owner itself.
+        Context context = callerContextOf(req, identity, tenant);
+        context.streamTiming = self.streamTiming;
 
-        http:Response|stream<http:SseEvent, error?>|Error result = self.route(method, path, tenant, owner, req);
+        http:Response|stream<http:SseEvent, error?>|Error result = self.route(method, path, context, req);
         if result is Error {
             return toRestErrorResponse(result);
         }
@@ -174,7 +165,7 @@ isolated service class DispatcherService {
         if host !is string && publicUrl is () {
             return card;
         }
-        string url = interfaceUrlFor(publicUrl, self.interfaceScheme, host is string ? host : "");
+        string url = interfaceUrlFor(publicUrl, self.interfaceScheme, host is string ? host : "") + "/" + self.mountPath;
         // `card` is readonly, so round-trip through JSON for a fresh mutable
         // copy, then fill the HTTP+JSON interface's URL. `deriveServedCard`
         // put a single such entry there, on both the public and extended
@@ -309,29 +300,29 @@ isolated service class DispatcherService {
     #
     # + method - The HTTP method
     # + path - The path with no tenant prefix
-    # + tenant - The matched tenant, or `()`
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, as the listener established it
     # + req - The HTTP request
     # + return - The response, or an error to serialise
-    private isolated function route(string method, string path, string? tenant, string? owner, http:Request req)
+    private isolated function route(string method, string path, Context context, http:Request req)
             returns http:Response|stream<http:SseEvent, error?>|Error {
         // The exact-match operations dispatch by [method, path] equality; the
         // rest below need startsWith/endsWith/includes on the path, which a
         // match pattern can't express, so they stay as guarded `if`s.
         match [method, path] {
             ["POST", "/message:send"] => {
-                return self.onSendMessage(tenant, owner, req);
+                return self.onSendMessage(context, req);
             }
             ["POST", "/message:stream"] => {
-                return self.onSendStreamingMessage(tenant, owner, req);
+                return self.onSendStreamingMessage(context, req);
             }
             ["GET", "/extendedAgentCard"] => {
-                AgentCard extended = check servedExtendedCard(self.extendedCard);
-                return cardHttpResponse(self.cardWithInterfaceUrl(extended, req), authenticated = true);
+                AgentCard supplied = check self.binding.getExtendedAgentCard(context, {tenant: context?.tenant});
+                return cardHttpResponse(self.cardWithInterfaceUrl(self.cards.extendedCard(supplied), req),
+                        authenticated = true);
             }
             ["GET", "/tasks"] => {
                 ListTasksRequest filter = check queryToListFilter(req);
-                return jsonResponse((check self.handler.listTasks(filter, owner)).toJson());
+                return jsonResponse((check self.binding.listTasks(context, filter)).toJson());
             }
         }
 
@@ -344,7 +335,7 @@ isolated service class DispatcherService {
             if id.includes("/") {
                 return methodNotFound(string `no A2A operation at ${method} ${path}`);
             }
-            return jsonResponse((check self.handler.cancelTask({id}, owner)).toJson());
+            return jsonResponse((check self.binding.cancelTask(context, {id})).toJson());
         }
         // The proto's own annotation is GET, but the client falls back to
         // POST on a 404 -- a compat workaround for a non-reference server
@@ -359,7 +350,7 @@ isolated service class DispatcherService {
             if id.includes("/") {
                 return methodNotFound(string `no A2A operation at ${method} ${path}`);
             }
-            return self.onSubscribeToTask(id, owner);
+            return self.onSubscribeToTask(id, context);
         }
         // onPushNotificationConfigs assumes a "/tasks/{taskId}/pushNotificationConfigs..." shape
         // (the only shape the spec's HTTP+JSON binding defines) and slices the path on that
@@ -367,7 +358,7 @@ isolated service class DispatcherService {
         // never a legal path -- from reaching that slicing at all, and falling through to the
         // 404 below instead.
         if path.startsWith(TASKS_PATH_PREFIX) && path.includes(PUSH_NOTIFICATION_CONFIGS_SEGMENT) {
-            return self.onPushNotificationConfigs(method, path, owner, req);
+            return self.onPushNotificationConfigs(method, path, context, req);
         }
         if method == "GET" && path.startsWith(TASKS_PATH_PREFIX) && !path.includes(":")
                 && !path.includes(PUSH_NOTIFICATION_CONFIGS_SEGMENT) {
@@ -376,22 +367,36 @@ isolated service class DispatcherService {
                 return methodNotFound(string `no A2A operation at ${method} ${path}`);
             }
             int? historyLength = check queryInt(req, "historyLength");
-            return jsonResponse((check self.handler.getTask({id, historyLength}, owner)).toJson());
+            return jsonResponse((check self.binding.getTask(context, {id, historyLength})).toJson());
         }
         return methodNotFound(string `no A2A operation at ${method} ${path}`);
     }
 
-    # Handles POST /message:send: decode the request, run onMessage through
+    # Refuses an inline push-notification config when the service defines no
+    # push-notification operations, as it would refuse the Create itself
+    # ([specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation)).
+    #
+    # + request - The decoded send request
+    # + operation - The operation being served, for the message
+    # + return - A `PushNotificationNotSupportedError`, or `()`
+    private isolated function checkInlinePushConfig(SendMessageRequest request, string operation) returns Error? {
+        if request?.configuration?.taskPushNotificationConfig is TaskPushNotificationConfig
+                && !self.binding.isDefined("onCreateTaskPushNotificationConfig") {
+            return serverPushNotificationsUnsupportedError(operation);
+        }
+    }
+
+    # Handles POST /message:send: decode the request, run execute through
     # the default handler, and serialise the Task or Message it returns.
     #
-    # + tenant - The matched tenant, or `()`
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, as the listener established it
     # + req - The HTTP request
     # + return - The response, or an error
-    private isolated function onSendMessage(string? tenant, string? owner, http:Request req)
+    private isolated function onSendMessage(Context context, http:Request req)
             returns http:Response|Error {
         SendMessageRequest request = check decodeSendMessageRequest(req.getJsonPayload());
-        Task|Message result = check self.handler.sendMessage(request, tenant, owner);
+        check self.checkInlinePushConfig(request, "sendMessage");
+        Task|Message result = check self.binding.sendMessage(context, request);
         // The wire wraps the result in its oneof arm, matching what the client
         // decodes: {"task": ...} or {"message": ...}.
         string arm = result is Task ? "task" : "message";
@@ -402,21 +407,20 @@ isolated service class DispatcherService {
         return jsonResponse({[arm]: wired});
     }
 
-    # Handles POST /message:stream: decode the request, run onMessage through
+    # Handles POST /message:stream: decode the request, run execute through
     # the default handler, and frame every event it produced as SSE.
     #
-    # + tenant - The matched tenant, or `()`
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, as the listener established it
     # + req - The HTTP request
     # + return - The SSE stream, or an error
-    private isolated function onSendStreamingMessage(string? tenant, string? owner, http:Request req)
+    private isolated function onSendStreamingMessage(Context context, http:Request req)
             returns stream<http:SseEvent, error?>|Error {
         if !self.card.capabilities.streaming {
             return serverStreamingUnsupportedError("sendStreamingMessage");
         }
         SendMessageRequest request = check decodeSendMessageRequest(req.getJsonPayload());
-        stream<StreamResponse, Error?> events =
-            check self.handler.sendStreamingMessage(request, tenant, owner, self.streamTiming);
+        check self.checkInlinePushConfig(request, "sendStreamingMessage");
+        stream<StreamResponse, Error?> events = check self.binding.sendStreamingMessage(context, request);
         stream<http:SseEvent, error?> framed = new (new SseFramingGenerator(events));
         return framed;
     }
@@ -427,13 +431,14 @@ isolated service class DispatcherService {
     # rejection and the attach-before-snapshot ordering.
     #
     # + id - The task id
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, as the listener established it
     # + return - The SSE stream, or an error
-    private isolated function onSubscribeToTask(string id, string? owner) returns stream<http:SseEvent, error?>|Error {
+    private isolated function onSubscribeToTask(string id, Context context)
+            returns stream<http:SseEvent, error?>|Error {
         if !self.card.capabilities.streaming {
             return serverStreamingUnsupportedError("subscribeToTask");
         }
-        stream<StreamResponse, Error?> events = check self.handler.subscribeToTask({id}, owner, self.streamTiming);
+        stream<StreamResponse, Error?> events = check self.binding.subscribeToTask(context, {id});
         stream<http:SseEvent, error?> framed = new (new SseFramingGenerator(events));
         return framed;
     }
@@ -446,10 +451,11 @@ isolated service class DispatcherService {
     # + method - The HTTP method
     # + path - The path with no tenant prefix, already known to contain
     #          "/pushNotificationConfigs"
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, as the listener established it
     # + req - The HTTP request
     # + return - The response, or an error to serialise
-    private isolated function onPushNotificationConfigs(string method, string path, string? owner, http:Request req)
+    private isolated function onPushNotificationConfigs(string method, string path, Context context,
+            http:Request req)
             returns http:Response|Error {
         // Per [specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation), capability validation applies
         // to Create/Get/List/Delete explicitly -- all four route through
@@ -464,18 +470,18 @@ isolated service class DispatcherService {
         string rest = path.substring(marker + PUSH_NOTIFICATION_CONFIGS_SEGMENT.length());
 
         if rest == "" && method == "POST" {
-            return self.onCreateTaskPushNotificationConfig(taskId, owner, req);
+            return self.onCreateTaskPushNotificationConfig(taskId, context, req);
         }
         if rest == "" && method == "GET" {
-            return self.onListTaskPushNotificationConfigs(taskId, owner, req);
+            return self.onListTaskPushNotificationConfigs(taskId, context, req);
         }
         if rest.startsWith("/") && method == "GET" {
             return jsonResponse(
-                    (check self.handler.getTaskPushNotificationConfig({taskId, id: rest.substring(1)}, owner))
+                    (check self.binding.getTaskPushNotificationConfig(context, {taskId, id: rest.substring(1)}))
                         .toJson());
         }
         if rest.startsWith("/") && method == "DELETE" {
-            check self.handler.deleteTaskPushNotificationConfig({taskId, id: rest.substring(1)}, owner);
+            check self.binding.deleteTaskPushNotificationConfig(context, {taskId, id: rest.substring(1)});
             return jsonResponse({});
         }
         return methodNotFound(string `no A2A operation at ${method} ${path}`);
@@ -485,23 +491,25 @@ isolated service class DispatcherService {
     # config, stamp its `taskId` from the path, and register it.
     #
     # + taskId - The parent task id, from the path
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, as the listener established it
     # + req - The HTTP request
     # + return - The stored config, or an error
-    private isolated function onCreateTaskPushNotificationConfig(string taskId, string? owner, http:Request req)
+    private isolated function onCreateTaskPushNotificationConfig(string taskId, Context context,
+            http:Request req)
             returns http:Response|Error {
         TaskPushNotificationConfig request = check decodePushConfigRequest(req.getJsonPayload(), taskId);
-        return jsonResponse((check self.handler.createTaskPushNotificationConfig(request, owner)).toJson());
+        return jsonResponse((check self.binding.createTaskPushNotificationConfig(context, request)).toJson());
     }
 
     # Handles GET /tasks/{taskId}/pushNotificationConfigs: list every config
     # registered for the task, with optional pagination query params.
     #
     # + taskId - The parent task id, from the path
-    # + owner - The caller's resolved owner scope, or `()`
+    # + context - Who is calling, as the listener established it
     # + req - The HTTP request
     # + return - The page of configs, or an error
-    private isolated function onListTaskPushNotificationConfigs(string taskId, string? owner, http:Request req)
+    private isolated function onListTaskPushNotificationConfigs(string taskId, Context context,
+            http:Request req)
             returns http:Response|Error {
         ListTaskPushNotificationConfigsRequest request = {taskId};
         int? pageSize = check queryInt(req, "pageSize");
@@ -512,7 +520,7 @@ isolated service class DispatcherService {
         if pageToken is string {
             request.pageToken = pageToken;
         }
-        return jsonResponse((check self.handler.listTaskPushNotificationConfigs(request, owner)).toJson());
+        return jsonResponse((check self.binding.listTaskPushNotificationConfigs(context, request)).toJson());
     }
 }
 
@@ -822,28 +830,6 @@ isolated function interfaceUrlFor(string? publicUrl, string scheme, string host)
     return publicUrl ?: string `${scheme}://${host}`;
 }
 
-# The card `getExtendedAgentCard` serves.
-#
-# Per [specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation), the two failure reasons are
-# distinct: `capabilities.extendedAgentCard` false/absent is
-# `UnsupportedOperationError`; declared `true` but no card actually
-# configured is `ExtendedAgentCardNotConfiguredError`. `deriveServedCard`
-# ties the capability flag 1:1 to whether a card was configured, so the
-# second case can never actually happen here -- an unconfigured card always
-# means the capability reads `false` too, which is the first case.
-#
-# + extendedCard - The listener's derived extended card, or `()` if none is
-#                  configured
-# + return - The extended card, or an UnsupportedOperationError if none was
-#            set up
-isolated function servedExtendedCard((AgentCard & readonly)? extendedCard) returns AgentCard|Error {
-    if extendedCard is AgentCard {
-        return extendedCard;
-    }
-    string msg = "capabilities.extendedAgentCard is false: no extended AgentCard is configured for this agent";
-    return error UnsupportedOperationError(msg, message = msg, code = -32004);
-}
-
 # Builds the transport-free view of a request's caller that an
 # `a2a:TaskOwnerResolver` sees.
 #
@@ -855,7 +841,7 @@ isolated function servedExtendedCard((AgentCard & readonly)? extendedCard) retur
 # + identity - The identity authentication established, or `()`
 # + tenant - The tenant the request was routed under, or `()`
 # + return - The caller context
-isolated function callerContextOf(http:Request req, string? identity, string? tenant) returns CallerContext {
+isolated function callerContextOf(http:Request req, string? identity, string? tenant) returns Context {
     map<string[]> headers = {};
     foreach string name in req.getHeaderNames() {
         string key = name.toLowerAscii();
@@ -866,18 +852,12 @@ isolated function callerContextOf(http:Request req, string? identity, string? te
             headers[key] = values;
         }
     }
-    http:MutualSslHandshake? handshake = req.mutualSslHandshake;
-    string? certificate = handshake is http:MutualSslHandshake && handshake.status == http:PASSED
-        ? handshake.base64EncodedCert : ();
-    CallerContext context = {headers};
+    Context context = {headers};
     if identity is string {
         context.identity = identity;
     }
     if tenant is string {
         context.tenant = tenant;
-    }
-    if certificate is string {
-        context.clientCertificateBase64 = certificate;
     }
     return context;
 }

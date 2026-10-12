@@ -3,24 +3,26 @@
 ## Overview
 
 This example demonstrates how to use the Ballerina A2A module to serve an
-agent over A2A. It builds the agent's `a2a:DefaultHandler`, serves it on an
-`a2a:HttpListener`, implements the one method an agent author writes
-(`onMessage`), and lets the library run the rest of the protocol around it.
+agent over A2A. The agent is a service declared at `/rest` on an
+`a2a:HttpListener`. It carries the agent card, defines the A2A operations,
+and hands each one to an `a2a:DefaultHandler`, which runs the task around
+the agent's `a2a:AgentExecutor`.
 
 ### Features
 
-- **One method is the whole agent**: `onMessage` is all a developer
-  implements -- `getTask`, `cancelTask`, `listTasks`,
-  `sendStreamingMessage`/`subscribeToTask` as Server-Sent Events, the
-  push-notification configuration operations, and the well-known
-  discovery endpoint are all handled by the handler and the listener.
+- **One class is the agent's logic**: the executor's `execute` method is
+  all a developer writes for the agent itself. The service's operations
+  (`onGetTask`, `onCancelTask`, `onListTasks`, `onSendStreamingMessage`,
+  `onSubscribeToTask` as Server-Sent Events, the push-notification
+  operations) delegate to the handler.
 - **Driving a task**: `updater->working()`/`addArtifact()`/`complete()`
-  move a task through its lifecycle from inside `onMessage`.
-- **A real, discoverable Agent Card**: served at
-  `/.well-known/agent-card.json`, built from what this listener actually
-  implements -- `capabilities`/`supportedInterfaces` are never left as
-  placeholders on the wire, even though this example's own card literal
-  leaves both empty (see Code Structure).
+  move a task through its lifecycle from inside `execute`.
+- **A real, discoverable Agent Card**: declared once with
+  `@a2a:ServiceConfig` and served at `/.well-known/agent-card.json`. Its
+  `capabilities` and `supportedInterfaces` are derived from the operations
+  the service defines and the path it is declared at, so they are never
+  placeholders on the wire, even though this example's card literal leaves
+  both empty (see Code Structure).
 
 ## Running the Serve an Agent Example
 
@@ -60,24 +62,33 @@ Result: Sunny, 22°C
 Or with `curl` directly, bypassing the client module entirely:
 
 ```sh
-curl -s http://localhost:9090/message:send \
+curl -s http://localhost:9090/rest/message:send \
   -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' \
   -d '{"message": {"messageId": "m1", "role": "ROLE_USER", "parts": [{"text": "what is the forecast?"}]}}'
 ```
 
 ## Code Structure
 
-- **The handler**: `final a2a:DefaultHandler weatherAgent = new ({...})` --
-  the agent as the protocol sees it: its card, and where its tasks are kept
-  and who may see them (left at their defaults here).
-  `capabilities`/`supportedInterfaces` in the card literal are placeholders;
-  the listener replaces both with what it actually serves, so the published
-  card can never advertise something this agent does not do.
-- **The listener**: `listener a2a:HttpListener agent = new (agentPort, weatherAgent)`,
-  declared at module level -- a listener declared inside `main` does not
-  keep the program alive. It owns the wire: the port and, when configured,
-  TLS, authentication, and the address the card advertises.
-- **The agent itself**: an `isolated service a2a:Service on agent` whose one
-  `onMessage` method is the entire business logic. `@a2a:ServiceConfig {protocol: a2a:REST}`
-  chooses the HTTP+JSON binding -- the default, written out here to show
-  where the choice lives.
+- **The executor**: `isolated class WeatherExecutor` implements
+  `a2a:AgentExecutor`. Its `execute` method is the agent's business logic.
+- **The service**: `isolated service /rest on new a2a:HttpListener(agentPort)`.
+  The path names the binding: `rest` is HTTP+JSON. The `new` creates the
+  listener, which owns the wire -- the port and, when configured, TLS,
+  authentication, and the address the card advertises -- and holds no agent.
+  The Ballerina runtime attaches the service to it and starts it, so there
+  is no `main`.
+- **The card**: `@a2a:ServiceConfig` carries the agent card.
+  `capabilities`/`supportedInterfaces` in the card literal are placeholders
+  that the listener replaces with what the service defines, so the
+  published card can never advertise something this agent does not do.
+- **The handler**: a `private final a2a:DefaultHandler` field of the
+  service, built from the executor. Each operation the service defines
+  hands its request to it. Leaving an operation out answers
+  `UnsupportedOperationError` and drops its capability from the card; this
+  example defines every operation except the extended card, which needs
+  `auth` on the listener.
+
+To configure the listener (TLS, `auth`, `publicUrl`) or share it between
+services, declare it at module level and name it in the service instead:
+`listener a2a:HttpListener agent = new (agentPort, auth = [...]);` and
+`isolated service /rest on agent`.

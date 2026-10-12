@@ -76,7 +76,7 @@ service / on statusStub {
 isolated class FailingOwnerResolver {
     *TaskOwnerResolver;
 
-    public isolated function resolveOwner(CallerContext context) returns string?|Error {
+    public isolated function resolveOwner(Context context) returns string?|Error {
         string[]? modes = context.headers["x-test-fail"];
         string? mode = modes is string[] && modes.length() > 0 ? modes[0] : ();
         if mode == "401" {
@@ -89,13 +89,13 @@ isolated class FailingOwnerResolver {
     }
 }
 
-final DefaultHandler resolverErrorHandler = new (authTestCard, ownerResolver = new FailingOwnerResolver());
+final DefaultHandler resolverErrorHandler = new (new CountingAgent(), ownerResolver = new FailingOwnerResolver());
 
-listener HttpListener resolverErrorListener = new (RESOLVER_ERROR_TEST_PORT, resolverErrorHandler);
+listener HttpListener resolverErrorListener = new (RESOLVER_ERROR_TEST_PORT);
 
 @test:BeforeSuite
 function startAuthErrorServers() returns error? {
-    check resolverErrorListener.attach(new CountingAgent());
+    check resolverErrorListener.attach(new FullService(resolverErrorHandler, authTestCard), "rest");
 }
 
 isolated function stubClient(int port) returns HttpClient|error {
@@ -253,17 +253,17 @@ function testAWrongCredentialIsAnAuthenticationErrorNotAnAuthorizationError() re
 
 @test:Config {}
 function testAResolverCanAnswer401And403() returns error? {
-    http:Response unauth = check authCall(RESOLVER_ERROR_TEST_PORT, "GET", "/tasks", (),
+    http:Response unauth = check authCall(RESOLVER_ERROR_TEST_PORT, "GET", "/rest/tasks", (),
             extraHeaders = {"X-Test-Fail": "401"});
     test:assertEquals(unauth.statusCode, 401);
     test:assertEquals(check errorReasonOf(unauth), "UNAUTHENTICATED");
 
-    http:Response forbidden = check authCall(RESOLVER_ERROR_TEST_PORT, "GET", "/tasks", (),
+    http:Response forbidden = check authCall(RESOLVER_ERROR_TEST_PORT, "GET", "/rest/tasks", (),
             extraHeaders = {"X-Test-Fail": "403"});
     test:assertEquals(forbidden.statusCode, 403);
     test:assertEquals(check errorReasonOf(forbidden), "PERMISSION_DENIED");
 
-    http:Response fine = check authCall(RESOLVER_ERROR_TEST_PORT, "GET", "/tasks", ());
+    http:Response fine = check authCall(RESOLVER_ERROR_TEST_PORT, "GET", "/rest/tasks", ());
     test:assertEquals(fine.statusCode, 200);
 }
 

@@ -29,22 +29,18 @@ const int PUBLIC_URL_TEST_PORT = 19264;
 const string TEST_CERT = "tests/resources/localhost.crt";
 const string TEST_KEY = "tests/resources/localhost.key";
 
-final DefaultHandler tlsUrlHandler = new (authTestCard);
+final DefaultHandler tlsUrlHandler = new (new CountingAgent());
 
-listener HttpListener tlsUrlListener = new (TLS_URL_TEST_PORT, tlsUrlHandler,
-    secureSocket = {key: {certFile: TEST_CERT, keyFile: TEST_KEY}}
-);
+listener HttpListener tlsUrlListener = new (TLS_URL_TEST_PORT, secureSocket = {key: {certFile: TEST_CERT, keyFile: TEST_KEY}});
 
-final DefaultHandler publicUrlHandler = new (authTestCard);
+final DefaultHandler publicUrlHandler = new (new CountingAgent());
 
-listener HttpListener publicUrlListener = new (PUBLIC_URL_TEST_PORT, publicUrlHandler,
-    publicUrl = "https://agents.example.com/travel/"
-);
+listener HttpListener publicUrlListener = new (PUBLIC_URL_TEST_PORT, publicUrl = "https://agents.example.com/travel/");
 
 @test:BeforeSuite
 function startUrlTestServers() returns error? {
-    check tlsUrlListener.attach(new CountingAgent());
-    check publicUrlListener.attach(new CountingAgent());
+    check tlsUrlListener.attach(new FullService(tlsUrlHandler, authTestCard), "rest");
+    check publicUrlListener.attach(new FullService(publicUrlHandler, authTestCard), "rest");
 }
 
 isolated function servedInterfaceUrl(http:Client c) returns string|error {
@@ -81,7 +77,7 @@ function testPublicUrlIsNormalisedAndValidated() returns error? {
 
 @test:Config {}
 function testListenerRefusesAnUnusablePublicUrl() {
-    HttpListener|Error created = new (19265, new DefaultHandler(authTestCard), publicUrl = "ftp://agents.example.com");
+    HttpListener|Error created = new (19265, publicUrl = "ftp://agents.example.com");
     test:assertTrue(created is InternalError);
     if created is Error {
         test:assertTrue(created.message().includes("ListenerConfiguration.publicUrl"), created.message());
@@ -96,7 +92,7 @@ function testPublicUrlIsServedWhateverTheHostHeaderSays() returns error? {
     http:Response r = check c->get("/.well-known/agent-card.json", {"A2A-Version": "1.0", "Host": "internal-host:8080"});
     json card = check r.getJsonPayload();
     json[] interfaces = <json[]>check card.supportedInterfaces;
-    test:assertEquals((check interfaces[0].url).toString(), "https://agents.example.com/travel",
+    test:assertEquals((check interfaces[0].url).toString(), "https://agents.example.com/travel/rest",
             "the configured public URL, without its trailing slash, not the Host header");
 }
 
@@ -105,7 +101,7 @@ function testTlsListenerAdvertisesHttps() returns error? {
     http:Client c = check new (string `https://localhost:${TLS_URL_TEST_PORT}`,
         secureSocket = {cert: TEST_CERT}
     );
-    test:assertEquals(check servedInterfaceUrl(c), string `https://localhost:${TLS_URL_TEST_PORT}`,
+    test:assertEquals(check servedInterfaceUrl(c), string `https://localhost:${TLS_URL_TEST_PORT}/rest`,
             "a card served over TLS must not send clients to plain http");
 }
 

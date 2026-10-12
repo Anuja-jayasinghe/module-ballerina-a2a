@@ -22,7 +22,7 @@
 // is. That is deployment policy, not protocol, so this library surfaces a
 // hook rather than inventing an authentication scheme.
 //
-// The resolver sees a `CallerContext`, never a transport's own request type:
+// The resolver sees a `Context`, never a transport's own request type:
 // whichever binding received the call builds the context from its native
 // request, so one resolver serves every binding unchanged.
 
@@ -30,7 +30,7 @@
 #
 # Built once per inbound request by the binding that received it, after
 # authentication and tenant routing, and handed to `a2a:TaskOwnerResolver`.
-public type CallerContext record {|
+public type Context record {|
     # The identity inbound authentication already established (a JWT's `sub`,
     # the introspected `sub` or `username`, or the Basic username); unset
     # when no `auth` is configured. Prefer this over re-deriving an identity
@@ -41,9 +41,11 @@ public type CallerContext record {|
     # The request headers, with every name lower-cased, each mapped to all of
     # its values
     map<string[]> headers;
-    # The base64-encoded certificate the client presented, when a mutual TLS
-    # handshake passed; unset otherwise
-    string clientCertificateBase64?;
+    # How long a live stream may stay quiet, and how often it sends a
+    # keep-alive. The listener's policy, set for the streaming operations
+    # (`a2a:DefaultHandler.sendStreamingMessage`/`subscribeToTask` apply it);
+    # unset means no timeout and no keep-alive.
+    StreamTiming streamTiming?;
 |};
 
 # Resolves the caller of an inbound request to an opaque owner scope, for
@@ -57,7 +59,7 @@ public type CallerContext record {|
 # this feature existed -- every task in one shared, unscoped pool.
 #
 # Implement this against whatever identifies a caller in your deployment — the
-# authenticated `identity`, an mTLS certificate's principal, an API key header
+# authenticated `identity`, an API key header
 # looked up against a directory. This resolves identity; it does not
 # authenticate it. A resolver that trusts an unverified header is not a
 # security boundary, and satisfying [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping) requires
@@ -73,5 +75,5 @@ public type TaskOwnerResolver isolated object {
     #            resolvable identity, or an error if resolution itself failed
     #            (a malformed token, an unreachable directory) — distinct
     #            from a legitimately anonymous `()` result
-    public isolated function resolveOwner(CallerContext context) returns string?|Error;
+    public isolated function resolveOwner(Context context) returns string|Error?;
 };

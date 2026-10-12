@@ -16,10 +16,21 @@ See [`call-an-agent/README.md`](call-an-agent/README.md).
 
 ### Serve an Agent
 
-Serves an agent over A2A: one `onMessage` method is the whole business
-logic, an `a2a:DefaultHandler` runs the rest of the protocol (task
-lifecycle, streaming, push-notification config) around it, and an
+Serves an agent over A2A: an `a2a:AgentExecutor` holds the business
+logic, a service declared as `service /rest on new a2a:HttpListener(...)`
+carries the agent card and the
+A2A operations, an `a2a:DefaultHandler` runs the task
+lifecycle, streaming and push-notification config behind them, and an
 `a2a:HttpListener` serves it on the wire, card discovery included. Works
 with `call-an-agent` pointed at its port, or any other A2A HTTP+JSON v1.0
 client.
 See [`serve-an-agent/README.md`](serve-an-agent/README.md).
+
+### Bring Your Own Handler
+
+Serves an agent without `a2a:DefaultHandler`: the service defines only the
+operations it supports (`onSendMessage`, `onGetTask`, `onListTasks`) and
+answers them from its own handler class and storage. The operations it
+leaves out answer `UnsupportedOperationError`, and the card advertises
+only what exists.
+See [`bring-your-own-handler/README.md`](bring-your-own-handler/README.md).

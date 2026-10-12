@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// The `a2a:CallerContext` a `TaskOwnerResolver` receives: transport-free, and
+// The `a2a:Context` a `TaskOwnerResolver` receives: transport-free, and
 // carrying the identity authentication already established, so a resolver
 // never re-parses the credential the listener just verified.
 
@@ -23,13 +23,13 @@ import ballerina/test;
 
 const int CALLER_CONTEXT_TEST_PORT = 19265;
 
-isolated CallerContext? lastCallerContext = ();
+isolated Context? lastCallerContext = ();
 
 // Records what it was given, and scopes by the authenticated identity.
 isolated class RecordingOwnerResolver {
     *TaskOwnerResolver;
 
-    public isolated function resolveOwner(CallerContext context) returns string?|Error {
+    public isolated function resolveOwner(Context context) returns string?|Error {
         lock {
             lastCallerContext = context.clone();
         }
@@ -37,18 +37,16 @@ isolated class RecordingOwnerResolver {
     }
 }
 
-final DefaultHandler callerContextHandler = new (authTestCard, ownerResolver = new RecordingOwnerResolver());
+final DefaultHandler callerContextHandler = new (new CountingAgent(), ownerResolver = new RecordingOwnerResolver());
 
-listener HttpListener callerContextListener = new (CALLER_CONTEXT_TEST_PORT, callerContextHandler,
-    auth = [{jwtValidatorConfig: authTestJwtValidator}]
-);
+listener HttpListener callerContextListener = new (CALLER_CONTEXT_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
 
 @test:BeforeSuite
 function startCallerContextServer() returns error? {
-    check callerContextListener.attach(new CountingAgent());
+    check callerContextListener.attach(new FullService(callerContextHandler, authTestCard), "rest");
 }
 
-isolated function recordedCallerContext() returns CallerContext? {
+isolated function recordedCallerContext() returns Context? {
     lock {
         return lastCallerContext.clone();
     }
@@ -58,17 +56,16 @@ isolated function recordedCallerContext() returns CallerContext? {
 function testResolverReceivesTheAuthenticatedIdentity() returns error? {
     string token = check bearerToken("alice");
     json body = {"message": {"messageId": "m-caller-context", "role": "ROLE_USER", "parts": [{"text": "hi"}]}};
-    http:Response response = check authCall(CALLER_CONTEXT_TEST_PORT, "POST", "/message:send",
+    http:Response response = check authCall(CALLER_CONTEXT_TEST_PORT, "POST", "/rest/message:send",
             string `Bearer ${token}`, body, {"X-Api-Key": "key-1"});
     test:assertEquals(response.statusCode, 200);
 
-    CallerContext? recorded = recordedCallerContext();
-    test:assertTrue(recorded is CallerContext, "the resolver was never called");
-    CallerContext seen = <CallerContext>recorded;
+    Context? recorded = recordedCallerContext();
+    test:assertTrue(recorded is Context, "the resolver was never called");
+    Context seen = <Context>recorded;
     test:assertEquals(seen?.identity, "alice");
     test:assertEquals(seen.headers["x-api-key"], ["key-1"]);
     test:assertEquals(seen?.tenant, ());
-    test:assertEquals(seen?.clientCertificateBase64, ());
 }
 
 @test:Config {}
@@ -78,24 +75,10 @@ function testCallerContextOfLowerCasesHeaderNamesAndKeepsEveryValue() {
     request.addHeader("Accept", "text/plain");
     request.addHeader("Accept", "application/json");
 
-    CallerContext context = callerContextOf(request, "bob", "acme");
+    Context context = callerContextOf(request, "bob", "acme");
     test:assertEquals(context?.identity, "bob");
     test:assertEquals(context?.tenant, "acme");
     test:assertEquals(context.headers["x-api-key"], ["k1"]);
     test:assertEquals(context.headers["accept"], ["text/plain", "application/json"]);
     test:assertFalse(context.headers.hasKey("X-Api-Key"));
-}
-
-@test:Config {}
-function testCallerContextOfPassesACertificateOnlyFromAPassedHandshake() {
-    http:Request passed = new;
-    passed.mutualSslHandshake = {status: http:PASSED, base64EncodedCert: "Y2VydA=="};
-    test:assertEquals(callerContextOf(passed, (), ())?.clientCertificateBase64, "Y2VydA==");
-
-    http:Request failed = new;
-    failed.mutualSslHandshake = {status: http:FAILED, base64EncodedCert: "Y2VydA=="};
-    test:assertEquals(callerContextOf(failed, (), ())?.clientCertificateBase64, ());
-
-    http:Request plain = new;
-    test:assertEquals(callerContextOf(plain, (), ())?.clientCertificateBase64, ());
 }

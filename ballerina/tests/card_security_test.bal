@@ -36,7 +36,7 @@ final map<SecurityScheme> allSchemeKinds = {
     "mtls": <MutualTlsSecurityScheme>{}
 };
 
-final DefaultHandler cardSecurityHandler = new ({
+final AgentCard cardSecurityHandlerCard = {
     name: "Card Security Agent",
     description: "Declares one scheme of each kind",
     version: "1.0.0",
@@ -47,13 +47,15 @@ final DefaultHandler cardSecurityHandler = new ({
     supportedInterfaces: [],
     securitySchemes: allSchemeKinds,
     securityRequirements: [{"key": []}]
-});
+};
 
-listener HttpListener cardSecurityListener = new (CARD_SECURITY_TEST_PORT, cardSecurityHandler);
+final DefaultHandler cardSecurityHandler = new (new EchoAgent());
+
+listener HttpListener cardSecurityListener = new (CARD_SECURITY_TEST_PORT);
 
 @test:BeforeSuite
 function startCardSecurityServer() returns error? {
-    check cardSecurityListener.attach(new EchoAgent());
+    check cardSecurityListener.attach(new FullService(cardSecurityHandler, cardSecurityHandlerCard), "rest");
 }
 
 isolated function servedSchemes(int port) returns map<json>|error {
