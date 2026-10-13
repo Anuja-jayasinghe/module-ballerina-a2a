@@ -38,6 +38,8 @@ This repository only contains the source code for the module.
 
    > **Note:** These are required even for a read-only build. The build resolves the Ballerina distribution and the standard libraries it needs from GitHub Packages, which rejects anonymous requests.
 
+The package carries one small native Java class (`native/`, the blocking queue behind live task streams). `./gradlew build` builds it before the Ballerina package. To run `bal build` or `bal test` inside `ballerina/` on its own, build the jar first with `./gradlew :a2a-native:build`, since `Ballerina.toml` points at it.
+
 ### Build options
 
 Execute the commands below to build from the source.

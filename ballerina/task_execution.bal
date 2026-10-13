@@ -35,20 +35,13 @@
 //
 // Verified against real, empirically-run scratch packages this session,
 // not just read: `start` on an isolated method genuinely detaches an HTTP
-// request from the work it starts; a blocking, poll-based next delivers
-// values live as a separate detached producer pushes them, not pre-computed;
-// multiple taps on one broadcaster each receive the identical sequence.
+// request from the work it starts; a blocking `next` delivers values live
+// as a separate detached producer pushes them, not pre-computed; multiple
+// taps on one broadcaster each receive the identical sequence.
 // Two isolation rules surfaced by that spike, both applied throughout this
 // file: a value transferred out of a `lock` block must be `.clone()`d, and
 // so must a value passed into a nested isolated object's method call from
 // inside a `lock` block, even a plain parameter.
-
-import ballerina/lang.runtime;
-
-# How often a tap's blocking `next` polls for a new event. Short enough
-# that live delivery feels immediate, long enough that many idle
-# subscribers cost negligible CPU.
-const decimal EVENT_POLL_INTERVAL = 0.05;
 
 # What a tap's `next` returns, in place of an event, once `keepAliveInterval`
 # has passed with nothing to deliver: "still here, nothing to report".
@@ -62,12 +55,12 @@ type KeepAliveTick distinct Error;
 
 # A single subscriber's queue of a task's events.
 #
-# `next` blocks (polling, since `ballerina/lang.runtime` has no condition
-# variable or semaphore) until an event is pushed, the tap is closed and
-# drained, `idleTimeout` elapses with nothing happening -- the backstop for a
-# client that disconnects without the HTTP layer surfacing it as a clean
-# stream close -- or, when `keepAliveInterval` is set, that long passes with
-# nothing to deliver, in which case it returns a `KeepAliveTick`.
+# `next` waits on an `EventQueue`, so it blocks without polling until an event
+# is pushed, the tap is closed and drained, `idleTimeout` elapses with nothing
+# happening -- the backstop for a client that disconnects without the HTTP
+# layer surfacing it as a clean stream close -- or, when `keepAliveInterval`
+# is set, that long passes with nothing to deliver, in which case it returns a
+# `KeepAliveTick`.
 #
 # The idle time is counted across ticks, not restarted by them: a keep-alive
 # is not activity, so a stream that produces nothing but keep-alives still
@@ -76,17 +69,15 @@ type KeepAliveTick distinct Error;
 # A custom `a2a:EventBroadcaster` hands these out from `newTap`, and feeds
 # each one through `push`, `signalDone`, and `endWithError`.
 public isolated class EventTap {
-    private StreamResponse[] queue = [];
+    private final EventQueue queue = new;
     private boolean closed = false;
-    // Set by `endWithError`, consumed by the first `next` call that reaches an
-    // empty queue after -- matches `stream<T, E>`'s completion semantics,
-    // where the generator's `next` yields the completion error exactly
-    // once, after every already-queued value.
-    private Error? pendingError = ();
+    // Set once `next` has returned the end of the stream (or its completion
+    // error); every later call returns `()` without waiting.
+    private boolean ended = false;
     private final decimal idleTimeout;
     private final decimal keepAliveInterval;
-    // Seconds since an event last reached a consumer; survives across `next`
-    // calls so a keep-alive tick does not reset it.
+    // Seconds of waiting since an event last reached a consumer; survives
+    // across `next` calls so a keep-alive tick does not reset it.
     private decimal silentFor = 0d;
 
     # Creates a tap.
@@ -104,9 +95,7 @@ public isolated class EventTap {
     #
     # + event - The event to deliver
     public isolated function push(StreamResponse event) {
-        lock {
-            self.queue.push(event.clone());
-        }
+        self.queue.put(event.clone());
     }
 
     # Queues an event at the *front* of the queue, ahead of anything
@@ -116,18 +105,15 @@ public isolated class EventTap {
     #
     # + event - The event to prepend
     isolated function prependSnapshot(StreamResponse event) {
-        lock {
-            self.queue = [event.clone(), ...self.queue];
-        }
+        self.queue.putFirst(event.clone());
     }
 
     # No more events will ever be pushed; `next` drains what remains,
     # then ends. Called by the producer side (an `EventBroadcaster`) -- see
     # `close` for the consumer-side equivalent a stream's own caller uses.
     public isolated function signalDone() {
-        lock {
-            self.closed = true;
-        }
+        self.markClosed();
+        self.queue.put(CLOSED);
     }
 
     # Ends the stream with an error completion instead of a clean close --
@@ -138,10 +124,8 @@ public isolated class EventTap {
     #
     # + err - The error to complete the stream with
     public isolated function endWithError(Error err) {
-        lock {
-            self.pendingError = err;
-            self.closed = true;
-        }
+        self.markClosed();
+        self.queue.put(err);
     }
 
     # Whether this tap has been closed, by either side -- a broadcaster stops
@@ -158,37 +142,50 @@ public isolated class EventTap {
     #            passed with nothing to deliver, `()` once closed and drained
     #            (or idle past `idleTimeout`), or an error
     public isolated function next() returns record {| StreamResponse value; |}|Error? {
-        decimal sinceLastTick = 0;
-        while true {
-            decimal silent;
-            lock {
-                if self.queue.length() > 0 {
-                    StreamResponse v = self.queue.shift();
-                    self.silentFor = 0d;
-                    return {value: v.clone()};
-                }
-                Error? pending = self.pendingError;
-                if pending is Error {
-                    self.pendingError = ();
-                    return pending;
-                }
-                if self.closed {
-                    return;
-                }
-                silent = self.silentFor;
-            }
-            if self.idleTimeout > 0d && silent >= self.idleTimeout {
+        decimal silent;
+        lock {
+            if self.ended {
                 return;
             }
-            if self.keepAliveInterval > 0d && sinceLastTick >= self.keepAliveInterval {
-                return error KeepAliveTick("keep-alive");
-            }
-            runtime:sleep(EVENT_POLL_INTERVAL);
-            lock {
-                self.silentFor += EVENT_POLL_INTERVAL;
-            }
-            sinceLastTick += EVENT_POLL_INTERVAL;
+            silent = self.silentFor;
         }
+
+        // Wait for whichever comes first: a keep-alive is due, or the idle
+        // timeout is. With neither configured the wait has no limit.
+        decimal? maxWait = ();
+        boolean idleComesFirst = false;
+        if self.keepAliveInterval > 0d {
+            maxWait = self.keepAliveInterval;
+        }
+        if self.idleTimeout > 0d {
+            decimal idleLeft = self.idleTimeout > silent ? self.idleTimeout - silent : 0d;
+            if maxWait is () || idleLeft <= maxWait {
+                maxWait = idleLeft;
+                idleComesFirst = true;
+            }
+        }
+
+        QueueItem? item = self.queue.take(maxWait);
+        if item is () {
+            lock {
+                if idleComesFirst {
+                    self.ended = true;
+                    return;
+                }
+                self.silentFor += <decimal>maxWait;
+            }
+            return error KeepAliveTick("keep-alive");
+        }
+        if item is StreamResponse {
+            lock {
+                self.silentFor = 0d;
+            }
+            return {value: item};
+        }
+        lock {
+            self.ended = true;
+        }
+        return item is Error ? item : ();
     }
 
     # Consumer-side close: the stream's own caller is done reading (e.g.
@@ -200,6 +197,10 @@ public isolated class EventTap {
     #
     # + return - Always `()`; there is nothing that can fail here
     public isolated function close() returns error? {
+        self.signalDone();
+    }
+
+    private isolated function markClosed() {
         lock {
             self.closed = true;
         }

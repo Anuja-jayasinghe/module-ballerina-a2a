@@ -36,8 +36,10 @@ plugins {
 rootProject.name = 'a2a'
 
 include ':a2a-ballerina'
+include ':a2a-native'
 
 project(':a2a-ballerina').projectDir = file('ballerina')
+project(':a2a-native').projectDir = file('native')
 
 develocity {
     buildScan {

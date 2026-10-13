@@ -14,6 +14,7 @@ version = "0.1.0"
 dependencies = [
 	{org = "ballerina", name = "auth"},
 	{org = "ballerina", name = "http"},
+	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "jwt"},
 	{org = "ballerina", name = "lang.array"},
 	{org = "ballerina", name = "lang.runtime"},
@@ -23,8 +24,7 @@ dependencies = [
 	{org = "ballerina", name = "test"},
 	{org = "ballerina", name = "time"},
 	{org = "ballerina", name = "url"},
-	{org = "ballerina", name = "uuid"},
-	{org = "ballerinai", name = "observe"}
+	{org = "ballerina", name = "uuid"}
 ]
 modules = [
 	{org = "ballerina", packageName = "a2a", moduleName = "a2a"}
@@ -139,6 +139,9 @@ dependencies = [
 org = "ballerina"
 name = "jballerina.java"
 version = "0.0.0"
+modules = [
+	{org = "ballerina", packageName = "jballerina.java", moduleName = "jballerina.java"}
+]
 
 [[package]]
 org = "ballerina"
@@ -245,6 +248,9 @@ name = "lang.value"
 version = "0.0.0"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"}
+]
+modules = [
+	{org = "ballerina", packageName = "lang.value", moduleName = "lang.value"}
 ]
 
 [[package]]
@@ -363,17 +369,5 @@ dependencies = [
 ]
 modules = [
 	{org = "ballerina", packageName = "uuid", moduleName = "uuid"}
-]
-
-[[package]]
-org = "ballerinai"
-name = "observe"
-version = "0.0.0"
-dependencies = [
-	{org = "ballerina", name = "jballerina.java"},
-	{org = "ballerina", name = "observe"}
-]
-modules = [
-	{org = "ballerinai", packageName = "observe", moduleName = "observe"}
 ]
 

@@ -120,6 +120,12 @@ publishing {
 // anything needs it.
 updateTomlFiles.dependsOn copyStdlibs
 
+// The package's native Java code (the blocking queue behind EventTap) is
+// declared in Ballerina.toml as a platform dependency on the jar this builds,
+// so it has to exist before the Ballerina build and its tests start.
+build.dependsOn ":a2a-native:build"
+test.dependsOn ":a2a-native:build"
+
 // The pom has to exist by the end of `build`, since the release workflow runs
 // `publish -x test` against an already-built tree. Both publish paths depend
 // on `build` so the bala createArtifactZip packs is never stale.

@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Add `DefaultHandler`, the Transport-Free Template a Service's Operations Delegate To, Running the Task Lifecycle Around an `AgentExecutor` with a Task Store, Owner Resolver, Push Sender and Event Registry
 - Add `AgentExecutor`, the Agent's Own Logic (`execute`), Run by the `DefaultHandler` for Every Message
 - Add `@ServiceConfig {agentCard}`, Declaring a Service's Agent Card with Constant Values, or an Optional `onGetAgentCard` Function for a Card Built from Configuration; the Path a Service Is Declared At Names Its Binding (`/rest` for HTTP+JSON, `/rpc` Reserved)
+- Deliver Live Stream Events Through a Blocking Queue (a Small Native Java Class) so a Waiting Subscriber Costs Nothing and Receives an Event the Moment It Is Pushed, Instead of Polling Every 50 ms
 - Add `TaskUpdater` for Driving a Task Through Its States, Including Streaming and Input-Required Pauses
 - Add `TaskStore` and the Default `InMemoryTaskStore`, Which Enforces Legal State Transitions
 - Add Task-Scoped Push-Notification Configuration Storage and an Optional Extended Agent Card to the Server
