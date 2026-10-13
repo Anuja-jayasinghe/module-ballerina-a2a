@@ -53,7 +53,9 @@ ballerina {
 // otherwise -- so this is not optional scaffolding.
 task updateTomlFiles {
     doLast {
-        def newConfig = ballerinaTomlFilePlaceHolder.text.replace("@toml.version@", tomlVersion)
+        def newConfig = ballerinaTomlFilePlaceHolder.text
+                .replace("@toml.version@", tomlVersion)
+                .replace("@project.version@", "${project.version}")
         ballerinaTomlFile.text = newConfig
     }
 }
