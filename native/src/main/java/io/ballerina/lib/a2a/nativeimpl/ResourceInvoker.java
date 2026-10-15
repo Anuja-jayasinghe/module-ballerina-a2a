@@ -86,15 +86,18 @@ public final class ResourceInvoker {
             return io.ballerina.runtime.api.creators.ErrorCreator.createError(StringUtils.fromString(
                     "no '" + accessor.getValue() + " " + path.getValue() + "' resource in the attached service"));
         }
+        // The runtime lists a resource's path parameters first, then the rest in declaration order, so each
+        // declared parameter is filled by its kind rather than by a fixed position.
         List<Object> arguments = new ArrayList<>();
-        for (int i = 0; i < pathParams.size(); i++) {
-            arguments.add(pathParams.get(i));
-        }
-        if (takesContext(method)) {
-            arguments.add(context);
-        }
-        if (request != null) {
-            arguments.add(request);
+        Parameter[] declared = method.getParameters();
+        for (int i = 0; i < declared.length; i++) {
+            if (isContext(declared[i])) {
+                arguments.add(context);
+            } else if (i < pathParams.size()) {
+                arguments.add(pathParams.get(i));
+            } else {
+                arguments.add(request);
+            }
         }
         String methodName = method.getName();
         return env.yieldAndRun(() -> {
@@ -140,11 +143,15 @@ public final class ResourceInvoker {
 
     private static boolean takesContext(ResourceMethodType method) {
         for (Parameter parameter : method.getParameters()) {
-            Type type = TypeUtils.getReferredType(parameter.type);
-            if (CONTEXT_TYPE_NAME.equals(type.getName())) {
+            if (isContext(parameter)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private static boolean isContext(Parameter parameter) {
+        Type type = TypeUtils.getReferredType(parameter.type);
+        return CONTEXT_TYPE_NAME.equals(type.getName());
     }
 }
