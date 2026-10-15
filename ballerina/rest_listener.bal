@@ -142,10 +142,7 @@ public isolated class RestListener {
     // listener really serves, and the explicit public URL if one was configured.
     private final string interfaceScheme;
     private final string? publicUrl;
-    // The cards of the services attached so far; one agent per listener.
-    private final CardRegistry registry = new;
     private AttachedService[] attached = [];
-    private CardService? cardService = ();
 
     # Creates an RestListener.
     #
@@ -226,23 +223,14 @@ public isolated class RestListener {
         AgentCard & readonly served = cards.publicCard(supplied).cloneReadOnly();
         DispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
                 self.interfaceScheme, self.publicUrl, self.streamTiming, mountPath);
-        CardService cardServiceToAttach;
-        boolean cardServiceIsNew = false;
+        [CardRegistry, CardService, boolean] [registry, cardService, cardServiceIsNew] =
+            cardStateFor(self.httpListener, self.interfaceScheme, self.publicUrl);
+        check registry.add(served, HTTP_JSON, mountPath);
         lock {
-            check self.registry.add(served, HTTP_JSON, mountPath);
-            CardService? existing = self.cardService;
-            if existing is () {
-                CardService created = new (self.registry, self.interfaceScheme, self.publicUrl);
-                self.cardService = created;
-                cardServiceToAttach = created;
-                cardServiceIsNew = true;
-            } else {
-                cardServiceToAttach = existing;
-            }
             self.attached.push({agentService: a2aService, dispatcher: dispatcherService, mountPath});
         }
         if cardServiceIsNew {
-            error? cardResult = self.httpListener.attach(cardServiceToAttach);
+            error? cardResult = self.httpListener.attach(cardService);
             if cardResult is error {
                 return wrapTransportError(cardResult);
             }
