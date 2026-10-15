@@ -4,7 +4,7 @@
 
 This example demonstrates how to use the Ballerina A2A module to serve an
 agent over A2A. The agent is a service declared at `/rest` on an
-`a2a:HttpListener`. It carries the agent card, defines the A2A operations,
+`a2a:RestListener`. It carries the agent card, defines the A2A operations,
 and hands each one to an `a2a:DefaultHandler`, which runs the task around
 the agent's `a2a:AgentExecutor`.
 
@@ -12,9 +12,10 @@ the agent's `a2a:AgentExecutor`.
 
 - **One class is the agent's logic**: the executor's `execute` method is
   all a developer writes for the agent itself. The service's operations
-  (`onGetTask`, `onCancelTask`, `onListTasks`, `onSendStreamingMessage`,
-  `onSubscribeToTask` as Server-Sent Events, the push-notification
-  operations) delegate to the handler.
+  (the `get tasks/[string id]`, `post tasks/[string id]/cancel` and
+  `get tasks` resources, `post message\:stream` and the subscribe resource
+  as Server-Sent Events, the push-notification resources) delegate to the
+  handler.
 - **Driving a task**: `updater->working()`/`addArtifact()`/`complete()`
   move a task through its lifecycle from inside `execute`.
 - **A real, discoverable Agent Card**: declared once with
@@ -39,7 +40,7 @@ Weather Agent listening on http://localhost:9090
 To run it on a different port:
 
 ```sh
-bal run -- -CagentPort=9999
+bal run -- -ClistenerPort=9999
 ```
 
 ## Calling It
@@ -71,7 +72,7 @@ curl -s http://localhost:9090/rest/message:send \
 
 - **The executor**: `isolated class WeatherExecutor` implements
   `a2a:AgentExecutor`. Its `execute` method is the agent's business logic.
-- **The service**: `isolated service /rest on new a2a:HttpListener(agentPort)`.
+- **The service**: `isolated service on new a2a:RestListener(listenerPort)`.
   The path names the binding: `rest` is HTTP+JSON. The `new` creates the
   listener, which owns the wire -- the port and, when configured, TLS,
   authentication, and the address the card advertises -- and holds no agent.
@@ -90,5 +91,5 @@ curl -s http://localhost:9090/rest/message:send \
 
 To configure the listener (TLS, `auth`, `publicUrl`) or share it between
 services, declare it at module level and name it in the service instead:
-`listener a2a:HttpListener agent = new (agentPort, auth = [...]);` and
-`isolated service /rest on agent`.
+`listener a2a:RestListener agent = new (listenerPort, auth = [...]);` and
+`isolated service on agent`.

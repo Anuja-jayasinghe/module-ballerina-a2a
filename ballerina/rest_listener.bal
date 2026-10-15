@@ -203,8 +203,8 @@ public isolated class RestListener {
     # One agent per listener: a second service must carry the same agent card.
     #
     # + a2aService - The service to serve
-    # + name - The path the service is declared at, which names its binding:
-    #          `rest` (HTTP+JSON) is served; `rpc` (JSON-RPC) is reserved
+    # + name - Unset for a service declared without a path; `rest` is also
+    #          accepted. Any other path is refused
     # + return - An `a2a:Error` if the path is not a binding this listener
     #            serves, the service has no agent card or two, defines an
     #            incomplete group of operations, defines

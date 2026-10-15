@@ -3,7 +3,7 @@ import ballerina/io;
 import ballerina/time;
 import ballerina/uuid;
 
-configurable int agentPort = 9091;
+configurable int listenerPort = 9091;
 
 isolated class EchoHandler {
     private final map<a2a:Task> tasks = {};
@@ -54,21 +54,21 @@ isolated class EchoHandler {
         supportedInterfaces: []
     }
 }
-isolated service /rest on new a2a:HttpListener(agentPort) {
+isolated service on new a2a:RestListener(listenerPort) {
 
     private final EchoHandler handler = new;
 
-    isolated remote function onSendMessage(a2a:SendMessageRequest request)
+    isolated resource function post message\:send(a2a:SendMessageRequest request)
             returns a2a:Task|a2a:Message|a2a:Error {
         return self.handler.send(request);
     }
 
-    isolated remote function onGetTask(a2a:GetTaskRequest request)
+    isolated resource function get tasks/[string id](a2a:GetTaskRequest request)
             returns a2a:Task|a2a:Error {
         return self.handler.find(request.id);
     }
 
-    isolated remote function onListTasks(a2a:ListTasksRequest request)
+    isolated resource function get tasks(a2a:ListTasksRequest request)
             returns a2a:ListTasksResponse|a2a:Error {
         a2a:Task[] tasks = self.handler.findAll();
         return {tasks, nextPageToken: "", pageSize: tasks.length(), totalSize: tasks.length()};
@@ -76,5 +76,5 @@ isolated service /rest on new a2a:HttpListener(agentPort) {
 }
 
 function init() {
-    io:println(string `Echo Agent listening on http://localhost:${agentPort}`);
+    io:println(string `Echo Agent listening on http://localhost:${listenerPort}`);
 }

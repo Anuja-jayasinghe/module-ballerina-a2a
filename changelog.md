@@ -15,11 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Add Server-Sent Events Streaming for `sendStreamingMessage` and `subscribeToTask`, with Opt-In Automatic Reconnection
 - Add Credential Resolution by Security-Scheme Name via `CredentialProvider` and `InMemoryCredentialStore`
 - Add the Nine Error Types of Specification Section 5.4 as Distinct Subtypes of `Error`, plus `InternalError` for Unnamed Failures
-- Add `HttpListener`, an A2A Server over the HTTP+JSON Binding That Carries Traffic Only, with the Agent Declared as a Service at `/rest` That Holds the Agent Card and Defines the A2A Operations It Supports (`onSendMessage`, `onGetTask`, ...); an Operation It Does Not Define Answers `UnsupportedOperationError`
-- Let Every Service Operation Take the Caller's `Context` as an Optional First Parameter (`onGetTask(Context context, GetTaskRequest request)` or `onGetTask(GetTaskRequest request)`)
+- Add `RestListener`, an A2A Server over the HTTP+JSON Binding That Carries Traffic Only, with the Agent Declared as a Service, Without a Path, That Holds the Agent Card and Defines the A2A Operations It Supports as Resource Functions (`post message\:send`, `get tasks/[string id]`, ...); an Operation It Does Not Define Answers `UnsupportedOperationError`
+- Let Every Service Operation Take the Caller's `Context` as an Optional Parameter (`get tasks/[string id](Context context, GetTaskRequest request)` or `get tasks/[string id](GetTaskRequest request)`)
 - Add `DefaultHandler`, the Transport-Free Template a Service's Operations Delegate To, Running the Task Lifecycle Around an `AgentExecutor` with a Task Store, Owner Resolver, Push Sender and Event Registry
 - Add `AgentExecutor`, the Agent's Own Logic (`execute`), Run by the `DefaultHandler` for Every Message
-- Add `@ServiceConfig {agentCard}`, Declaring a Service's Agent Card with Constant Values, or an Optional `onGetAgentCard` Function for a Card Built from Configuration; the Path a Service Is Declared At Names Its Binding (`/rest` for HTTP+JSON, `/rpc` Reserved)
+- Add `@ServiceConfig {agentCard}`, Declaring a Service's Agent Card with Constant Values, or an Optional `get agentCard` Resource for a Card Built from Configuration; the Listener Names the Binding (`RestListener` serves HTTP+JSON at `/rest`)
 - Deliver Live Stream Events Through a Blocking Queue (a Small Native Java Class) so a Waiting Subscriber Costs Nothing and Receives an Event the Moment It Is Pushed, Instead of Polling Every 50 ms
 - Add `TaskUpdater` for Driving a Task Through Its States, Including Streaming and Input-Required Pauses
 - Add `TaskStore` and the Default `InMemoryTaskStore`, Which Enforces Legal State Transitions
@@ -34,12 +34,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Enforce Required Extensions per Specification Sections 3.3.4/4.6.3, via the `A2A-Extensions` Header
 - Serve `securityRequirements` in the Correct v1.0 Wire Shape, and Add Agent Card `Cache-Control`/`ETag` Headers per Specification Section 8.6.1
 - Derive the Served Card's Streaming and Push-Notification Capabilities from the Operations a Service Defines, so a Deployment Withholds One by Leaving Its Operations Out and the Card Never Claims What the Agent Does Not Do
-- Add `HttpListenerConfiguration.keepAliveInterval`, Sending SSE Keep-Alive Comments so a Quiet, Long-Running Stream Survives HTTP Idle Timeouts
-- Add `HttpListenerConfiguration.auth`, Authenticating Every Request Except the Public Card with `ballerina/http`'s JWT, OAuth2 Introspection, and File/LDAP Basic Handlers per Specification Section 7.4, with the Authenticated Identity Scoping Tasks per Section 13.1
-- Derive the Served Agent Card's `securitySchemes` and `securityRequirements` from `HttpListenerConfiguration.auth` when the Card Declares Neither, per Specification Sections 7.3 and 13.3
+- Add `RestListenerConfiguration.keepAliveInterval`, Sending SSE Keep-Alive Comments so a Quiet, Long-Running Stream Survives HTTP Idle Timeouts
+- Add `RestListenerConfiguration.auth`, Authenticating Every Request Except the Public Card with `ballerina/http`'s JWT, OAuth2 Introspection, and File/LDAP Basic Handlers per Specification Section 7.4, with the Authenticated Identity Scoping Tasks per Section 13.1
+- Derive the Served Agent Card's `securitySchemes` and `securityRequirements` from `RestListenerConfiguration.auth` when the Card Declares Neither, per Specification Sections 7.3 and 13.3
 - Add `AuthenticationError` (401) and `AuthorizationError` (403), Typed from the `ErrorInfo` Reason or the Bare Status, with an `AuthenticationError` Carrying the `WWW-Authenticate` Challenges; the Server Maps Both to Their Statuses
-- Refuse to Attach a Service That Defines `onGetExtendedAgentCard` to an `HttpListener` Without `auth`, per Specification Section 13.3 (a Breaking Change for Any Such Configuration)
-- Add `HttpListenerConfiguration.publicUrl`, the Base URL Served as the Card's Interface URL, for a Listener Behind a Proxy or Gateway That Terminates TLS or Rewrites the Host
+- Refuse to Attach a Service That Defines the `get extendedAgentCard` Resource to an `RestListener` Without `auth`, per Specification Section 13.3 (a Breaking Change for Any Such Configuration)
+- Add `RestListenerConfiguration.publicUrl`, the Base URL Served as the Card's Interface URL, for a Listener Behind a Proxy or Gateway That Terminates TLS or Rewrites the Host
 - Retry Push-Notification Delivery With Exponential Backoff per Specification Section 13.2, via `PushNotificationSenderConfiguration.retryConfig` (Three Retries, 1, 2 and 4 Seconds Apart, by Default; `()` Sends Once)
 - Attach a `google.rpc.BadRequest` Entry Naming the Field at Fault to Validation Errors, per Specification Section 11.6, With the Field Also in `ErrorInfo.metadata.field`
 - Name the Required Scopes in a 403, in Its Message and in `ErrorInfo.metadata.requiredScopes`, per Specification Section 3.3.2
@@ -54,8 +54,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Status Timestamps Are Now Written at Millisecond Precision, per Specification Section 5.6.1, Instead of Microseconds
 - The Extended Agent Card Is Now Served `Cache-Control: private`, So a Shared Cache Cannot Store It for Other Callers (Specification Section 13.3)
 - Return an `InternalError`, Not a Panic, from `HttpClient` and `resolveAgentCard` When the Initial OAuth2 Token Cannot Be Obtained (a Wrong Client Secret, an Unreachable Token Endpoint)
-- Return an `InternalError` Naming the Entry, Not a Panic, from `HttpListener` When an `auth` Entry Cannot Be Initialised (a JWKS That Cannot Be Preloaded, an Unreachable LDAP Server); the Authenticator Is Now Built Before the HTTP Listener
-- An `HttpListener` Serving TLS Now Advertises an `https` Interface URL in Its Card, Instead of `http`, Which Sent Clients to Plain HTTP on a TLS Port (Specification Section 7.1)
+- Return an `InternalError` Naming the Entry, Not a Panic, from `RestListener` When an `auth` Entry Cannot Be Initialised (a JWKS That Cannot Be Preloaded, an Unreachable LDAP Server); the Authenticator Is Now Built Before the HTTP Listener
+- An `RestListener` Serving TLS Now Advertises an `https` Interface URL in Its Card, Instead of `http`, Which Sent Clients to Plain HTTP on a TLS Port (Specification Section 7.1)
 - Serve the Agent Card's `securitySchemes` in the Specification's Wrapped Shape (`{"httpAuthSecurityScheme": {...}}`, with `location` for an API Key), Instead of the Flat Shape with a `type` Discriminator, per Specification Section 4.5
 - A Request to a Path That Is No A2A Operation Is Now a 404 (`METHOD_NOT_FOUND`), and a Request Naming a Tenant the Agent Does Not Serve Is Now a 400 (`INVALID_PARAMS`), Instead of a 500 for Both; the Specification Reserves 5xx for System Failures and an Agent's Own Malformed Response
 - A 401 or 403 Is Now an `AuthenticationError` or `AuthorizationError` Instead of an `InternalError` Carrying That Status as Its Code

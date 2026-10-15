@@ -58,7 +58,7 @@ public type DefaultHandlerConfiguration record {|
     # it. Unset, the operation fails with `a2a:ExtendedAgentCardNotConfiguredError`.
     # The listener derives the capabilities and interfaces of what is served.
     #
-    # A service that defines `onGetExtendedAgentCard` requires authentication:
+    # A service that defines `get extendedAgentCard` requires authentication:
     # the operation is for authenticated callers, so its listener refuses to
     # start without `auth` ([specification section 13.3](https://a2a-protocol.org/latest/specification/#133-extended-agent-card-access-control)).
     AgentCard? extendedAgentCard = ();
@@ -94,10 +94,10 @@ public type StreamTiming record {|
 # Hold one in the agent's service and have each operation hand its request here:
 #
 # ```ballerina
-# isolated service /rest on agent {
+# isolated service on agent {
 #     private final a2a:DefaultHandler handler = new (new WeatherExecutor());
 #
-#     isolated remote function onGetTask(a2a:Context context, a2a:GetTaskRequest request)
+#     isolated resource function get tasks/[string id](a2a:Context context, a2a:GetTaskRequest request)
 #             returns a2a:Task|a2a:Error {
 #         return self.handler.getTask(context, request);
 #     }

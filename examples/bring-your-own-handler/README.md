@@ -12,8 +12,9 @@ Nothing in it uses `a2a:DefaultHandler`, `a2a:AgentExecutor` or
 
 - **Your handler, your storage**: `EchoHandler` creates a completed task for
   every message and keeps it in a map. The service only calls it.
-- **Define what you support**: the service defines `onSendMessage`,
-  `onGetTask` and `onListTasks`. Every operation it leaves out answers
+- **Define what you support**: the service defines the
+  `post message\:send`, `get tasks/[string id]` and `get tasks` resources.
+  Every operation it leaves out answers
   `UnsupportedOperationError`, and the card says so: `streaming`,
   `pushNotifications` and `extendedAgentCard` are all `false`, derived from
   the operations that exist.
@@ -35,7 +36,7 @@ Echo Agent listening on http://localhost:9091
 To run it on a different port:
 
 ```sh
-bal run -- -CagentPort=9999
+bal run -- -ClistenerPort=9999
 ```
 
 ## Calling It
@@ -61,7 +62,7 @@ Cancelling a task, or streaming a message, answers `UNSUPPORTED_OPERATION`.
 - **The handler**: `isolated class EchoHandler` builds the `a2a:Task` records
   and stores them. It is an ordinary class: the service decides which of its
   methods answer which operation.
-- **The service**: `isolated service /rest on new a2a:HttpListener(agentPort)`
+- **The service**: `isolated service on new a2a:RestListener(listenerPort)`
   carries the agent card with `@a2a:ServiceConfig` and defines the three
   operations. Each is one line into the handler. The path names the binding:
   `rest` is HTTP+JSON.
