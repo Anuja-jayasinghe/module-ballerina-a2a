@@ -1,0 +1,51 @@
+import ballerina/http;
+import ballerina/test;
+
+const int REST_RAW_BYTES_TEST_PORT = 19284;
+
+isolated class RestRawArtifactAgent {
+    *AgentExecutor;
+
+    public isolated function execute(RequestContext context, TaskUpdater updater) returns Message|Error? {
+        check updater->addArtifact([{raw: "tck".toBytes(), mediaType: "text/plain", filename: "out.txt"}]);
+        check updater->complete();
+        return;
+    }
+}
+
+final AgentCard & readonly restRawBytesCard = {
+    name: "Raw Bytes Agent",
+    description: "Returns a raw artifact",
+    version: "1.0.0",
+    skills: [{id: "raw", name: "Raw", description: "Returns bytes", tags: ["raw"]}],
+    defaultInputModes: ["text"],
+    defaultOutputModes: ["text"],
+    capabilities: {},
+    supportedInterfaces: []
+};
+
+listener RestListener restRawBytesListener = new (REST_RAW_BYTES_TEST_PORT);
+
+@test:BeforeSuite
+function startRestRawBytesServer() returns error? {
+    check restRawBytesListener.attach(new FullService(new DefaultHandler(new RestRawArtifactAgent()), restRawBytesCard));
+}
+
+// "tck" is `dGNr` in base64. A task fetched later must carry the same string a
+// task returned by the send did, not an array of byte values.
+@test:Config {}
+function testARawPartIsBase64InAFetchedTaskOverRest() returns error? {
+    http:Client rest = check new (string `http://localhost:${REST_RAW_BYTES_TEST_PORT}/rest`,
+            httpVersion = http:HTTP_1_1);
+    json message = {message: {messageId: "raw-rest-1", role: "ROLE_USER", parts: [{text: "give me bytes"}]}};
+    json sent = check rest->post("/message:send", message, {"A2A-Version": "1.0"});
+    string taskId = check (check sent.task.id).ensureType();
+
+    json fetched = check rest->get(string `/tasks/${taskId}`, {"A2A-Version": "1.0"});
+    json[] artifacts = <json[]>check fetched.artifacts;
+    json[] parts = <json[]>check artifacts[0].parts;
+    test:assertEquals(check parts[0].raw, "dGNr");
+
+    json listed = check rest->get("/tasks?includeArtifacts=true", {"A2A-Version": "1.0"});
+    test:assertTrue(listed.toJsonString().includes("\"raw\":\"dGNr\""), listed.toJsonString());
+}

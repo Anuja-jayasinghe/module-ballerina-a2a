@@ -322,7 +322,7 @@ isolated service class DispatcherService {
             }
             ["GET", "/tasks"] => {
                 ListTasksRequest filter = check queryToListFilter(req);
-                return jsonResponse((check self.binding.listTasks(context, filter)).toJson());
+                return taskResultResponse(check self.binding.listTasks(context, filter));
             }
         }
 
@@ -335,7 +335,7 @@ isolated service class DispatcherService {
             if id.includes("/") {
                 return methodNotFound(string `no A2A operation at ${method} ${path}`);
             }
-            return jsonResponse((check self.binding.cancelTask(context, {id})).toJson());
+            return taskResultResponse(check self.binding.cancelTask(context, {id}));
         }
         // The proto's own annotation is GET, but the client falls back to
         // POST on a 404 -- a compat workaround for a non-reference server
@@ -367,7 +367,7 @@ isolated service class DispatcherService {
                 return methodNotFound(string `no A2A operation at ${method} ${path}`);
             }
             int? historyLength = check queryInt(req, "historyLength");
-            return jsonResponse((check self.binding.getTask(context, {id, historyLength})).toJson());
+            return taskResultResponse(check self.binding.getTask(context, {id, historyLength}));
         }
         return methodNotFound(string `no A2A operation at ${method} ${path}`);
     }
@@ -677,6 +677,19 @@ isolated function declaredTenant(AgentCard card) returns string? {
         }
     }
     return;
+}
+
+# Builds the 200 response for a result that can carry raw bytes (a task, or a
+# page of them): a `raw` part is base64 on the wire, not an array of ints.
+#
+# + value - The task or list of tasks
+# + return - The response, or a transport error if encoding failed
+isolated function taskResultResponse(Task|ListTasksResponse value) returns http:Response|Error {
+    json|error wired = encodeRawBytesForWire(value.toJson());
+    if wired is error {
+        return wrapTransportError(wired);
+    }
+    return jsonResponse(wired);
 }
 
 # Builds a JSON 200 response.
