@@ -227,7 +227,7 @@ function testAuthMissingCredentialsIs401WithChallenge() returns error? {
     test:assertEquals(check r.getHeader("WWW-Authenticate"), "Bearer",
             "a 401 must say which scheme to use (specification section 7.4)");
     test:assertEquals(check errorReasonOf(r), "UNAUTHENTICATED");
-    test:assertTrue(r.getContentType().startsWith("application/a2a+json"));
+    test:assertTrue(r.getContentType().startsWith("application/json"));
 }
 
 @test:Config {}

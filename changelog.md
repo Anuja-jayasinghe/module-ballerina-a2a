@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Add the Nine Error Types of Specification Section 5.4 as Distinct Subtypes of `Error`, plus `InternalError` for Unnamed Failures
 - Add `RestListener`, an A2A Server over the HTTP+JSON Binding That Carries Traffic Only, with the Agent Declared as a Service, Without a Path, That Holds the Agent Card and Defines the A2A Operations It Supports as Resource Functions (`post message\:send`, `get tasks/[string id]`, ...); an Operation It Does Not Define Answers `UnsupportedOperationError`
 - Let Every Service Operation Take the Caller's `Context` as an Optional Parameter (`get tasks/[string id](Context context, GetTaskRequest request)` or `get tasks/[string id](GetTaskRequest request)`)
+- Serve an Error Response (a `google.rpc.Status`) as `application/json`, per What the A2A TCK and the `a2a-go` Client Decode; Successful Responses Stay `application/a2a+json`
 - Add `DefaultHandler`, the Transport-Free Template a Service's Operations Delegate To, Running the Task Lifecycle Around an `AgentExecutor` with a Task Store, Owner Resolver, Push Sender and Event Registry
 - Add `AgentExecutor`, the Agent's Own Logic (`execute`), Run by the `DefaultHandler` for Every Message
 - Add `@ServiceConfig {agentCard}`, Declaring a Service's Agent Card with Constant Values, or an Optional `get agentCard` Resource for a Card Built from Configuration; the Listener Names the Binding (`RestListener` serves HTTP+JSON at `/rest`)
