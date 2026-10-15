@@ -42,7 +42,7 @@ final AgentCard interruptedStreamHandlerCard = {
 
 final DefaultHandler interruptedStreamHandler = new (new InterruptingAgent());
 
-listener HttpListener interruptedStreamListener = new (INTERRUPTED_STREAM_PORT, keepAliveInterval = 0, streamIdleTimeout = INTERRUPTED_STREAM_IDLE_TIMEOUT);
+listener RestListener interruptedStreamListener = new (INTERRUPTED_STREAM_PORT, keepAliveInterval = 0, streamIdleTimeout = INTERRUPTED_STREAM_IDLE_TIMEOUT);
 
 // "ask" pauses on INPUT_REQUIRED, "authorize" on AUTH_REQUIRED, anything else
 // completes.

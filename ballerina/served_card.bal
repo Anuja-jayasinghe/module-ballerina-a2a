@@ -27,7 +27,7 @@ type Capabilities record {|
     boolean streaming;
     # All four push-notification configuration operations are defined
     boolean pushNotifications;
-    # `onGetExtendedAgentCard` is defined
+    # the `get extendedAgentCard` resource is defined
     boolean extendedAgentCard;
 |};
 
@@ -43,7 +43,7 @@ isolated function serviceConfigurationOf(Service a2aService) returns ServiceConf
 # Reads the capabilities a service's operations imply, and refuses a service
 # that cannot be served as declared.
 #
-# `onSendMessage` is required. The two streaming operations are one
+# The `post message:send` resource is required. The two streaming operations are one
 # capability and the four push-notification operations another, because the
 # card advertises each as a single flag: defining only part of a group would
 # make the card claim something the agent cannot do.
@@ -52,7 +52,7 @@ isolated function serviceConfigurationOf(Service a2aService) returns ServiceConf
 # + return - The capabilities, or an `a2a:InternalError` naming what is missing
 isolated function capabilitiesOf(OperationBinding binding) returns Capabilities|Error {
     if !binding.isDefined("onSendMessage") {
-        string msg = "an a2a:Service must define the onSendMessage operation";
+        string msg = "an a2a:Service must define the `post message\\:send` resource";
         return error InternalError(msg, message = msg);
     }
     boolean streaming = check wholeGroup(binding, "streaming", ["onSendStreamingMessage", "onSubscribeToTask"]);
@@ -77,23 +77,36 @@ isolated function wholeGroup(OperationBinding binding, string capability, string
     if missing.length() == names.length() {
         return false;
     }
-    string msg = string `an a2a:Service that supports ${capability} must define all of ${", ".'join(...names)}; `
-        + string `missing ${", ".'join(...missing)}`;
+    string msg = string `an a2a:Service that supports ${capability} must define all of ${resourcesOf(names)}; `
+        + string `missing ${resourcesOf(missing)}`;
     return error InternalError(msg, message = msg);
 }
 
+# Names the resources that serve a set of operations, for an error message.
+#
+# + operations - Operation names such as `onGetTask`
+# + return - The resources, e.g. `get tasks/*`, comma separated
+isolated function resourcesOf(string[] operations) returns string {
+    string[] resources = [];
+    foreach string operation in operations {
+        ResourceRoute route = OPERATION_ROUTES.get(operation);
+        resources.push(string `${route.accessor} ${route.path}`);
+    }
+    return ", ".'join(...resources);
+}
+
 # The agent card a service declares: the `@a2a:ServiceConfig` annotation, or
-# the result of its `onGetAgentCard` function, but not both.
+# the result of its `get agentCard` resource, but not both.
 #
 # + a2aService - The service being attached
 # + binding - The attached service
 # + return - The card as declared, or an `a2a:InternalError` if there is none,
-#            two, or `onGetAgentCard` failed
+#            two, or the `get agentCard` resource failed
 isolated function agentCardOf(Service a2aService, OperationBinding binding) returns AgentCard|Error {
     ServiceConfiguration? config = serviceConfigurationOf(a2aService);
     boolean hasFunction = binding.isDefined("onGetAgentCard");
     if config is ServiceConfiguration && hasFunction {
-        string msg = "an a2a:Service declares its agent card with @a2a:ServiceConfig or onGetAgentCard, not both";
+        string msg = "an a2a:Service declares its agent card with @a2a:ServiceConfig or a get agentCard resource, not both";
         return error InternalError(msg, message = msg);
     }
     if config is ServiceConfiguration {
@@ -103,7 +116,7 @@ isolated function agentCardOf(Service a2aService, OperationBinding binding) retu
         return binding.getAgentCard();
     }
     string msg = "an a2a:Service needs an agent card: add @a2a:ServiceConfig {agentCard: ...} "
-        + "or define onGetAgentCard";
+        + "or define a get agentCard resource";
     return error InternalError(msg, message = msg);
 }
 
@@ -150,7 +163,7 @@ isolated class ServedCards {
 # capabilities it fully owns.
 #
 # + supplied - The card the developer passed
-# + extendedCardConfigured - Whether the service defines `onGetExtendedAgentCard`
+# + extendedCardConfigured - Whether the service defines the `get extendedAgentCard` resource
 # + streamingCapability - Whether the service defines the streaming operations
 # + pushNotificationsCapability - Whether the service defines the push-notification operations
 # + return - The card to serve

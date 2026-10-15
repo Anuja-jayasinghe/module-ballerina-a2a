@@ -761,47 +761,47 @@ isolated service class FullService {
         self.card = card.cloneReadOnly();
     }
 
-    remote isolated function onGetAgentCard() returns AgentCard|Error {
+    isolated resource function get agentCard() returns AgentCard|Error {
         return self.card;
     }
 
-    remote isolated function onSendMessage(Context context, SendMessageRequest request) returns Task|Message|Error {
+    isolated resource function post message\:send(Context context, SendMessageRequest request) returns Task|Message|Error {
         return self.handler.sendMessage(context, request);
     }
 
-    remote isolated function onSendStreamingMessage(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
+    isolated resource function post message\:stream(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
         return self.handler.sendStreamingMessage(context, request);
     }
 
-    remote isolated function onSubscribeToTask(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
+    isolated resource function get tasks/[string id]/subscribe(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
         return self.handler.subscribeToTask(context, request);
     }
 
-    remote isolated function onGetTask(Context context, GetTaskRequest request) returns Task|Error {
+    isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
         return self.handler.getTask(context, request);
     }
 
-    remote isolated function onListTasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
+    isolated resource function get tasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
         return self.handler.listTasks(context, request);
     }
 
-    remote isolated function onCancelTask(Context context, CancelTaskRequest request) returns Task|Error {
+    isolated resource function post tasks/[string id]/cancel(Context context, CancelTaskRequest request) returns Task|Error {
         return self.handler.cancelTask(context, request);
     }
 
-    remote isolated function onCreateTaskPushNotificationConfig(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
+    isolated resource function post tasks/[string id]/pushNotificationConfigs(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
         return self.handler.createTaskPushNotificationConfig(context, request);
     }
 
-    remote isolated function onGetTaskPushNotificationConfig(Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
+    isolated resource function get tasks/[string id]/pushNotificationConfigs/[string configId](Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
         return self.handler.getTaskPushNotificationConfig(context, request);
     }
 
-    remote isolated function onListTaskPushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
+    isolated resource function get tasks/[string id]/pushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
         return self.handler.listTaskPushNotificationConfigs(context, request);
     }
 
-    remote isolated function onDeleteTaskPushNotificationConfig(Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
+    isolated resource function delete tasks/[string id]/pushNotificationConfigs/[string configId](Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
         return self.handler.deleteTaskPushNotificationConfig(context, request);
     }
 }
@@ -818,51 +818,51 @@ isolated service class ExtendedService {
         self.card = card.cloneReadOnly();
     }
 
-    remote isolated function onGetAgentCard() returns AgentCard|Error {
+    isolated resource function get agentCard() returns AgentCard|Error {
         return self.card;
     }
 
-    remote isolated function onSendMessage(Context context, SendMessageRequest request) returns Task|Message|Error {
+    isolated resource function post message\:send(Context context, SendMessageRequest request) returns Task|Message|Error {
         return self.handler.sendMessage(context, request);
     }
 
-    remote isolated function onSendStreamingMessage(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
+    isolated resource function post message\:stream(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
         return self.handler.sendStreamingMessage(context, request);
     }
 
-    remote isolated function onSubscribeToTask(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
+    isolated resource function get tasks/[string id]/subscribe(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
         return self.handler.subscribeToTask(context, request);
     }
 
-    remote isolated function onGetTask(Context context, GetTaskRequest request) returns Task|Error {
+    isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
         return self.handler.getTask(context, request);
     }
 
-    remote isolated function onListTasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
+    isolated resource function get tasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
         return self.handler.listTasks(context, request);
     }
 
-    remote isolated function onCancelTask(Context context, CancelTaskRequest request) returns Task|Error {
+    isolated resource function post tasks/[string id]/cancel(Context context, CancelTaskRequest request) returns Task|Error {
         return self.handler.cancelTask(context, request);
     }
 
-    remote isolated function onCreateTaskPushNotificationConfig(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
+    isolated resource function post tasks/[string id]/pushNotificationConfigs(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
         return self.handler.createTaskPushNotificationConfig(context, request);
     }
 
-    remote isolated function onGetTaskPushNotificationConfig(Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
+    isolated resource function get tasks/[string id]/pushNotificationConfigs/[string configId](Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
         return self.handler.getTaskPushNotificationConfig(context, request);
     }
 
-    remote isolated function onListTaskPushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
+    isolated resource function get tasks/[string id]/pushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
         return self.handler.listTaskPushNotificationConfigs(context, request);
     }
 
-    remote isolated function onDeleteTaskPushNotificationConfig(Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
+    isolated resource function delete tasks/[string id]/pushNotificationConfigs/[string configId](Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
         return self.handler.deleteTaskPushNotificationConfig(context, request);
     }
 
-    remote isolated function onGetExtendedAgentCard(Context context, GetExtendedAgentCardRequest request) returns AgentCard|Error {
+    isolated resource function get extendedAgentCard(Context context, GetExtendedAgentCardRequest request) returns AgentCard|Error {
         return self.handler.getExtendedAgentCard(context, request);
     }
 }
@@ -879,39 +879,39 @@ isolated service class NoStreamingService {
         self.card = card.cloneReadOnly();
     }
 
-    remote isolated function onGetAgentCard() returns AgentCard|Error {
+    isolated resource function get agentCard() returns AgentCard|Error {
         return self.card;
     }
 
-    remote isolated function onSendMessage(Context context, SendMessageRequest request) returns Task|Message|Error {
+    isolated resource function post message\:send(Context context, SendMessageRequest request) returns Task|Message|Error {
         return self.handler.sendMessage(context, request);
     }
 
-    remote isolated function onGetTask(Context context, GetTaskRequest request) returns Task|Error {
+    isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
         return self.handler.getTask(context, request);
     }
 
-    remote isolated function onListTasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
+    isolated resource function get tasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
         return self.handler.listTasks(context, request);
     }
 
-    remote isolated function onCancelTask(Context context, CancelTaskRequest request) returns Task|Error {
+    isolated resource function post tasks/[string id]/cancel(Context context, CancelTaskRequest request) returns Task|Error {
         return self.handler.cancelTask(context, request);
     }
 
-    remote isolated function onCreateTaskPushNotificationConfig(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
+    isolated resource function post tasks/[string id]/pushNotificationConfigs(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
         return self.handler.createTaskPushNotificationConfig(context, request);
     }
 
-    remote isolated function onGetTaskPushNotificationConfig(Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
+    isolated resource function get tasks/[string id]/pushNotificationConfigs/[string configId](Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
         return self.handler.getTaskPushNotificationConfig(context, request);
     }
 
-    remote isolated function onListTaskPushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
+    isolated resource function get tasks/[string id]/pushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
         return self.handler.listTaskPushNotificationConfigs(context, request);
     }
 
-    remote isolated function onDeleteTaskPushNotificationConfig(Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
+    isolated resource function delete tasks/[string id]/pushNotificationConfigs/[string configId](Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
         return self.handler.deleteTaskPushNotificationConfig(context, request);
     }
 }
@@ -928,31 +928,31 @@ isolated service class NoPushService {
         self.card = card.cloneReadOnly();
     }
 
-    remote isolated function onGetAgentCard() returns AgentCard|Error {
+    isolated resource function get agentCard() returns AgentCard|Error {
         return self.card;
     }
 
-    remote isolated function onSendMessage(Context context, SendMessageRequest request) returns Task|Message|Error {
+    isolated resource function post message\:send(Context context, SendMessageRequest request) returns Task|Message|Error {
         return self.handler.sendMessage(context, request);
     }
 
-    remote isolated function onSendStreamingMessage(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
+    isolated resource function post message\:stream(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
         return self.handler.sendStreamingMessage(context, request);
     }
 
-    remote isolated function onSubscribeToTask(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
+    isolated resource function get tasks/[string id]/subscribe(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
         return self.handler.subscribeToTask(context, request);
     }
 
-    remote isolated function onGetTask(Context context, GetTaskRequest request) returns Task|Error {
+    isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
         return self.handler.getTask(context, request);
     }
 
-    remote isolated function onListTasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
+    isolated resource function get tasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
         return self.handler.listTasks(context, request);
     }
 
-    remote isolated function onCancelTask(Context context, CancelTaskRequest request) returns Task|Error {
+    isolated resource function post tasks/[string id]/cancel(Context context, CancelTaskRequest request) returns Task|Error {
         return self.handler.cancelTask(context, request);
     }
 }
@@ -969,11 +969,11 @@ isolated service class MessageOnlyService {
         self.card = card.cloneReadOnly();
     }
 
-    remote isolated function onGetAgentCard() returns AgentCard|Error {
+    isolated resource function get agentCard() returns AgentCard|Error {
         return self.card;
     }
 
-    remote isolated function onSendMessage(Context context, SendMessageRequest request)
+    isolated resource function post message\:send(Context context, SendMessageRequest request)
             returns Task|Message|Error {
         return self.handler.sendMessage(context, request);
     }

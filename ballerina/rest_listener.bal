@@ -22,8 +22,8 @@
 import ballerina/http;
 import ballerina/log;
 
-# Configuration for an `a2a:HttpListener`: how requests reach the agent.
-public type HttpListenerConfiguration record {|
+# Configuration for an `a2a:RestListener`: how requests reach the agent.
+public type RestListenerConfiguration record {|
     *http:ListenerConfiguration;
     # How callers authenticate, as the same `http:ListenerAuthConfig` entries a
     # service's `@http:ServiceConfig` takes: JWT validation, OAuth2 token
@@ -87,19 +87,19 @@ public type HttpListenerConfiguration record {|
     string? publicUrl = ();
 |};
 
-# The `http:ListenerConfiguration` half of an `HttpListenerConfiguration`:
+# The `http:ListenerConfiguration` half of an `RestListenerConfiguration`:
 # everything left once this package's own fields are taken out.
 #
-# `HttpListenerConfiguration` includes `http:ListenerConfiguration`, so a
-# caller can write `new a2a:HttpListener(9090, handler, timeout = 120)`. The
+# `RestListenerConfiguration` includes `http:ListenerConfiguration`, so a
+# caller can write `new a2a:RestListener(9090, handler, timeout = 120)`. The
 # listener built for a port used to be created from an empty configuration,
 # silently dropping every one of those fields -- a `timeout`, or a
 # `secureSocket`, had no effect at all.
 #
 # + config - The full configuration
 # + return - The HTTP listener's own settings
-isolated function httpListenerConfigurationOf(HttpListenerConfiguration config) returns http:ListenerConfiguration {
-    HttpListenerConfiguration {
+isolated function httpListenerConfigurationOf(RestListenerConfiguration config) returns http:ListenerConfiguration {
+    RestListenerConfiguration {
         auth: _, streamIdleTimeout: _, keepAliveInterval: _, publicUrl: _, ...httpConfig
     } = config;
     return {...httpConfig};
@@ -111,13 +111,13 @@ isolated function httpListenerConfigurationOf(HttpListenerConfiguration config) 
 # to it, at a path that names the binding:
 #
 # ```ballerina
-# listener a2a:HttpListener agent = new (9090);
+# listener a2a:RestListener agent = new (9090);
 #
 # @a2a:ServiceConfig {agentCard: {name: "Weather Agent", ..., capabilities: {}, supportedInterfaces: []}}
-# isolated service /rest on agent {
+# isolated service on agent {
 #     private final a2a:DefaultHandler handler = new (new WeatherExecutor());
 #
-#     isolated remote function onSendMessage(a2a:SendMessageRequest request, a2a:Context context)
+#     isolated resource function post message\:send(a2a:Context context, a2a:SendMessageRequest request)
 #             returns a2a:Task|a2a:Message|a2a:Error {
 #         return self.handler.sendMessage(request, context);
 #     }
@@ -133,7 +133,7 @@ isolated function httpListenerConfigurationOf(HttpListenerConfiguration config) 
 # `capabilities: {}` and `supportedInterfaces: []` as placeholders; they are
 # replaced. An operation the service does not define answers
 # `UnsupportedOperationError`.
-public isolated class HttpListener {
+public isolated class RestListener {
     private final http:Listener httpListener;
     private final (http:ListenerAuthConfig[] & readonly)? authConfig;
     private final ListenerAuthenticator? authenticator;
@@ -147,7 +147,7 @@ public isolated class HttpListener {
     private AttachedService[] attached = [];
     private CardService? cardService = ();
 
-    # Creates an HttpListener.
+    # Creates an RestListener.
     #
     # + listenTo - A port, or an existing `http:Listener` to mount on
     # + config - How requests reach the agent. Given a port, its
@@ -159,7 +159,7 @@ public isolated class HttpListener {
     #            cannot be created, or an `auth` entry cannot be initialised (for
     #            example a JWKS that cannot be preloaded, or an LDAP server that
     #            cannot be reached)
-    public isolated function init(int|http:Listener listenTo, *HttpListenerConfiguration config) returns Error? {
+    public isolated function init(int|http:Listener listenTo, *RestListenerConfiguration config) returns Error? {
         string? publicUrl = config.publicUrl;
         if publicUrl is string {
             self.publicUrl = check normalisePublicUrl(publicUrl);
@@ -173,7 +173,7 @@ public isolated class HttpListener {
         http:ListenerAuthConfig[]? auth = config.auth;
         if auth is http:ListenerAuthConfig[] {
             if auth.length() == 0 {
-                string msg = "HttpListenerConfiguration.auth must contain at least one entry; "
+                string msg = "RestListenerConfiguration.auth must contain at least one entry; "
                     + "leave it unset for no authentication";
                 return error InternalError(msg, message = msg);
             }
@@ -208,7 +208,7 @@ public isolated class HttpListener {
     # + return - An `a2a:Error` if the path is not a binding this listener
     #            serves, the service has no agent card or two, defines an
     #            incomplete group of operations, defines
-    #            `onGetExtendedAgentCard` without `auth`, or attachment fails
+    #            the `get extendedAgentCard` resource without `auth`, or attachment fails
     public isolated function attach(Service a2aService, string[]|string? name = ()) returns error? {
         string mountPath = check mountPathOf(name);
         OperationBinding binding = new (a2aService);
@@ -218,7 +218,7 @@ public isolated class HttpListener {
         // says `GetExtendedAgentCard` MUST require authentication, so a
         // service that would serve it to anyone must not start.
         if capabilities.extendedAgentCard && self.authenticator is () {
-            string msg = "a service that defines onGetExtendedAgentCard requires HttpListenerConfiguration.auth: "
+            string msg = "a service that defines the get extendedAgentCard resource requires RestListenerConfiguration.auth: "
                 + "the extended agent card is for authenticated callers (specification section 13.3)";
             return error InternalError(msg, message = msg);
         }
@@ -310,7 +310,7 @@ public isolated class HttpListener {
 
 # Checks a configured public URL and puts it in the form the card serves.
 #
-# + url - `HttpListenerConfiguration.publicUrl`
+# + url - `RestListenerConfiguration.publicUrl`
 # + return - The URL without a trailing slash, or an `a2a:InternalError` if it
 #            is not an absolute `http://` or `https://` URL with a host and no
 #            query or fragment
@@ -335,7 +335,7 @@ isolated function normalisePublicUrl(string url) returns string|Error {
 }
 
 isolated function invalidPublicUrl(string url, string reason) returns Error {
-    string msg = string `HttpListenerConfiguration.publicUrl "${url}" is not usable: ${reason}`;
+    string msg = string `RestListenerConfiguration.publicUrl "${url}" is not usable: ${reason}`;
     return error InternalError(msg, message = msg);
 }
 
@@ -349,11 +349,17 @@ type AttachedService record {|
     string mountPath;
 |};
 
-# The binding a service path names, as the path HTTP mounts it at.
+# The path the HTTP+JSON binding is served at.
+const string REST_MOUNT_PATH = "rest";
+
+# Checks the path a service was declared at and gives the path it is served at.
 #
-# + name - The `name` the runtime passed to `attach`: `["rest"]` for
-#          `service /rest on listener`
-# + return - `rest`, or an `a2a:Error` for `rpc` (reserved) or any other path
+# The binding is named by the listener, not by the path, so a service is
+# declared without one (`service on new a2a:RestListener(9090)`). `/rest` is
+# accepted for a service that spells it out.
+#
+# + name - The `name` the runtime passed to `attach`
+# + return - `rest`, or an `a2a:Error` for any other path
 isolated function mountPathOf(string[]|string? name) returns string|Error {
     string path;
     if name is string {
@@ -366,16 +372,10 @@ isolated function mountPathOf(string[]|string? name) returns string|Error {
     while path.startsWith("/") {
         path = path.substring(1);
     }
-    if path == "rest" {
-        return path;
+    if path == "" || path == REST_MOUNT_PATH {
+        return REST_MOUNT_PATH;
     }
-    string msg;
-    if path == "rpc" {
-        msg = "the JSON-RPC binding (/rpc) is not supported yet: a2a:HttpListener serves only /rest (HTTP+JSON)";
-    } else {
-        msg = path == ""
-            ? "an a2a:Service must be declared at a path that names its binding: service /rest on listener"
-            : string `"/${path}" is not a binding path: declare the service at /rest (HTTP+JSON)`;
-    }
+    string msg = string `an a2a:RestListener serves its service at /${REST_MOUNT_PATH}: declare it without a path, `
+        + string `not at "/${path}"`;
     return error InternalError(msg, message = msg);
 }

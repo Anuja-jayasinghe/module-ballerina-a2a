@@ -39,7 +39,7 @@ isolated class RecordingOwnerResolver {
 
 final DefaultHandler callerContextHandler = new (new CountingAgent(), ownerResolver = new RecordingOwnerResolver());
 
-listener HttpListener callerContextListener = new (CALLER_CONTEXT_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
+listener RestListener callerContextListener = new (CALLER_CONTEXT_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
 
 @test:BeforeSuite
 function startCallerContextServer() returns error? {

@@ -51,7 +51,7 @@ final AgentCard cardSecurityHandlerCard = {
 
 final DefaultHandler cardSecurityHandler = new (new EchoAgent());
 
-listener HttpListener cardSecurityListener = new (CARD_SECURITY_TEST_PORT);
+listener RestListener cardSecurityListener = new (CARD_SECURITY_TEST_PORT);
 
 @test:BeforeSuite
 function startCardSecurityServer() returns error? {

@@ -44,7 +44,7 @@ final AgentCard echoHandlerCard = {
 
 final DefaultHandler echoHandler = new (new EchoAgent());
 
-listener HttpListener echoListener = new (SERVER_TEST_PORT);
+listener RestListener echoListener = new (SERVER_TEST_PORT);
 
 // A second listener, on its own port, configured with an extended card --
 // separate from echoListener so that one's own extendedAgentCard:false
@@ -79,7 +79,7 @@ final DefaultHandler extendedCardHandler = new (new EchoAgent(), extendedAgentCa
     supportedInterfaces: []
 });
 
-listener HttpListener extendedCardListener = new (EXTENDED_CARD_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
+listener RestListener extendedCardListener = new (EXTENDED_CARD_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
 
 // A minimal agent: echoes the inbound text back as a completed task's
 // artifact, with a handful of trigger texts for the checkpoints live
@@ -1511,7 +1511,7 @@ final AgentCard ownerScopedHandlerCard = {
 
 final DefaultHandler ownerScopedHandler = new (new EchoAgent(), ownerResolver = new HeaderOwnerResolver());
 
-listener HttpListener ownerScopedListener = new (OWNER_SCOPED_TEST_PORT);
+listener RestListener ownerScopedListener = new (OWNER_SCOPED_TEST_PORT);
 
 @test:BeforeSuite
 function startOwnerScopedServer() returns error? {
@@ -1661,7 +1661,7 @@ final AgentCard pushNotificationHandlerCard = {
 
 final DefaultHandler pushNotificationHandler = new (new PushNotificationAgent(), pushSender = new HttpPushNotificationSender({validateUrl: false}));
 
-listener HttpListener pushNotificationListener = new (PUSH_NOTIFICATION_TEST_PORT);
+listener RestListener pushNotificationListener = new (PUSH_NOTIFICATION_TEST_PORT);
 
 // Completes normally, except for:
 // - "pause": leaves the task at TASK_STATE_WORKING -- non-terminal, so
@@ -1977,7 +1977,7 @@ final AgentCard securityRequirementsHandlerCard = {
 
 final DefaultHandler securityRequirementsHandler = new (new EchoAgent());
 
-listener HttpListener securityRequirementsListener = new (SECURITY_REQUIREMENTS_TEST_PORT);
+listener RestListener securityRequirementsListener = new (SECURITY_REQUIREMENTS_TEST_PORT);
 
 @test:BeforeSuite
 function startSecurityRequirementsServer() returns error? {
@@ -2039,7 +2039,7 @@ final AgentCard extensionsHandlerCard = {
 
 final DefaultHandler extensionsHandler = new (new EchoAgent());
 
-listener HttpListener extensionsListener = new (EXTENSIONS_TEST_PORT);
+listener RestListener extensionsListener = new (EXTENSIONS_TEST_PORT);
 
 @test:BeforeSuite
 function startExtensionsServer() returns error? {
@@ -2091,7 +2091,7 @@ final AgentCard withheldCapabilitiesHandlerCard = {
 
 final DefaultHandler withheldCapabilitiesHandler = new (new EchoAgent());
 
-listener HttpListener withheldCapabilitiesListener = new (WITHHELD_CAPABILITIES_TEST_PORT);
+listener RestListener withheldCapabilitiesListener = new (WITHHELD_CAPABILITIES_TEST_PORT);
 
 @test:BeforeSuite
 function startWithheldCapabilitiesServer() returns error? {

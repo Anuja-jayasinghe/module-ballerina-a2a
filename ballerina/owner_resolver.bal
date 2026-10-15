@@ -64,7 +64,7 @@ public type Context record {|
 # authenticate it. A resolver that trusts an unverified header is not a
 # security boundary, and satisfying [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping) requires
 # pairing this with real inbound authentication: configure
-# `HttpListenerConfiguration.auth`, which also makes the authenticated identity the
+# `RestListenerConfiguration.auth`, which also makes the authenticated identity the
 # owner when no resolver is given.
 public type TaskOwnerResolver isolated object {
 

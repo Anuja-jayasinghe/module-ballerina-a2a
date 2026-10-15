@@ -31,11 +31,11 @@ const string TEST_KEY = "tests/resources/localhost.key";
 
 final DefaultHandler tlsUrlHandler = new (new CountingAgent());
 
-listener HttpListener tlsUrlListener = new (TLS_URL_TEST_PORT, secureSocket = {key: {certFile: TEST_CERT, keyFile: TEST_KEY}});
+listener RestListener tlsUrlListener = new (TLS_URL_TEST_PORT, secureSocket = {key: {certFile: TEST_CERT, keyFile: TEST_KEY}});
 
 final DefaultHandler publicUrlHandler = new (new CountingAgent());
 
-listener HttpListener publicUrlListener = new (PUBLIC_URL_TEST_PORT, publicUrl = "https://agents.example.com/travel/");
+listener RestListener publicUrlListener = new (PUBLIC_URL_TEST_PORT, publicUrl = "https://agents.example.com/travel/");
 
 @test:BeforeSuite
 function startUrlTestServers() returns error? {
@@ -77,7 +77,7 @@ function testPublicUrlIsNormalisedAndValidated() returns error? {
 
 @test:Config {}
 function testListenerRefusesAnUnusablePublicUrl() {
-    HttpListener|Error created = new (19265, publicUrl = "ftp://agents.example.com");
+    RestListener|Error created = new (19265, publicUrl = "ftp://agents.example.com");
     test:assertTrue(created is InternalError);
     if created is Error {
         test:assertTrue(created.message().includes("ListenerConfiguration.publicUrl"), created.message());

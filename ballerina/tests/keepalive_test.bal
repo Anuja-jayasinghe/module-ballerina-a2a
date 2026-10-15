@@ -47,17 +47,17 @@ final AgentCard keepAliveHandlerCard = silentAgentCard("Keep-alive Agent");
 
 final DefaultHandler keepAliveHandler = new (new SilentAgent());
 
-listener HttpListener keepAliveListener = new (KEEPALIVE_TEST_PORT, keepAliveInterval = 0.4);
+listener RestListener keepAliveListener = new (KEEPALIVE_TEST_PORT, keepAliveInterval = 0.4);
 final AgentCard noKeepAliveHandlerCard = silentAgentCard("No keep-alive Agent");
 
 final DefaultHandler noKeepAliveHandler = new (new SilentAgent());
 
-listener HttpListener noKeepAliveListener = new (NO_KEEPALIVE_TEST_PORT, keepAliveInterval = 0);
+listener RestListener noKeepAliveListener = new (NO_KEEPALIVE_TEST_PORT, keepAliveInterval = 0);
 final AgentCard backstopHandlerCard = silentAgentCard("Backstop Agent");
 
 final DefaultHandler backstopHandler = new (new SilentAgent());
 
-listener HttpListener backstopListener = new (BACKSTOP_TEST_PORT, keepAliveInterval = 0.4, streamIdleTimeout = 2);
+listener RestListener backstopListener = new (BACKSTOP_TEST_PORT, keepAliveInterval = 0.4, streamIdleTimeout = 2);
 
 @test:BeforeSuite
 function startKeepAliveServers() returns error? {

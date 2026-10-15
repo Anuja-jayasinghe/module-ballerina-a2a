@@ -37,7 +37,7 @@ isolated class CardRegistry {
         lock {
             AgentCard? existing = self.card;
             if existing is AgentCard && existing.toJson() != served.toJson() {
-                string msg = "every a2a:Service attached to one a2a:HttpListener must declare the same agent card";
+                string msg = "every a2a:Service attached to one a2a:RestListener must declare the same agent card";
                 return error InternalError(msg, message = msg);
             }
             foreach string[] binding in self.bindings {

@@ -90,16 +90,16 @@ isolated function agentCalls() returns int {
 
 final DefaultHandler jwtAuthHandler = new (new CountingAgent(), extendedAgentCard = authTestExtendedCard);
 
-listener HttpListener jwtAuthListener = new (JWT_AUTH_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
+listener RestListener jwtAuthListener = new (JWT_AUTH_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
 
 final DefaultHandler scopedAuthHandler = new (new CountingAgent());
 
-listener HttpListener scopedAuthListener = new (SCOPED_AUTH_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator, scopes: "a2a:write"}]);
+listener RestListener scopedAuthListener = new (SCOPED_AUTH_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator, scopes: "a2a:write"}]);
 
 // Two alternatives: a JWT, or Basic against the file user store.
 final DefaultHandler multiAuthHandler = new (new CountingAgent());
 
-listener HttpListener multiAuthListener = new (MULTI_AUTH_TEST_PORT, auth = [
+listener RestListener multiAuthListener = new (MULTI_AUTH_TEST_PORT, auth = [
         {jwtValidatorConfig: authTestJwtValidator},
         {fileUserStoreConfig: {}}
     ]);
@@ -107,11 +107,11 @@ listener HttpListener multiAuthListener = new (MULTI_AUTH_TEST_PORT, auth = [
 // Authenticated *and* an owner resolver: the resolver must win.
 final DefaultHandler resolverAuthHandler = new (new CountingAgent(), ownerResolver = new HeaderOwnerResolver());
 
-listener HttpListener resolverAuthListener = new (RESOLVER_AUTH_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
+listener RestListener resolverAuthListener = new (RESOLVER_AUTH_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
 
 final DefaultHandler oauth2AuthHandler = new (new CountingAgent());
 
-listener HttpListener oauth2AuthListener = new (OAUTH2_AUTH_TEST_PORT, auth = [{oauth2IntrospectionConfig: {url: string `http://localhost:${INTROSPECTION_STUB_PORT}/introspect`}}]);
+listener RestListener oauth2AuthListener = new (OAUTH2_AUTH_TEST_PORT, auth = [{oauth2IntrospectionConfig: {url: string `http://localhost:${INTROSPECTION_STUB_PORT}/introspect`}}]);
 
 // A stand-in for an OAuth2 authorization server's RFC 7662 introspection
 // endpoint: "opaque-good" is an active token for carol, "opaque-inactive" is
@@ -402,7 +402,7 @@ function testAuthOAuth2InactiveOrUnknownTokenIs401() returns error? {
 
 @test:Config {}
 function testAuthEmptyEntryListIsRejectedAtStartup() {
-    HttpListener|error created = new (EMPTY_AUTH_TEST_PORT, auth = []);
+    RestListener|error created = new (EMPTY_AUTH_TEST_PORT, auth = []);
     test:assertTrue(created is Error, "an empty auth list would admit nobody, which is a mistake, not a policy");
 }
 
@@ -423,7 +423,7 @@ final http:JwtValidatorConfig unreachableJwksValidator = {
 
 @test:Config {}
 function testAuthUnreachableJwksWithACacheIsAnErrorNotAPanic() {
-    HttpListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, auth = [{jwtValidatorConfig: unreachableJwksValidator}]);
+    RestListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, auth = [{jwtValidatorConfig: unreachableJwksValidator}]);
     test:assertTrue(created is InternalError, "an unreachable IdP at startup must be a returned error");
     if created is Error {
         test:assertTrue(created.message().includes("auth[0] (jwtValidatorConfig)"), created.message());
@@ -432,7 +432,7 @@ function testAuthUnreachableJwksWithACacheIsAnErrorNotAPanic() {
 
 @test:Config {}
 function testAuthFailingEntryIsNamedByItsPosition() {
-    HttpListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, auth = [{fileUserStoreConfig: {}}, {jwtValidatorConfig: unreachableJwksValidator}]);
+    RestListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, auth = [{fileUserStoreConfig: {}}, {jwtValidatorConfig: unreachableJwksValidator}]);
     test:assertTrue(created is InternalError);
     if created is Error {
         test:assertTrue(created.message().includes("auth[1] (jwtValidatorConfig)"),
@@ -442,7 +442,7 @@ function testAuthFailingEntryIsNamedByItsPosition() {
 
 @test:Config {}
 function testAuthUnreachableLdapIsAnErrorNotAPanic() {
-    HttpListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, auth = [{
+    RestListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, auth = [{
         ldapUserStoreConfig: {
             domainName: "example.com", connectionUrl: "ldap://localhost:1", connectionName: "cn=admin",
             connectionPassword: "x", userSearchBase: "ou=Users,dc=example,dc=com", userEntryObjectClass: "person",
@@ -465,20 +465,20 @@ function testAuthJwksWithoutACacheStillConstructsWhenTheIdpIsDown() {
     // No preload without a cache: the keys are only fetched per request, so
     // there is nothing to fail at startup. Guards against the trap turning a
     // working configuration into an error.
-    HttpListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, auth = [{
+    RestListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, auth = [{
         jwtValidatorConfig: {
             issuer: "https://idp.example.com",
             audience: "a2a",
             signatureConfig: {jwksConfig: {url: "http://localhost:1/jwks"}}
         }
     }]);
-    test:assertTrue(created is HttpListener, created is Error ? created.message() : "");
+    test:assertTrue(created is RestListener, created is Error ? created.message() : "");
 }
 
 @test:Config {}
 function testAuthExtendedCardWithoutAuthIsRejectedAtStartup() returns error? {
     DefaultHandler handler = new (new CountingAgent(), extendedAgentCard = authTestExtendedCard);
-    HttpListener created = check new (EXTENDED_WITHOUT_AUTH_TEST_PORT);
+    RestListener created = check new (EXTENDED_WITHOUT_AUTH_TEST_PORT);
     error? attached = created.attach(new ExtendedService(handler, authTestCard), "rest");
     test:assertTrue(attached is Error,
             "a listener that would hand the extended card to anyone must not start (specification section 13.3)");
@@ -490,7 +490,7 @@ function testAuthExtendedCardWithoutAuthIsRejectedAtStartup() returns error? {
 @test:Config {}
 function testAuthExtendedCardWithAuthStarts() returns error? {
     DefaultHandler handler = new (new CountingAgent(), extendedAgentCard = authTestExtendedCard);
-    HttpListener created = check new (EXTENDED_WITH_AUTH_TEST_PORT,
+    RestListener created = check new (EXTENDED_WITH_AUTH_TEST_PORT,
             auth = [{jwtValidatorConfig: authTestJwtValidator}]);
     check created.attach(new ExtendedService(handler, authTestCard), "rest");
     check created.gracefulStop();

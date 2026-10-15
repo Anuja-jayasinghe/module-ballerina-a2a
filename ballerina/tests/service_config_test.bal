@@ -51,7 +51,7 @@ const int CARD_FROM_FUNCTION_PORT = 19278;
 isolated service class AnnotatedService {
     *Service;
 
-    remote isolated function onSendMessage(Context context, SendMessageRequest request)
+    isolated resource function post message\:send(Context context, SendMessageRequest request)
             returns Task|Message|Error {
         return error InternalError("not used");
     }
@@ -80,55 +80,54 @@ function testRestPathNamesTheRestBinding() returns error? {
 }
 
 @test:Config {}
-function testRpcPathIsReservedAndOtherPathsAreRefused() {
+function testOnlyTheRestPathIsServedAndTheOthersAreRefused() {
     string|Error rpc = mountPathOf(["rpc"]);
     test:assertTrue(rpc is InternalError);
-    test:assertTrue((<Error>rpc).message().includes("not supported yet"), (<Error>rpc).message());
+    test:assertTrue((<Error>rpc).message().includes("/rest"), (<Error>rpc).message());
 
     string|Error unknown = mountPathOf(["weather"]);
     test:assertTrue(unknown is InternalError);
     test:assertTrue((<Error>unknown).message().includes("/rest"), (<Error>unknown).message());
 
-    string|Error none = mountPathOf(());
-    test:assertTrue(none is InternalError);
-    test:assertTrue((<Error>none).message().includes("service /rest on listener"), (<Error>none).message());
+    test:assertEquals(mountPathOf(()), "rest", "a service is declared without a path");
+    test:assertEquals(mountPathOf(["rest"]), "rest");
 }
 
 // ---- attach rules ---------------------------------------------------------
 
-isolated function attachRulesListener() returns HttpListener|error => new (ATTACH_RULES_PORT);
+isolated function attachRulesListener() returns RestListener|error => new (ATTACH_RULES_PORT);
 
 isolated function attachRulesHandler() returns DefaultHandler => new (new CountingAgent());
 
 @test:Config {}
-function testAttachRefusesRpcWithoutServingAnything() returns error? {
-    HttpListener agentListener = check attachRulesListener();
+function testAttachRefusesAPathOtherThanRestWithoutServingAnything() returns error? {
+    RestListener agentListener = check attachRulesListener();
     error? rejected = agentListener.attach(new FullService(attachRulesHandler(), authTestCard), "rpc");
-    test:assertTrue(rejected is InternalError, "RPC is reserved: attaching it must fail");
-    test:assertTrue((<error>rejected).message().includes("not supported yet"), (<error>rejected).message());
+    test:assertTrue(rejected is InternalError, "a RestListener serves /rest only: attaching /rpc must fail");
+    test:assertTrue((<error>rejected).message().includes("/rest"), (<error>rejected).message());
     // The refused attach must not have used up the path.
     check agentListener.attach(new FullService(attachRulesHandler(), authTestCard), "rest");
 }
 
 @test:Config {}
 function testAttachRefusesAServiceWithoutSendMessage() returns error? {
-    HttpListener agentListener = check attachRulesListener();
+    RestListener agentListener = check attachRulesListener();
     error? rejected = agentListener.attach(new GetTaskOnlyService(attachRulesHandler(), authTestCard), "rest");
     test:assertTrue(rejected is InternalError);
-    test:assertTrue((<error>rejected).message().includes("onSendMessage"), (<error>rejected).message());
+    test:assertTrue((<error>rejected).message().includes("message\\:send"), (<error>rejected).message());
 }
 
 @test:Config {}
 function testAttachRefusesHalfAGroupOfOperations() returns error? {
-    HttpListener agentListener = check attachRulesListener();
+    RestListener agentListener = check attachRulesListener();
     error? rejected = agentListener.attach(new HalfStreamingService(attachRulesHandler(), authTestCard), "rest");
     test:assertTrue(rejected is InternalError, "streaming is one capability: both operations or neither");
-    test:assertTrue((<error>rejected).message().includes("onSubscribeToTask"), (<error>rejected).message());
+    test:assertTrue((<error>rejected).message().includes("tasks/*/subscribe"), (<error>rejected).message());
 }
 
 @test:Config {}
 function testAttachRefusesAServiceWithNoCardOrTwo() returns error? {
-    HttpListener agentListener = check attachRulesListener();
+    RestListener agentListener = check attachRulesListener();
     error? none = agentListener.attach(new NoCardService(), "rest");
     test:assertTrue(none is InternalError);
     test:assertTrue((<error>none).message().includes("agent card"), (<error>none).message());
@@ -140,7 +139,7 @@ function testAttachRefusesAServiceWithNoCardOrTwo() returns error? {
 
 @test:Config {}
 function testAttachRefusesAnErroringCardFunction() returns error? {
-    HttpListener agentListener = check attachRulesListener();
+    RestListener agentListener = check attachRulesListener();
     error? rejected = agentListener.attach(new FailingCardService(), "rest");
     test:assertTrue(rejected is InternalError, "onGetAgentCard failing must fail the attach, not serve a blank card");
     test:assertTrue((<error>rejected).message().includes("card unavailable"), (<error>rejected).message());
@@ -148,7 +147,7 @@ function testAttachRefusesAnErroringCardFunction() returns error? {
 
 @test:Config {}
 function testAnAgentTakesThePathOnce() returns error? {
-    HttpListener agentListener = check attachRulesListener();
+    RestListener agentListener = check attachRulesListener();
     check agentListener.attach(new FullService(attachRulesHandler(), authTestCard), "rest");
     error? second = agentListener.attach(new FullService(attachRulesHandler(), authTestCard), "rest");
     test:assertTrue(second is InternalError, "one agent per listener, one service per path");
@@ -159,11 +158,11 @@ function testAnAgentTakesThePathOnce() returns error? {
 
 final DefaultHandler capabilityHandler = new (new CountingAgent());
 
-listener HttpListener capabilityFullListener = new (CAPABILITY_FULL_PORT);
-listener HttpListener capabilityMessageOnlyListener = new (CAPABILITY_MESSAGE_ONLY_PORT);
-listener HttpListener capabilityNoStreamingListener = new (CAPABILITY_NO_STREAMING_PORT);
-listener HttpListener capabilityNoPushListener = new (CAPABILITY_NO_PUSH_PORT);
-listener HttpListener cardFromFunctionListener = new (CARD_FROM_FUNCTION_PORT);
+listener RestListener capabilityFullListener = new (CAPABILITY_FULL_PORT);
+listener RestListener capabilityMessageOnlyListener = new (CAPABILITY_MESSAGE_ONLY_PORT);
+listener RestListener capabilityNoStreamingListener = new (CAPABILITY_NO_STREAMING_PORT);
+listener RestListener capabilityNoPushListener = new (CAPABILITY_NO_PUSH_PORT);
+listener RestListener cardFromFunctionListener = new (CARD_FROM_FUNCTION_PORT);
 
 @test:BeforeSuite
 function startCapabilityListeners() returns error? {
@@ -251,7 +250,7 @@ function testTheOperationsLiveUnderTheBindingPathOnly() returns error? {
 
 const int PLAIN_FORM_PORT = 19279;
 
-listener HttpListener plainFormListener = new (PLAIN_FORM_PORT);
+listener RestListener plainFormListener = new (PLAIN_FORM_PORT);
 
 @test:BeforeSuite
 function startPlainFormListener() returns error? {
@@ -282,11 +281,9 @@ function testBothFormsAreDetectedAsDefined() {
 }
 
 @test:Config {}
-function testTheRequestFirstOrderIsNotAnOperation() returns error? {
-    HttpListener agentListener = check attachRulesListener();
-    error? rejected = agentListener.attach(new RequestFirstService(), "rest");
-    test:assertTrue(rejected is InternalError, "(request, context) is no longer a signature");
-    test:assertTrue((<error>rejected).message().includes("onSendMessage"), (<error>rejected).message());
+function testEitherParameterOrderIsAnOperation() returns error? {
+    RestListener agentListener = check attachRulesListener();
+    check agentListener.attach(new RequestFirstService(), "rest");
 }
 
 // ---- services used above --------------------------------------------------
@@ -302,9 +299,9 @@ isolated service class GetTaskOnlyService {
         self.card = card.cloneReadOnly();
     }
 
-    remote isolated function onGetAgentCard() returns AgentCard|Error => self.card;
+    isolated resource function get agentCard() returns AgentCard|Error => self.card;
 
-    remote isolated function onGetTask(Context context, GetTaskRequest request) returns Task|Error {
+    isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
         return self.handler.getTask(context, request);
     }
 }
@@ -320,14 +317,14 @@ isolated service class HalfStreamingService {
         self.card = card.cloneReadOnly();
     }
 
-    remote isolated function onGetAgentCard() returns AgentCard|Error => self.card;
+    isolated resource function get agentCard() returns AgentCard|Error => self.card;
 
-    remote isolated function onSendMessage(Context context, SendMessageRequest request)
+    isolated resource function post message\:send(Context context, SendMessageRequest request)
             returns Task|Message|Error {
         return self.handler.sendMessage(context, request);
     }
 
-    remote isolated function onSendStreamingMessage(Context context, SendMessageRequest request)
+    isolated resource function post message\:stream(Context context, SendMessageRequest request)
             returns stream<StreamResponse, Error?>|Error {
         return self.handler.sendStreamingMessage(context, request);
     }
@@ -336,7 +333,7 @@ isolated service class HalfStreamingService {
 isolated service class NoCardService {
     *Service;
 
-    remote isolated function onSendMessage(Context context, SendMessageRequest request)
+    isolated resource function post message\:send(Context context, SendMessageRequest request)
             returns Task|Message|Error {
         return error InternalError("not used");
     }
@@ -357,23 +354,23 @@ isolated service class NoCardService {
 isolated service class TwoCardsService {
     *Service;
 
-    remote isolated function onSendMessage(Context context, SendMessageRequest request)
+    isolated resource function post message\:send(Context context, SendMessageRequest request)
             returns Task|Message|Error {
         return error InternalError("not used");
     }
 
-    remote isolated function onGetAgentCard() returns AgentCard|Error => authTestCard;
+    isolated resource function get agentCard() returns AgentCard|Error => authTestCard;
 }
 
 isolated service class FailingCardService {
     *Service;
 
-    remote isolated function onSendMessage(Context context, SendMessageRequest request)
+    isolated resource function post message\:send(Context context, SendMessageRequest request)
             returns Task|Message|Error {
         return error InternalError("not used");
     }
 
-    remote isolated function onGetAgentCard() returns AgentCard|Error {
+    isolated resource function get agentCard() returns AgentCard|Error {
         return error InternalError("card unavailable");
     }
 }
@@ -386,8 +383,8 @@ isolated service class FailingCardService {
 
 final DefaultHandler declarativeHandler = new (new CountingAgent());
 
-listener HttpListener declarativeListenerA = new (DECLARATIVE_PORT_A);
-listener HttpListener declarativeListenerB = new (DECLARATIVE_PORT_B);
+listener RestListener declarativeListenerA = new (DECLARATIVE_PORT_A);
+listener RestListener declarativeListenerB = new (DECLARATIVE_PORT_B);
 
 @ServiceConfig {
     agentCard: {
@@ -401,14 +398,14 @@ listener HttpListener declarativeListenerB = new (DECLARATIVE_PORT_B);
         supportedInterfaces: []
     }
 }
-isolated service /rest on declarativeListenerA, declarativeListenerB {
+isolated service on declarativeListenerA, declarativeListenerB {
 
-    remote isolated function onSendMessage(Context context, SendMessageRequest request)
+    isolated resource function post message\:send(Context context, SendMessageRequest request)
             returns Task|Message|Error {
         return declarativeHandler.sendMessage(context, request);
     }
 
-    remote isolated function onGetTask(Context context, GetTaskRequest request) returns Task|Error {
+    isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
         return declarativeHandler.getTask(context, request);
     }
 }
@@ -464,7 +461,7 @@ isolated class CountingEventRegistry {
 final CountingEventRegistry countingRegistry = new;
 final DefaultHandler customRegistryHandler = new (new CountingAgent(), eventRegistry = countingRegistry);
 
-listener HttpListener customRegistryListener = new (CUSTOM_REGISTRY_PORT);
+listener RestListener customRegistryListener = new (CUSTOM_REGISTRY_PORT);
 
 @test:BeforeSuite
 function startCustomRegistryListener() returns error? {
@@ -496,12 +493,12 @@ function testHandlerUsesTheConfiguredEventRegistry() returns error? {
 isolated service class PlainFormService {
     *Service;
 
-    remote isolated function onSendMessage(SendMessageRequest request) returns Task|Message|Error {
+    isolated resource function post message\:send(SendMessageRequest request) returns Task|Message|Error {
         string text = request.message.parts[0]?.text ?: "";
         return {messageId: "reply-plain", role: ROLE_AGENT, parts: [{text: string `plain: ${text}`}]};
     }
 
-    remote isolated function onGetTask(GetTaskRequest request) returns Task|Error {
+    isolated resource function get tasks/[string id](GetTaskRequest request) returns Task|Error {
         string message = string `no task with id ${request.id}`;
         return error TaskNotFoundError(message, message = message, code = -32001);
     }
@@ -510,9 +507,9 @@ isolated service class PlainFormService {
 isolated service class RequestFirstService {
     *Service;
 
-    remote isolated function onGetAgentCard() returns AgentCard|Error => authTestCard;
+    isolated resource function get agentCard() returns AgentCard|Error => authTestCard;
 
-    remote isolated function onSendMessage(SendMessageRequest request, Context context)
+    isolated resource function post message\:send(SendMessageRequest request, Context context)
             returns Task|Message|Error {
         return error InternalError("not used");
     }

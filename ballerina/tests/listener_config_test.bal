@@ -43,7 +43,7 @@ final AgentCard shortTimeoutHandlerCard = {
 
 final DefaultHandler shortTimeoutHandler = new (new SilentAgent());
 
-listener HttpListener shortTimeoutListener = new (LISTENER_CONFIG_TEST_PORT, timeout = 2, keepAliveInterval = 0);
+listener RestListener shortTimeoutListener = new (LISTENER_CONFIG_TEST_PORT, timeout = 2, keepAliveInterval = 0);
 
 // Reports WORKING, then holds on the Gate registered under the key in its
 // message ("hold:<key>") until a test releases it, then completes.

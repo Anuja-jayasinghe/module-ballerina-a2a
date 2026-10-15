@@ -27,7 +27,7 @@ const int DECLARED_SECURITY_TEST_PORT = 19255;
 // Two entries of the same kind, with different scopes.
 final DefaultHandler twoJwtAuthHandler = new (new CountingAgent());
 
-listener HttpListener twoJwtAuthListener = new (TWO_JWT_AUTH_TEST_PORT, auth = [
+listener RestListener twoJwtAuthListener = new (TWO_JWT_AUTH_TEST_PORT, auth = [
         {jwtValidatorConfig: authTestJwtValidator, scopes: "a2a:read"},
         {jwtValidatorConfig: authTestJwtValidator, scopes: ["a2a:write", "a2a:admin"]}
     ]);
@@ -50,7 +50,7 @@ final AgentCard declaredSecurityHandlerCard = {
 
 final DefaultHandler declaredSecurityHandler = new (new CountingAgent());
 
-listener HttpListener declaredSecurityListener = new (DECLARED_SECURITY_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
+listener RestListener declaredSecurityListener = new (DECLARED_SECURITY_TEST_PORT, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
 
 @test:BeforeSuite
 function startCardDerivationServers() returns error? {

@@ -91,7 +91,7 @@ isolated class FailingOwnerResolver {
 
 final DefaultHandler resolverErrorHandler = new (new CountingAgent(), ownerResolver = new FailingOwnerResolver());
 
-listener HttpListener resolverErrorListener = new (RESOLVER_ERROR_TEST_PORT);
+listener RestListener resolverErrorListener = new (RESOLVER_ERROR_TEST_PORT);
 
 @test:BeforeSuite
 function startAuthErrorServers() returns error? {
