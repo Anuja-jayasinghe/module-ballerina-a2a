@@ -42,11 +42,78 @@ isolated function decodeSendMessageRequest(json|error payload) returns SendMessa
         // the caller's mistake, whatever type the shared decoder gives it.
         return invalidRequest(string `request body has a malformed part: ${decoded.message()}`);
     }
-    SendMessageRequest|error request = decoded.cloneWithType(SendMessageRequest);
+    SendMessageRequest|error request = pruneUnknownRequestFields(decoded).cloneWithType(SendMessageRequest);
     if request is error {
         return invalidRequest(string `request body did not match SendMessageRequest: ${request.message()}`);
     }
     return request;
+}
+
+// The fields each level of a send request defines. Anything else a caller
+// adds is dropped on the way in, not stored: the task keeps the message and
+// serves it back, and a strict protobuf client (Python, Go, Java) refuses a
+// message that carries a field it has no name for.
+final readonly & string[] SEND_REQUEST_FIELDS = ["message", "tenant", "configuration", "metadata"];
+final readonly & string[] MESSAGE_FIELDS = [
+    "messageId", "role", "parts", "contextId", "taskId", "referenceTaskIds", "extensions", "metadata"
+];
+final readonly & string[] PART_FIELDS = ["text", "raw", "url", "data", "filename", "mediaType", "metadata"];
+final readonly & string[] CONFIGURATION_FIELDS = [
+    "acceptedOutputModes", "historyLength", "returnImmediately", "taskPushNotificationConfig"
+];
+final readonly & string[] PUSH_CONFIG_FIELDS = ["url", "id", "taskId", "token", "authentication", "tenant"];
+final readonly & string[] AUTHENTICATION_FIELDS = ["scheme", "credentials"];
+
+# Drops the fields a send request does not define, down to the message's
+# parts and the push config. `metadata` maps and a data part's value are the
+# caller's own structure and are left alone.
+#
+# + payload - The decoded request body
+# + return - The same body without unknown fields
+isolated function pruneUnknownRequestFields(json payload) returns json {
+    map<json>|error request = payload.ensureType();
+    if request is error {
+        return payload;
+    }
+    map<json> pruned = keepFields(request, SEND_REQUEST_FIELDS);
+    json message = pruned["message"];
+    if message is map<json> {
+        map<json> keptMessage = keepFields(message, MESSAGE_FIELDS);
+        json parts = keptMessage["parts"];
+        if parts is json[] {
+            json[] keptParts = [];
+            foreach json part in parts {
+                keptParts.push(part is map<json> ? keepFields(part, PART_FIELDS) : part);
+            }
+            keptMessage["parts"] = keptParts;
+        }
+        pruned["message"] = keptMessage;
+    }
+    json configuration = pruned["configuration"];
+    if configuration is map<json> {
+        map<json> keptConfiguration = keepFields(configuration, CONFIGURATION_FIELDS);
+        json pushConfig = keptConfiguration["taskPushNotificationConfig"];
+        if pushConfig is map<json> {
+            map<json> keptPush = keepFields(pushConfig, PUSH_CONFIG_FIELDS);
+            json authentication = keptPush["authentication"];
+            if authentication is map<json> {
+                keptPush["authentication"] = keepFields(authentication, AUTHENTICATION_FIELDS);
+            }
+            keptConfiguration["taskPushNotificationConfig"] = keptPush;
+        }
+        pruned["configuration"] = keptConfiguration;
+    }
+    return pruned;
+}
+
+isolated function keepFields(map<json> fields, string[] known) returns map<json> {
+    map<json> kept = {};
+    foreach string name in known {
+        if fields.hasKey(name) {
+            kept[name] = fields.get(name);
+        }
+    }
+    return kept;
 }
 
 # Refuses a `message.parts` entry with other than exactly one of text, raw,

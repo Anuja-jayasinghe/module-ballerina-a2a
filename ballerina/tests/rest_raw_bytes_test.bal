@@ -49,3 +49,18 @@ function testARawPartIsBase64InAFetchedTaskOverRest() returns error? {
     json listed = check rest->get("/tasks?includeArtifacts=true", {"A2A-Version": "1.0"});
     test:assertTrue(listed.toJsonString().includes("\"raw\":\"dGNr\""), listed.toJsonString());
 }
+
+// A caller's extra field is dropped on the way in, so a strict protobuf client
+// is never served a message with a field it has no name for.
+@test:Config {}
+function testAnUnknownFieldInASentMessageIsNotServedBack() returns error? {
+    http:Client rest = check new (string `http://localhost:${REST_RAW_BYTES_TEST_PORT}/rest`,
+            httpVersion = http:HTTP_1_1);
+    json message = {message: {messageId: "unknown-field-1", role: "ROLE_USER",
+        parts: [{text: "hi", extra: 1}], tckUnknownField: "x"}, unknownTop: true};
+    json sent = check rest->post("/message:send", message, {"A2A-Version": "1.0"});
+    string text = sent.toJsonString();
+    test:assertFalse(text.includes("tckUnknownField"), text);
+    test:assertFalse(text.includes("unknownTop"), text);
+    test:assertTrue(text.includes("unknown-field-1"), text);
+}
