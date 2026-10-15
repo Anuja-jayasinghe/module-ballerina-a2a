@@ -38,7 +38,7 @@ function testARawPartIsBase64InAFetchedTaskOverJsonRpc() returns error? {
 // A caller's extra field is dropped on the way in, so a strict protobuf client
 // is never served a message with a field it has no name for.
 @test:Config {}
-function testAnUnknownFieldInASentMessageIsNotServedBack() returns error? {
+function testAnUnknownFieldInAMessageSentOverJsonRpcIsNotServedBack() returns error? {
     json params = {message: {messageId: "unknown-field-1", role: "ROLE_USER", parts: [{text: "hi", extra: 1}],
         tckUnknownField: "x"}, unknownTop: true};
     json sent = check rpcCall(RAW_BYTES_TEST_PORT, "SendMessage", params);
