@@ -25,6 +25,7 @@ import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.utils.TypeUtils;
 import io.ballerina.runtime.api.values.BArray;
+import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
 
@@ -41,7 +42,7 @@ import java.util.concurrent.CompletableFuture;
  */
 public final class ResourceInvoker {
 
-    private static final String PATH_PARAMETER_PREFIX = "$";
+    private static final String PATH_PARAMETER_PREFIX = "^";
     private static final String CONTEXT_TYPE_NAME = "Context";
 
     private ResourceInvoker() {
@@ -79,7 +80,7 @@ public final class ResourceInvoker {
      * @return what the resource returned, or an error if there is no such resource
      */
     public static Object invoke(Environment env, BObject service, BString accessor, BString path, BArray pathParams,
-                                Object context, Object request) {
+                                BMap<BString, Object> context, Object request) {
         ResourceMethodType method = find(service, accessor.getValue(), path.getValue());
         if (method == null) {
             return io.ballerina.runtime.api.creators.ErrorCreator.createError(StringUtils.fromString(
@@ -132,7 +133,7 @@ public final class ResourceInvoker {
             if (path.length() > 0) {
                 path.append('/');
             }
-            path.append(segment.startsWith(PATH_PARAMETER_PREFIX) ? "*" : segment);
+            path.append(segment.startsWith(PATH_PARAMETER_PREFIX) ? "*" : segment.replace("\\", ""));
         }
         return path.toString();
     }
