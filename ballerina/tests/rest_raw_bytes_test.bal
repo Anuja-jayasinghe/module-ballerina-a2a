@@ -64,3 +64,14 @@ function testAnUnknownFieldInASentMessageIsNotServedBack() returns error? {
     test:assertFalse(text.includes("unknownTop"), text);
     test:assertTrue(text.includes("unknown-field-1"), text);
 }
+
+// A client that serialises protobuf defaults sends an unset id as "".
+@test:Config {}
+function testAnEmptyTaskIdAndContextIdMeanUnset() returns error? {
+    http:Client rest = check new (string `http://localhost:${REST_RAW_BYTES_TEST_PORT}/rest`,
+            httpVersion = http:HTTP_1_1);
+    json message = {message: {messageId: "empty-ids-1", taskId: "", contextId: "", role: "ROLE_USER",
+        parts: [{text: "hi"}]}};
+    json sent = check rest->post("/message:send", message, {"A2A-Version": "1.0"});
+    test:assertTrue(sent.toJsonString().includes("empty-ids-1"), sent.toJsonString());
+}

@@ -65,7 +65,7 @@ final readonly & string[] PUSH_CONFIG_FIELDS = ["url", "id", "taskId", "token", 
 final readonly & string[] AUTHENTICATION_FIELDS = ["scheme", "credentials"];
 
 # Drops the fields a send request does not define, down to the message's
-# parts and the push config. `metadata` maps and a data part's value are the
+# parts and the push config, and an unset id sent as an empty string. `metadata` maps and a data part's value are the
 # caller's own structure and are left alone.
 #
 # + payload - The decoded request body
@@ -79,6 +79,12 @@ isolated function pruneUnknownRequestFields(json payload) returns json {
     json message = pruned["message"];
     if message is map<json> {
         map<json> keptMessage = keepFields(message, MESSAGE_FIELDS);
+        // A client that serialises protobuf defaults sends an unset id as "".
+        foreach string id in ["taskId", "contextId"] {
+            if keptMessage[id] == "" {
+                _ = keptMessage.remove(id);
+            }
+        }
         json parts = keptMessage["parts"];
         if parts is json[] {
             json[] keptParts = [];
