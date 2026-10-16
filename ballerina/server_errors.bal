@@ -173,7 +173,7 @@ isolated function rpcStatusBody(int status, string message, string reason, json?
 isolated function toRestErrorResponse(Error err) returns http:Response {
     http:Response response = new;
     response.statusCode = errorBindingFor(err).status;
-    response.setJsonPayload(restErrorBody(err), CONTENT_TYPE_JSON);
+    response.setJsonPayload(restErrorBody(err), CONTENT_TYPE_A2A_JSON);
     return response;
 }
 
@@ -209,7 +209,7 @@ isolated function toAuthErrorResponse(AuthFailure failure, string[] challenges) 
         }
         response.statusCode = http:STATUS_FORBIDDEN;
         response.setJsonPayload(rpcStatusBody(http:STATUS_FORBIDDEN, message, "PERMISSION_DENIED", metadata),
-                CONTENT_TYPE_JSON);
+                CONTENT_TYPE_A2A_JSON);
         return response;
     }
     response.statusCode = http:STATUS_UNAUTHORIZED;
@@ -217,6 +217,6 @@ isolated function toAuthErrorResponse(AuthFailure failure, string[] challenges) 
         response.addHeader("WWW-Authenticate", challenge);
     }
     response.setJsonPayload(rpcStatusBody(http:STATUS_UNAUTHORIZED,
-            "Missing or invalid credentials", "UNAUTHENTICATED"), CONTENT_TYPE_JSON);
+            "Missing or invalid credentials", "UNAUTHENTICATED"), CONTENT_TYPE_A2A_JSON);
     return response;
 }

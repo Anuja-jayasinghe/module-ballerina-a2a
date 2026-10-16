@@ -190,18 +190,15 @@ function testServerServesAgentCardWithCachingHeaders() returns error? {
 @test:Config {}
 function testServerResponsesUseA2AJsonContentType() returns error? {
     // Specification 11.1: application/a2a+json SHOULD be used for
-    // requests and responses. Successful bodies use it. An error body is a
-    // google.rpc.Status (specification 11.6) and goes out as
-    // application/json, which is what the TCK checks for and what the
-    // a2a-go client decodes; checked on both, since they are built through
-    // different code paths (jsonResponse/cardHttpResponse vs.
-    // toRestErrorResponse).
+    // requests and responses. Checked on both a plain JSON response and
+    // an error response, since they're built through different code
+    // paths (jsonResponse/cardHttpResponse vs. toRestErrorResponse).
     http:Client raw = check new (serverUrl);
     http:Response cardResp = check raw->get("/.well-known/agent-card.json");
     test:assertEquals(cardResp.getContentType(), "application/a2a+json");
 
     http:Response errorResp = check raw->get("/rest/tasks/does-not-exist", {"A2A-Version": "1.0"});
-    test:assertEquals(errorResp.getContentType(), "application/json");
+    test:assertEquals(errorResp.getContentType(), "application/a2a+json");
 }
 
 // Finding 26: a patch-qualified A2A-Version used to be an exact-string
@@ -2196,7 +2193,7 @@ function testUnknownPathIs404NotFound() returns error? {
     http:Response resp = check raw->get("/nope", {"A2A-Version": "1.0"});
     test:assertEquals(resp.statusCode, 404, "a path that is no A2A operation is not a server fault");
     test:assertEquals(check reasonOf(resp), "METHOD_NOT_FOUND");
-    test:assertTrue(resp.getContentType().startsWith("application/json"));
+    test:assertTrue(resp.getContentType().startsWith("application/a2a+json"));
 }
 
 // Finding 37: the proto's `{id=*}` matches exactly one path segment, so a
