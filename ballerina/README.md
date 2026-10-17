@@ -467,7 +467,7 @@ listener a2a:RestListener agent = new (9090, publicUrl = "https://agents.example
 
 `publicUrl` must start with `http://` or `https://` and carry no query or fragment; a trailing `/` is dropped. `X-Forwarded-*` headers are not consulted, since any caller can send them.
 
-A message part that states a `mediaType` the card does not declare is answered with `ContentTypeNotSupportedError` (HTTP 400, JSON-RPC `-32005`), per specification sections 3.1.1 and 13. The media types accepted are the card's `defaultInputModes` together with every skill's `inputModes`; a card that declares none accepts everything, and a part with no `mediaType` is never rejected. A mode matches ignoring case and parameters, a bare type such as `text` matches all its subtypes, and `type/*` and `*/*` are wildcards. Set `validateInputModes = false` on the listener for an agent that handles any content itself.
+With `validateInputModes = true` on the listener, a message part that states a `mediaType` the card does not declare is answered with `ContentTypeNotSupportedError` (HTTP 400, JSON-RPC `-32005`), per specification sections 3.1.1 and 13. The media types accepted are the card's `defaultInputModes` together with every skill's `inputModes`; a card that declares none accepts everything, and a part with no `mediaType` is never rejected. A mode matches ignoring case and parameters, a bare type such as `text` matches all its subtypes, and `type/*` and `*/*` are wildcards. It is off by default, as in the reference SDKs: turning it on starts refusing content an agent used to accept.
 
 ### 7.3 Task storage
 

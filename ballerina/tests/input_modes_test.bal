@@ -30,8 +30,8 @@ function inputModesCard(string[] defaultModes, string[]? skillModes = ()) return
     };
 }
 
-listener RestListener inputModesStrictListener = new (INPUT_MODES_STRICT_PORT);
-listener RestListener inputModesLenientListener = new (INPUT_MODES_LENIENT_PORT, validateInputModes = false);
+listener RestListener inputModesStrictListener = new (INPUT_MODES_STRICT_PORT, validateInputModes = true);
+listener RestListener inputModesLenientListener = new (INPUT_MODES_LENIENT_PORT);
 
 @test:BeforeSuite
 function startInputModesServers() returns error? {
@@ -85,7 +85,7 @@ function testAPartWithoutAMediaTypeIsNotCheckedOverRest() returns error? {
 }
 
 @test:Config {}
-function testValidationCanBeSwitchedOffOverRest() returns error? {
+function testValidationIsOffByDefaultOverRest() returns error? {
     http:Response res = check sendWithMediaType(INPUT_MODES_LENIENT_PORT, "/message:send", "image/png");
     test:assertEquals(res.statusCode, 200);
 }

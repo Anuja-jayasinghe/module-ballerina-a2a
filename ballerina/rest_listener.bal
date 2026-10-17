@@ -96,8 +96,12 @@ public type RestListenerConfiguration record {|
     # and a part that states no `mediaType` is never rejected. A mode matches
     # ignoring case and parameters (`text/plain; charset=utf-8`), a bare type
     # such as `text` matches all its subtypes, and `type/*` and `*/*` are
-    # wildcards. Set it to `false` for an agent that handles any content itself.
-    boolean validateInputModes = true;
+    # wildcards.
+    #
+    # Off by default, as in the reference SDKs: turning it on starts refusing
+    # content an agent used to accept, and the A2A TCK's `CORE-SEND-003` sends an
+    # undeclared media type and expects the send to succeed.
+    boolean validateInputModes = false;
 |};
 
 # The `http:ListenerConfiguration` half of an `RestListenerConfiguration`:
