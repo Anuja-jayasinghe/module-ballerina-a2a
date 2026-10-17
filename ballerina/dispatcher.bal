@@ -60,10 +60,11 @@ isolated service class DispatcherService {
     private final StreamTiming & readonly streamTiming;
     // The path the service is mounted at, which the served interface URL ends in
     private final string mountPath;
+    private final boolean validateInputModes;
 
     isolated function init(AgentCard card, OperationBinding binding, ServedCards cards,
             ListenerAuthenticator? authenticator, string interfaceScheme, string? publicUrl,
-            StreamTiming streamTiming, string mountPath) {
+            StreamTiming streamTiming, string mountPath, boolean validateInputModes) {
         self.card = card.cloneReadOnly();
         self.binding = binding;
         self.cards = cards;
@@ -72,6 +73,7 @@ isolated service class DispatcherService {
         self.publicUrl = publicUrl;
         self.streamTiming = streamTiming.cloneReadOnly();
         self.mountPath = mountPath;
+        self.validateInputModes = validateInputModes;
     }
 
     isolated resource function get [string... path](http:Request req)
@@ -386,6 +388,17 @@ isolated service class DispatcherService {
         }
     }
 
+    # Rejects a message whose part media types the card does not declare, unless
+    # `validateInputModes` is off.
+    #
+    # + request - The decoded request
+    # + return - A ContentTypeNotSupportedError, or `()`
+    private isolated function checkInputModes(SendMessageRequest request) returns Error? {
+        if self.validateInputModes {
+            return checkInputModes(self.card, request.message);
+        }
+    }
+
     # Handles POST /message:send: decode the request, run execute through
     # the default handler, and serialise the Task or Message it returns.
     #
@@ -395,6 +408,7 @@ isolated service class DispatcherService {
     private isolated function onSendMessage(Context context, http:Request req)
             returns http:Response|Error {
         SendMessageRequest request = check decodeSendMessageRequest(req.getJsonPayload());
+        check self.checkInputModes(request);
         check self.checkInlinePushConfig(request, "sendMessage");
         Task|Message result = check self.binding.sendMessage(context, request);
         // The wire wraps the result in its oneof arm, matching what the client
@@ -419,6 +433,7 @@ isolated service class DispatcherService {
             return serverStreamingUnsupportedError("sendStreamingMessage");
         }
         SendMessageRequest request = check decodeSendMessageRequest(req.getJsonPayload());
+        check self.checkInputModes(request);
         check self.checkInlinePushConfig(request, "sendStreamingMessage");
         stream<StreamResponse, Error?> events = check self.binding.sendStreamingMessage(context, request);
         stream<http:SseEvent, error?> framed = new (new SseFramingGenerator(events));

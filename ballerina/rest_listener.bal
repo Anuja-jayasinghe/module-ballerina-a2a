@@ -85,6 +85,19 @@ public type RestListenerConfiguration record {|
     # consulted: any caller can send them, and this setting is the explicit
     # answer.
     string? publicUrl = ();
+    # Whether `sendMessage` and `sendStreamingMessage` answer
+    # `ContentTypeNotSupportedError` (HTTP 400) for a message part whose
+    # `mediaType` the agent card does not declare, per [specification section
+    # 3.1.1](https://a2a-protocol.org/latest/specification/#311-a2a-specific-errors)
+    # and the "SHOULD reject unexpected media types" of section 13.
+    #
+    # The media types accepted are the card's `defaultInputModes` together with
+    # every skill's `inputModes`. A card that declares none accepts everything,
+    # and a part that states no `mediaType` is never rejected. A mode matches
+    # ignoring case and parameters (`text/plain; charset=utf-8`), a bare type
+    # such as `text` matches all its subtypes, and `type/*` and `*/*` are
+    # wildcards. Set it to `false` for an agent that handles any content itself.
+    boolean validateInputModes = true;
 |};
 
 # The `http:ListenerConfiguration` half of an `RestListenerConfiguration`:
@@ -100,7 +113,7 @@ public type RestListenerConfiguration record {|
 # + return - The HTTP listener's own settings
 isolated function httpListenerConfigurationOf(RestListenerConfiguration config) returns http:ListenerConfiguration {
     RestListenerConfiguration {
-        auth: _, streamIdleTimeout: _, keepAliveInterval: _, publicUrl: _, ...httpConfig
+        auth: _, streamIdleTimeout: _, keepAliveInterval: _, publicUrl: _, validateInputModes: _, ...httpConfig
     } = config;
     return {...httpConfig};
 }
@@ -142,6 +155,7 @@ public isolated class RestListener {
     // listener really serves, and the explicit public URL if one was configured.
     private final string interfaceScheme;
     private final string? publicUrl;
+    private final boolean validateInputModes;
     // The cards of the services attached so far; one agent per listener.
     private final CardRegistry registry = new;
     private AttachedService[] attached = [];
@@ -196,6 +210,7 @@ public isolated class RestListener {
         // port and for an `http:Listener` passed in.
         self.interfaceScheme = self.httpListener.getConfig().secureSocket is () ? "http" : "https";
         self.streamTiming = {idleTimeout: config.streamIdleTimeout, keepAliveInterval: config.keepAliveInterval};
+        self.validateInputModes = config.validateInputModes;
     }
 
     # Attaches an agent's `a2a:Service`.
@@ -225,7 +240,7 @@ public isolated class RestListener {
         ServedCards cards = new (self.authConfig, capabilities);
         AgentCard & readonly served = cards.publicCard(supplied).cloneReadOnly();
         DispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
-                self.interfaceScheme, self.publicUrl, self.streamTiming, mountPath);
+                self.interfaceScheme, self.publicUrl, self.streamTiming, mountPath, self.validateInputModes);
         CardService cardServiceToAttach;
         boolean cardServiceIsNew = false;
         lock {

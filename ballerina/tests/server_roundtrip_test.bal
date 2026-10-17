@@ -245,7 +245,7 @@ function testServerRoundTripFileBytesReachTheAgentAsBytes() returns error? {
     // And the literal wire form, "dGNr" being base64 for "tck".
     http:Client raw = check new (serverUrl);
     json body = {"message": {"messageId": "raw-2", "role": "ROLE_USER",
-        "parts": [{"raw": "dGNr", "mediaType": "application/x-unsupported-tck-type"}]}};
+        "parts": [{"raw": "dGNr", "mediaType": "text/plain"}]}};
     http:Response resp = check raw->post("/rest/message:send", body,
             {"A2A-Version": "1.0", "Content-Type": "application/json"});
     test:assertEquals(resp.statusCode, 200);
