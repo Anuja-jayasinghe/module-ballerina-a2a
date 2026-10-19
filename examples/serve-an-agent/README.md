@@ -3,8 +3,8 @@
 ## Overview
 
 This example demonstrates how to use the Ballerina A2A module to serve an
-agent over A2A. The agent is a service declared at `/rest` on an
-`a2a:RestListener`. It carries the agent card, defines the A2A operations,
+agent over A2A. The agent is a service attached to an
+`a2a:RestListener`, which serves it at `/rest`. It carries the agent card, defines the A2A operations,
 and hands each one to an `a2a:DefaultHandler`, which runs the task around
 the agent's `a2a:AgentExecutor`.
 
@@ -21,7 +21,7 @@ the agent's `a2a:AgentExecutor`.
 - **A real, discoverable Agent Card**: declared once with
   `@a2a:ServiceConfig` and served at `/.well-known/agent-card.json`. Its
   `capabilities` and `supportedInterfaces` are derived from the operations
-  the service defines and the path it is declared at, so they are never
+  the service defines and the listener's address, so they are never
   placeholders on the wire, even though this example's card literal leaves
   both empty (see Code Structure).
 
@@ -73,7 +73,7 @@ curl -s http://localhost:9090/rest/message:send \
 - **The executor**: `isolated class WeatherExecutor` implements
   `a2a:AgentExecutor`. Its `execute` method is the agent's business logic.
 - **The service**: `isolated service on new a2a:RestListener(listenerPort)`.
-  The path names the binding: `rest` is HTTP+JSON. The `new` creates the
+  The listener names the binding: `a2a:RestListener` serves HTTP+JSON under `/rest`. The `new` creates the
   listener, which owns the wire -- the port and, when configured, TLS,
   authentication, and the address the card advertises -- and holds no agent.
   The Ballerina runtime attaches the service to it and starts it, so there

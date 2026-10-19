@@ -10,7 +10,7 @@ It includes capabilities for:
 2. **Delegating work** – Send a message and receive either a direct reply or a long-running task to follow.
 3. **Following progress** – Stream updates as they happen, or register a webhook and be called back.
 4. **Authenticating** – Satisfy the security schemes an agent declares, per skill where they differ.
-5. **Serving an agent** – Implement one method and publish it as an A2A agent, with the task lifecycle, streaming, and discovery handled for you.
+5. **Serving an agent** – Write the agent's logic as one `execute` method and publish it as an A2A agent, with the task lifecycle, streaming, and discovery handled for you.
 
 The specification defines three transport bindings. This module implements **HTTP+JSON**, for both the client and the server; a card declaring only JSON-RPC or gRPC is rejected when the client is constructed, rather than at the first call.
 
@@ -403,7 +403,7 @@ Declaring the service on two listeners, `isolated service on publicListener, int
 
 ### Bringing your own handler
 
-`a2a:DefaultHandler` is a convenience, not a requirement. A service can answer an operation from any code it likes: define the `remote` function and return the operation's result. Operations the service does not define answer `UnsupportedOperationError`, and the served card advertises only the capabilities its operations imply. To change one operation and keep the rest, hold a `DefaultHandler` in the service and delegate the others to it.
+`a2a:DefaultHandler` is a convenience, not a requirement. A service can answer an operation from any code it likes: define the `resource` function for it and return the operation's result. Operations the service does not define answer `UnsupportedOperationError`, and the served card advertises only the capabilities its operations imply. To change one operation and keep the rest, hold a `DefaultHandler` in the service and delegate the others to it.
 
 ### 7.1 Driving a task
 
