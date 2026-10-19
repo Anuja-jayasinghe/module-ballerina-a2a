@@ -25,13 +25,3 @@ lifecycle, streaming and push-notification config behind them, and an
 with `call-an-agent` pointed at its port, or any other A2A HTTP+JSON v1.0
 client.
 See [`serve-an-agent/README.md`](serve-an-agent/README.md).
-
-### Bring Your Own Handler
-
-Serves an agent without `a2a:DefaultHandler`: the service defines only the
-operations it supports (the `post message\:send`, `get tasks/[string id]`
-and `get tasks` resources) and
-answers them from its own handler class and storage. The operations it
-leaves out answer `UnsupportedOperationError`, and the card advertises
-only what exists.
-See [`bring-your-own-handler/README.md`](bring-your-own-handler/README.md).

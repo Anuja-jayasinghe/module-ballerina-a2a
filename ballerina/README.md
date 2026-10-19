@@ -403,7 +403,7 @@ Declaring the service on two listeners, `isolated service on publicListener, int
 
 ### Bringing your own handler
 
-`a2a:DefaultHandler` is a convenience, not a requirement. A service can answer an operation from any code it likes: define the `remote` function and return the operation's result. Operations the service does not define answer `UnsupportedOperationError`, and the served card advertises only the capabilities its operations imply. The [`bring-your-own-handler`](../examples/bring-your-own-handler/README.md) example serves an agent from its own class and storage with three operations. To change one operation and keep the rest, hold a `DefaultHandler` in the service and delegate the others to it.
+`a2a:DefaultHandler` is a convenience, not a requirement. A service can answer an operation from any code it likes: define the `remote` function and return the operation's result. Operations the service does not define answer `UnsupportedOperationError`, and the served card advertises only the capabilities its operations imply. To change one operation and keep the rest, hold a `DefaultHandler` in the service and delegate the others to it.
 
 ### 7.1 Driving a task
 
