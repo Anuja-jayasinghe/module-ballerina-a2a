@@ -243,7 +243,7 @@ public isolated class RestListener {
         }
         ServedCards cards = new (self.authConfig, capabilities);
         AgentCard & readonly served = cards.publicCard(supplied).cloneReadOnly();
-        DispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
+        RestDispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
                 self.interfaceScheme, self.publicUrl, self.streamTiming, mountPath, self.validateInputModes);
         CardService cardServiceToAttach;
         boolean cardServiceIsNew = false;
@@ -278,7 +278,7 @@ public isolated class RestListener {
     # + a2aService - The service to detach
     # + return - An `a2a:Error` if detachment fails
     public isolated function detach(Service a2aService) returns error? {
-        DispatcherService? dispatcherService = ();
+        RestDispatcherService? dispatcherService = ();
         lock {
             foreach int i in 0 ..< self.attached.length() {
                 if self.attached[i].agentService === a2aService {
@@ -288,7 +288,7 @@ public isolated class RestListener {
                 }
             }
         }
-        if dispatcherService is DispatcherService {
+        if dispatcherService is RestDispatcherService {
             error? result = self.httpListener.detach(dispatcherService);
             if result is error {
                 return wrapTransportError(result);
@@ -363,7 +363,7 @@ type AttachedService record {|
     # The service, as the application declared it
     Service agentService;
     # The dispatcher built for it
-    DispatcherService dispatcher;
+    RestDispatcherService dispatcher;
     # The path it is mounted at
     string mountPath;
 |};

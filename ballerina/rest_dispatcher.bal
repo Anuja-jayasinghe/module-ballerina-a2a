@@ -48,7 +48,7 @@ const TASKS_PATH_PREFIX = "/tasks/";
 # The push-notification-config collection segment under a task's path.
 const PUSH_NOTIFICATION_CONFIGS_SEGMENT = "/pushNotificationConfigs";
 
-isolated service class DispatcherService {
+isolated service class RestDispatcherService {
     *http:Service;
 
     private final AgentCard & readonly card;
