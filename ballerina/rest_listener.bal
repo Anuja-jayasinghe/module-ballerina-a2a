@@ -108,7 +108,7 @@ public type RestListenerConfiguration record {|
 # everything left once this package's own fields are taken out.
 #
 # `RestListenerConfiguration` includes `http:ListenerConfiguration`, so a
-# caller can write `new a2a:RestListener(9090, handler, timeout = 120)`. The
+# caller can write `new a2a:RestListener(9090, timeout = 120)`. The
 # listener built for a port used to be created from an empty configuration,
 # silently dropping every one of those fields -- a `timeout`, or a
 # `secureSocket`, had no effect at all.
@@ -136,7 +136,7 @@ isolated function httpListenerConfigurationOf(RestListenerConfiguration config) 
 #
 #     isolated resource function post message\:send(a2a:Context context, a2a:SendMessageRequest request)
 #             returns a2a:Task|a2a:Message|a2a:Error {
-#         return self.handler.sendMessage(request, context);
+#         return self.handler.sendMessage(context, request);
 #     }
 #     // ...the other operations the agent supports
 # }
