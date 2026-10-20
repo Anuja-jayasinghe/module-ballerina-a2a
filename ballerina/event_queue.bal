@@ -57,8 +57,9 @@ isolated class EventQueue {
     # Removes the first item, waiting for one if the queue is empty.
     #
     # + timeout - The longest wait in seconds; `()` waits for as long as it takes
-    # + return - The first item, or `()` if `timeout` passed with the queue empty
-    isolated function take(decimal? timeout = ()) returns QueueItem? = @java:Method {
+    # + return - The first item, `()` if `timeout` passed with the queue empty,
+    #            or an error if the wait was interrupted
+    isolated function take(decimal? timeout = ()) returns QueueItem|error? = @java:Method {
         'class: "io.ballerina.lib.a2a.nativeimpl.EventQueue"
     } external;
 }

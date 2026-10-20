@@ -165,7 +165,16 @@ public isolated class EventTap {
             }
         }
 
-        QueueItem? item = self.queue.take(maxWait);
+        QueueItem|error? item = self.queue.take(maxWait);
+        if item is error && item !is Error {
+            // The wait was interrupted, not timed out: end the stream rather
+            // than report a keep-alive or an idle timeout that never happened.
+            lock {
+                self.ended = true;
+            }
+            string msg = "the stream ended because waiting for its next event was interrupted";
+            return error InternalError(msg, item, message = msg);
+        }
         if item is () {
             lock {
                 if idleComesFirst {

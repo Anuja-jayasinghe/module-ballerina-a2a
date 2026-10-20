@@ -17,6 +17,8 @@
 package io.ballerina.lib.a2a.nativeimpl;
 
 import io.ballerina.runtime.api.Environment;
+import io.ballerina.runtime.api.creators.ErrorCreator;
+import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BDecimal;
 import io.ballerina.runtime.api.values.BObject;
 
@@ -58,7 +60,8 @@ public final class EventQueue {
      * @param environment    the calling strand's environment
      * @param self           the {@code EventQueue} object
      * @param timeoutSeconds the longest wait in seconds as a {@code BDecimal}, or {@code null} to wait without limit
-     * @return the head element, or {@code null} if the timeout passed with the queue still empty
+     * @return the head element, {@code null} if the timeout passed with the queue still empty, or an error if the
+     *         wait was interrupted
      */
     public static Object take(Environment environment, BObject self, Object timeoutSeconds) {
         LinkedBlockingDeque<Object> queue = queue(self);
@@ -76,7 +79,8 @@ public final class EventQueue {
                 return queue.pollFirst(millis, TimeUnit.MILLISECONDS);
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
-                return null;
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "interrupted while waiting for the next task event"));
             }
         });
     }
