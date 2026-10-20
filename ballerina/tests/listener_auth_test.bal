@@ -308,6 +308,23 @@ function testAuthMissingScopeIs403() returns error? {
     test:assertEquals(ok.statusCode, 200);
 }
 
+// The `auth` entries are alternatives: a token one entry identifies but
+// denies for scope must still be tried against the entries after it.
+@test:Config {}
+function testAuthAScopeDenialFallsThroughToTheNextEntry() returns error? {
+    string writer = check bearerToken("carol", scope = "a2a:write");
+    http:Response ok = check authCall(TWO_JWT_AUTH_TEST_PORT, "GET", "/rest/tasks", "Bearer " + writer);
+    test:assertEquals(ok.statusCode, 200, "the second entry admits a2a:write");
+
+    string other = check bearerToken("carol", scope = "a2a:other");
+    http:Response denied = check authCall(TWO_JWT_AUTH_TEST_PORT, "GET", "/rest/tasks", "Bearer " + other);
+    test:assertEquals(denied.statusCode, 403);
+    string body = check denied.getTextPayload();
+    foreach string scope in ["a2a:read", "a2a:write", "a2a:admin"] {
+        test:assertTrue(body.includes(scope), string `the 403 must name ${scope}: ${body}`);
+    }
+}
+
 // ---- identity scoping (section 13.1) ------------------------------------
 
 @test:Config {}

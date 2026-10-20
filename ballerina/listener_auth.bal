@@ -45,7 +45,7 @@ type AuthFailure record {|
     # True when the caller was identified but lacks a required scope (a 403);
     # false when it was not identified at all (a 401)
     boolean forbidden;
-    # For a 403, the scopes the entry that identified the caller requires, any
+    # For a 403, the scopes the entries that identified the caller require, any
     # one of which would have admitted it
     string[] requiredScopes = [];
 |};
@@ -130,19 +130,33 @@ isolated class AuthEntry {
     # + header - The full `Authorization` header value
     # + return - The caller's identity, or why no entry admitted it
     isolated function authenticateChain(string scheme, string header) returns string|AuthFailure {
+        AuthFailure? denied = ();
         if self.scheme == scheme {
             string|http:Unauthorized|http:Forbidden result = self.verify(header);
             if result is string {
                 return result;
             }
-            // Identified but lacking a scope: no other entry will do better,
-            // so say so rather than fall through to a 401.
+            // Identified but lacking a scope. The entries are alternatives, so
+            // a later one may still admit the caller; keep the denial and try it.
             if result is http:Forbidden {
-                return {forbidden: true, requiredScopes: self.requiredScopes()};
+                denied = {forbidden: true, requiredScopes: self.requiredScopes()};
             }
         }
         AuthEntry? next = self.next;
-        return next is AuthEntry ? next.authenticateChain(scheme, header) : {forbidden: false};
+        string|AuthFailure rest = next is AuthEntry ? next.authenticateChain(scheme, header) : {forbidden: false};
+        if rest is string || denied is () {
+            return rest;
+        }
+        // No entry admitted the caller, and at least this one identified it:
+        // a 403 naming every scope that would have admitted it.
+        if rest.forbidden {
+            foreach string scope in rest.requiredScopes {
+                if denied.requiredScopes.indexOf(scope) is () {
+                    denied.requiredScopes.push(scope);
+                }
+            }
+        }
+        return denied;
     }
 
     # The scopes this entry requires, as a list.
