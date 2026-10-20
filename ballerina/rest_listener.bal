@@ -264,6 +264,10 @@ public isolated class RestListener {
             error? cardResult = self.httpListener.attach(cardServiceToAttach);
             if cardResult is error {
                 self.forget(a2aService, mountPath);
+                // Not mounted, so the next attach must create and mount one.
+                lock {
+                    self.cardService = ();
+                }
                 return wrapTransportError(cardResult);
             }
         }

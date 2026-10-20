@@ -26,3 +26,33 @@ function testDetachTakesTheInterfaceOffTheCard() returns error? {
     test:assertEquals(interfaces.length(), 1, "the replacement is the only interface");
     check agentListener.gracefulStop();
 }
+
+const int RETRY_ATTACH_TEST_PORT = 19313;
+
+isolated service class RootBlocker {
+    *http:Service;
+
+    isolated resource function get [string... path]() returns string => "taken";
+}
+
+// If mounting the card service fails, a retried attach must mount it, or the
+// agent is served without a card to discover it by.
+@test:Config {}
+function testARetriedAttachMountsTheCardAfterTheCardServiceFailed() returns error? {
+    http:Listener shared = check new (RETRY_ATTACH_TEST_PORT);
+    RootBlocker blocker = new;
+    check shared.attach(blocker);
+    RestListener agentListener = check new (shared);
+    FullService agent = new (new DefaultHandler(new CountingAgent()), authTestCard);
+
+    error? first = agentListener.attach(agent);
+    test:assertTrue(first is error, "the card service cannot mount while / is taken");
+
+    check shared.detach(blocker);
+    check agentListener.attach(agent);
+    check shared.'start();
+    http:Client cardClient = check new (string `http://localhost:${RETRY_ATTACH_TEST_PORT}`, cache = {enabled: false});
+    http:Response card = check cardClient->get("/.well-known/agent-card.json");
+    test:assertEquals(card.statusCode, 200, "the retried attach must mount the card");
+    check shared.gracefulStop();
+}
