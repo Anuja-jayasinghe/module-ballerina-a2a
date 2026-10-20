@@ -59,7 +59,8 @@ public type RestListenerConfiguration record {|
     # task's own events reset this on every one they produce, so raising it
     # only matters for a task that can legitimately sit silent for a long
     # stretch (e.g. paused on `TASK_STATE_AUTH_REQUIRED`, whose stream stays
-    # open) with a subscriber still attached.
+    # open) with a subscriber still attached. `0` turns the backstop off; a
+    # negative value is refused when the listener is created.
     decimal streamIdleTimeout = 300;
     # Seconds a live `sendStreamingMessage`/`subscribeToTask` stream may go
     # without an event before the server sends an SSE comment frame
@@ -68,7 +69,8 @@ public type RestListenerConfiguration record {|
     # been silent for too long -- Ballerina's defaults are 60 seconds for a
     # listener and 30 for a client -- and a long-running agent can easily be
     # quiet that long between updates. Keep this below the smallest idle
-    # timeout in play. `0` sends no keep-alives. Keep-alives are not activity:
+    # timeout in play. `0` sends no keep-alives; a negative value is refused
+    # when the listener is created. Keep-alives are not activity:
     # `streamIdleTimeout` still ends a stream nothing is being produced on.
     decimal keepAliveInterval = 15;
     # The base URL clients reach this agent at, served as the card's HTTP+JSON
@@ -173,11 +175,13 @@ public isolated class RestListener {
     #            `host`, ...) configure the listener that is created; given an
     #            existing `http:Listener`, that listener was configured when it
     #            was built, so they have nothing to apply to and are ignored.
-    # + return - An `a2a:Error` if `publicUrl` is unusable, the HTTP listener
-    #            cannot be created, or an `auth` entry cannot be initialised (for
+    # + return - An `a2a:Error` if a stream timing is negative, `publicUrl` is
+    #            unusable, the HTTP listener cannot be created, or an `auth`
+    #            entry cannot be initialised (for
     #            example a JWKS that cannot be preloaded, or an LDAP server that
     #            cannot be reached)
     public isolated function init(int|http:Listener listenTo, *RestListenerConfiguration config) returns Error? {
+        check checkStreamTiming("RestListenerConfiguration", config.streamIdleTimeout, config.keepAliveInterval);
         string? publicUrl = config.publicUrl;
         if publicUrl is string {
             self.publicUrl = check normalisePublicUrl(publicUrl);
@@ -376,6 +380,21 @@ isolated function normalisePublicUrl(string url) returns string|Error {
         return invalidPublicUrl(url, "it has no host");
     }
     return stripTrailingSlash(url);
+}
+
+# Checks the configured stream timing, which is in seconds and so cannot be
+# negative.
+#
+# + configName - The configuration record's name, for the message
+# + idleTimeout - `streamIdleTimeout`
+# + keepAliveInterval - `keepAliveInterval`
+# + return - An `a2a:InternalError` naming the first negative field
+isolated function checkStreamTiming(string configName, decimal idleTimeout, decimal keepAliveInterval) returns Error? {
+    string? negative = idleTimeout < 0d ? "streamIdleTimeout" : keepAliveInterval < 0d ? "keepAliveInterval" : ();
+    if negative is string {
+        string msg = string `${configName}.${negative} must not be negative; use 0 to turn it off`;
+        return error InternalError(msg, message = msg);
+    }
 }
 
 isolated function invalidPublicUrl(string url, string reason) returns Error {

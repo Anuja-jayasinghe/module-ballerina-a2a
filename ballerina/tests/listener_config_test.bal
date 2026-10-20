@@ -95,3 +95,31 @@ function testListenerAppliesTheCallersHttpTimeout() returns error? {
     test:assertFalse(sawCompleted, "the agent was held, so only the server closing the connection ends the stream");
     test:assertTrue(seconds < 10d, string `the 2 second timeout must apply; the stream lasted ${seconds}s`);
 }
+
+// The stream timings are seconds, so a negative one is refused before anything
+// is bound; it used to be read silently as "off". `0` is the documented way to
+// turn either off.
+@test:Config {}
+function testListenerRefusesANegativeStreamIdleTimeout() {
+    RestListener|Error created = new (19315, streamIdleTimeout = -1);
+    if created is RestListener {
+        test:assertFail("a negative streamIdleTimeout must be refused");
+    }
+    test:assertEquals(created.message(),
+            "RestListenerConfiguration.streamIdleTimeout must not be negative; use 0 to turn it off");
+}
+
+@test:Config {}
+function testListenerRefusesANegativeKeepAliveInterval() {
+    RestListener|Error created = new (19315, keepAliveInterval = -0.5);
+    if created is RestListener {
+        test:assertFail("a negative keepAliveInterval must be refused");
+    }
+    test:assertEquals(created.message(),
+            "RestListenerConfiguration.keepAliveInterval must not be negative; use 0 to turn it off");
+}
+
+@test:Config {}
+function testListenerAcceptsZeroStreamTimings() returns error? {
+    RestListener _ = check new (19315, streamIdleTimeout = 0, keepAliveInterval = 0);
+}
