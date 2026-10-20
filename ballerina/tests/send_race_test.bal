@@ -93,3 +93,45 @@ function testAContinuationDoesNotOverwriteATurnThatFinishedFirst() returns error
     test:assertEquals(userMessages, ["first", "a", "b"]);
     test:assertEquals(b.status.state, TASK_STATE_INPUT_REQUIRED);
 }
+
+final Gate cancelRaceGate = new;
+
+// Starts working, waits to be released, then tries to keep going.
+isolated class CancelRaceAgent {
+    *AgentExecutor;
+
+    public isolated function execute(RequestContext context, TaskUpdater updater) returns Message|Error? {
+        check updater->working();
+        cancelRaceGate.advanceTo(1);
+        cancelRaceGate.awaitStep(2);
+        check updater->addArtifact([{text: "too late"}]);
+        check updater->complete();
+        return;
+    }
+}
+
+// A cancel that lands while the agent runs is a success for the canceller; the
+// caller blocked on the send gets the canceled task, not the agent's failure.
+@test:Config {}
+function testABlockingSendCanceledMidwayReturnsTheCanceledTask() returns error? {
+    DefaultHandler handler = new (new CancelRaceAgent());
+    Context context = {headers: {}};
+
+    future<Task|Message|Error> sent = start handler.sendMessage(context, turn("cancel-race"));
+    cancelRaceGate.awaitStep(1);
+    Task[] listed = (check handler.listTasks(context, {})).tasks;
+    test:assertEquals(listed.length(), 1);
+    Task canceled = check handler.cancelTask(context, {id: listed[0].id});
+    test:assertEquals(canceled.status.state, TASK_STATE_CANCELED);
+    cancelRaceGate.advanceTo(2);
+
+    Task|Message|Error result = wait sent;
+    if result is Error {
+        test:assertFail("the blocked send must get the canceled task, got: " + result.message());
+    }
+    if result is Task {
+        test:assertEquals(result.status.state, TASK_STATE_CANCELED);
+    } else {
+        test:assertFail("the blocked send must get the canceled task, got a message");
+    }
+}

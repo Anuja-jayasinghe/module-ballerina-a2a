@@ -484,6 +484,13 @@ public isolated class DefaultHandler {
             failure = invalidAgentResponse(
                     string `execute returned without driving the task to a state for ${taskId}`);
         }
+        if failure is Error && self.endedElsewhere(taskId, owner, updater) {
+            // Another writer, such as `cancelTask`, ended the task while
+            // `execute` ran, and the store refused the agent's next write.
+            // That is not the agent failing: hand back the updater's copy and
+            // let `settledResult` replace it with the stored task.
+            return updater.currentTask();
+        }
         if failure is Error {
             // The agent's own failure, which otherwise only reaches the
             // caller: logged so it is visible on the server too.
@@ -507,6 +514,19 @@ public isolated class DefaultHandler {
         }
 
         return updater.currentTask();
+    }
+
+    # Whether another writer ended the task: it is in a terminal state the
+    # updater did not write.
+    #
+    # + taskId - The task that was driven
+    # + owner - The caller's resolved owner scope, or `()`
+    # + updater - The drive's updater
+    # + return - `true` if the stored task is terminal in a state the updater did not reach
+    private isolated function endedElsewhere(string taskId, string? owner, TaskUpdater updater) returns boolean {
+        Task|Error? stored = self.store.get(taskId, owner);
+        return stored is Task && isTerminalState(stored.status.state)
+            && stored.status.state != updater.currentTask().status.state;
     }
 
     # Normalizes `wait` on a `future&lt;Task|Message|Error&gt;`, which is
