@@ -41,7 +41,9 @@ type ResolvedSendTarget record {|
     string taskId;
     # The task's context id
     string contextId;
-    # The task's current stored state, to seed the `TaskUpdater` with
+    # The task to seed the `TaskUpdater` with: the fresh task, or, for a
+    # continued one, the copy read before the driver claim, which
+    # `commitSendTarget` reads again under the claim
     Task seed;
     # Whether `taskId` was freshly seeded for this call
     boolean isNewTask;
@@ -174,7 +176,6 @@ public isolated class DefaultHandler {
         ResolvedSendTarget target = check self.resolveSendTarget(request, owner);
         string taskId = target.taskId;
         string contextId = target.contextId;
-        Task seed = target.seed;
 
         // Claimed before anything about this request is persisted: a
         // second concurrent message to a task already being driven --
@@ -188,7 +189,7 @@ public isolated class DefaultHandler {
             string msg = string `task ${taskId} is already being processed`;
             return error UnsupportedOperationError(msg, message = msg, code = -32004);
         }
-        Error? committed = self.commitSendTarget(target, owner);
+        Task|Error committed = self.commitSendTarget(target, request, owner);
         if committed is Error {
             // The driving slot was claimed on the strength of a store write
             // that then failed -- release it (not as "stopped": nothing was
@@ -198,6 +199,7 @@ public isolated class DefaultHandler {
             self.registry.release(taskId, false);
             return committed;
         }
+        Task seed = committed;
 
         // A client cannot name a taskId that doesn't exist yet, so the
         // spec's own registration channel for this case is inline on the
@@ -330,23 +332,36 @@ public isolated class DefaultHandler {
             return {taskId, contextId, seed, isNewTask: true};
         }
 
-        Task? existing = check self.store.get(continuedTaskId, owner);
+        Task seed = check self.continuedSeed(continuedTaskId, request, owner);
+        return {taskId: continuedTaskId, contextId: seed.contextId ?: "", seed, isNewTask: false};
+    }
+
+    # Reads a task a message continues and appends the message to it, after
+    # checking the message may continue it.
+    #
+    # + taskId - The task the message names
+    # + request - The decoded send request
+    # + owner - The caller's resolved owner scope, or `()`
+    # + return - The task with the message appended, not yet persisted, or an error
+    private isolated function continuedSeed(string taskId, SendMessageRequest request, string? owner)
+            returns Task|Error {
+        Task? existing = check self.store.get(taskId, owner);
         if existing is () {
-            return taskNotFound(continuedTaskId);
+            return taskNotFound(taskId);
         }
         // Every task this library creates has a contextId -- it is set
         // unconditionally by resolveSendTarget's own fresh-task branch
-        // above -- so an empty fallback here is unreachable in practice;
-        // the field is merely optional in the wire type itself.
+        // -- so an empty fallback here is unreachable in practice; the
+        // field is merely optional in the wire type itself.
         string existingContextId = existing.contextId ?: "";
         string? suppliedContextId = request.message?.contextId;
         if suppliedContextId is string && suppliedContextId != existingContextId {
             string msg = string `message.contextId "${suppliedContextId}" does not match task `
-                + string `${continuedTaskId}'s own contextId "${existingContextId}"`;
+                + string `${taskId}'s own contextId "${existingContextId}"`;
             return invalidRequest(msg);
         }
         if isTerminalState(existing.status.state) {
-            string msg = string `task ${continuedTaskId} is in terminal state ${existing.status.state} `
+            string msg = string `task ${taskId} is in terminal state ${existing.status.state} `
                 + "and cannot accept further messages";
             return error UnsupportedOperationError(msg, message = msg, code = -32004);
         }
@@ -354,7 +369,7 @@ public isolated class DefaultHandler {
         Message[] history = existing?.history is Message[] ? (<Message[]>existing?.history).clone() : [];
         history.push(request.message.clone());
         existing.history = history;
-        return {taskId: continuedTaskId, contextId: existingContextId, seed: existing, isNewTask: false};
+        return existing;
     }
 
     # Persists a target `resolveSendTarget` resolved, once the caller holds
@@ -363,11 +378,21 @@ public isolated class DefaultHandler {
     # starting, and nothing else can be concurrently writing the same task
     # underneath it (a running driver would itself hold that same claim).
     #
+    # A continued task is read again here, under the claim. The read in
+    # `resolveSendTarget` came before it, so another turn may have finished
+    # in between; writing that earlier copy would erase the turn's history,
+    # artifacts and status. The checks are repeated on the fresh copy too,
+    # since that turn may have ended the task.
+    #
     # + target - The resolved target to persist
+    # + request - The decoded send request
     # + owner - The caller's resolved owner scope, or `()`
-    # + return - An error if the store write failed
-    private isolated function commitSendTarget(ResolvedSendTarget target, string? owner) returns Error? {
-        check self.store.put(target.seed, owner);
+    # + return - The task as persisted, to seed the `TaskUpdater` with, or an error
+    private isolated function commitSendTarget(ResolvedSendTarget target, SendMessageRequest request, string? owner)
+            returns Task|Error {
+        Task seed = target.isNewTask ? target.seed : check self.continuedSeed(target.taskId, request, owner);
+        check self.store.put(seed, owner);
+        return seed;
     }
 
     # Runs `execute` for one task, detached from the request that started
@@ -634,7 +659,6 @@ public isolated class DefaultHandler {
         ResolvedSendTarget target = check self.resolveSendTarget(request, owner);
         string taskId = target.taskId;
         string contextId = target.contextId;
-        Task seed = target.seed;
 
         // See sendMessage's identical block: claimed, then committed, before
         // anything about this request is persisted or registered.
@@ -643,11 +667,12 @@ public isolated class DefaultHandler {
             string msg = string `task ${taskId} is already being processed`;
             return error UnsupportedOperationError(msg, message = msg, code = -32004);
         }
-        Error? committed = self.commitSendTarget(target, owner);
+        Task|Error committed = self.commitSendTarget(target, request, owner);
         if committed is Error {
             self.registry.release(taskId, false);
             return committed;
         }
+        Task seed = committed;
 
         TaskPushNotificationConfig? inlineConfig = request?.configuration?.taskPushNotificationConfig;
         if inlineConfig is TaskPushNotificationConfig {
