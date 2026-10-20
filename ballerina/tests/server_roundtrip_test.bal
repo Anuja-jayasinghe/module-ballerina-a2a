@@ -1182,6 +1182,9 @@ function testServerRoundTripValidationErrorsCarryBadRequestDetails() returns err
             {"A2A-Version": "1.0", "Content-Type": "application/json"});
     test:assertEquals(bodyResp.statusCode, 400);
     test:assertEquals(check badRequestFieldOf(check errorDetailsOf(bodyResp)), "message.parts");
+    json bodyError = check (check bodyResp.getJsonPayload()).'error;
+    test:assertEquals(check bodyError.message,
+            "Message.parts is a required array and must contain at least one element");
 
     json twoVariants = {"message": {"messageId": "m2", "role": "ROLE_USER",
         "parts": [{"text": "fine"}, {"text": "both", "url": "https://example.com/a"}]}};

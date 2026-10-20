@@ -45,8 +45,7 @@ isolated function requireNonEmpty(string name, int length, boolean inbound) retu
     if length > 0 {
         return;
     }
-    string message = string `${name} is a required array and must contain at least one element `
-        + string `(specification section 5.7)`;
+    string message = string `${name} is a required array and must contain at least one element`;
     // Inbound is the agent's fault; outbound is the caller's. InternalError
     // is this library's catch-all for a client-side precondition failure --
     // the specification defines no error for one, since section 3.3.2 and
@@ -82,8 +81,9 @@ isolated function validateOutboundMessage(Message message) returns Error? {
 # + return - An `invalidRequest` error when it violates a specification requirement
 isolated function validateReceivedMessage(Message message) returns Error? {
     if message.parts.length() == 0 {
-        return invalidRequest("Message.parts is a required array and must contain at least one element "
-            + "(specification section 5.7)", "message.parts");
+        // Specification section 5.7, as read by `requireNonEmpty`.
+        return invalidRequest("Message.parts is a required array and must contain at least one element",
+            "message.parts");
     }
     foreach [int, Part] [index, part] in message.parts.enumerate() {
         int variants = countSetPartVariants(part);

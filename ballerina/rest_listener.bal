@@ -242,7 +242,7 @@ public isolated class RestListener {
         // service that would serve it to anyone must not start.
         if capabilities.extendedAgentCard && self.authenticator is () {
             string msg = "a service that defines the get extendedAgentCard resource requires RestListenerConfiguration.auth: "
-                + "the extended agent card is for authenticated callers (specification section 13.3)";
+                + "the extended agent card is for authenticated callers";
             return error InternalError(msg, message = msg);
         }
         ServedCards cards = new (self.authConfig, capabilities);

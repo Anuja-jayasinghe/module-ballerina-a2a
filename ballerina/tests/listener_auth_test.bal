@@ -498,9 +498,10 @@ function testAuthExtendedCardWithoutAuthIsRejectedAtStartup() returns error? {
     RestListener created = check new (EXTENDED_WITHOUT_AUTH_TEST_PORT);
     error? attached = created.attach(new ExtendedService(handler, authTestCard), "rest");
     test:assertTrue(attached is Error,
-            "a listener that would hand the extended card to anyone must not start (specification section 13.3)");
+            "a listener that would hand the extended card to anyone must not start");
     if attached is error {
-        test:assertTrue(attached.message().includes("13.3"), "the message must say why");
+        test:assertEquals(attached.message(), "a service that defines the get extendedAgentCard resource requires "
+            + "RestListenerConfiguration.auth: the extended agent card is for authenticated callers");
     }
 }
 
