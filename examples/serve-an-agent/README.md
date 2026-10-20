@@ -16,7 +16,7 @@ the agent's `a2a:AgentExecutor`.
   `get tasks` resources, `post message\:stream` and the subscribe resource
   as Server-Sent Events, the push-notification resources) delegate to the
   handler.
-- **Driving a task**: `updater->working()`/`addArtifact()`/`complete()`
+- **Driving a task**: `updater.working()`/`addArtifact()`/`complete()`
   move a task through its lifecycle from inside `execute`.
 - **A real, discoverable Agent Card**: declared once with
   `@a2a:ServiceConfig` and served at `/.well-known/agent-card.json`. Its

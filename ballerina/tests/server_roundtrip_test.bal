@@ -111,9 +111,9 @@ isolated class EchoAgent {
             byte[]? raw = part?.raw;
             if raw is byte[] {
                 string|error asText = string:fromBytes(raw);
-                check updater->working();
-                check updater->addArtifact([{text: string `raw: ${asText is string ? asText : "not utf-8"}`}]);
-                check updater->complete();
+                check updater.working();
+                check updater.addArtifact([{text: string `raw: ${asText is string ? asText : "not utf-8"}`}]);
+                check updater.complete();
                 return;
             }
         }
@@ -121,8 +121,8 @@ isolated class EchoAgent {
             return {messageId: "reply-1", role: ROLE_AGENT, parts: [{text: "pong"}]};
         }
         if text == "ask" {
-            check updater->working();
-            check updater->requireInput({
+            check updater.working();
+            check updater.requireInput({
                 messageId: "ask-1",
                 role: ROLE_AGENT,
                 parts: [{text: "need more information"}]
@@ -140,17 +140,17 @@ isolated class EchoAgent {
             Gate? gate = gateFor(text.substring(6));
             if gate is Gate {
                 gate.awaitStep(1);
-                check updater->working();
+                check updater.working();
                 gate.awaitStep(2);
-                check updater->addArtifact([{text: "paced artifact"}]);
+                check updater.addArtifact([{text: "paced artifact"}]);
                 gate.awaitStep(3);
-                check updater->complete();
+                check updater.complete();
             }
             return;
         }
-        check updater->working();
-        check updater->addArtifact([{text: string `echo: ${text}`}]);
-        check updater->complete();
+        check updater.working();
+        check updater.addArtifact([{text: string `echo: ${text}`}]);
+        check updater.complete();
         return;
     }
 }
@@ -1685,7 +1685,7 @@ isolated class PushNotificationAgent {
                 text += t;
             }
         }
-        check updater->working();
+        check updater.working();
         if text == "pause" {
             return ();
         }
@@ -1697,13 +1697,13 @@ isolated class PushNotificationAgent {
             Gate? gate = gateFor(text.substring(5));
             if gate is Gate {
                 gate.awaitStep(1);
-                Error? refused = updater->working();
+                Error? refused = updater.working();
                 gate.advanceTo(refused is Error ? 2 : 3);
             }
             return ();
         }
-        check updater->addArtifact([{text: string `echo: ${text}`}]);
-        check updater->complete();
+        check updater.addArtifact([{text: string `echo: ${text}`}]);
+        check updater.complete();
         return;
     }
 }

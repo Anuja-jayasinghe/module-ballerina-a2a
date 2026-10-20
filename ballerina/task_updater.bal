@@ -28,7 +28,7 @@ import ballerina/uuid;
 #
 # The task id and context id are read-only, so the developer can echo them
 # back to the client without reaching into the store.
-public isolated client class TaskUpdater {
+public isolated class TaskUpdater {
     private final string taskId;
     private final string contextId;
     private final TaskStore store;
@@ -105,7 +105,7 @@ public isolated client class TaskUpdater {
     #
     # + message - An optional status message to attach
     # + return - An `a2a:Error` if the update could not be stored
-    isolated remote function working(Message? message = ()) returns Error? {
+    public isolated function working(Message? message = ()) returns Error? {
         return self.transition(TASK_STATE_WORKING, message);
     }
 
@@ -114,7 +114,7 @@ public isolated client class TaskUpdater {
     # + parts - The parts of the artifact; at least one is required
     # + name - An optional human-readable label
     # + return - An `a2a:Error` if `parts` is empty
-    isolated remote function addArtifact(Part[] parts, string? name = ()) returns Error? {
+    public isolated function addArtifact(Part[] parts, string? name = ()) returns Error? {
         check requireNonEmpty("Artifact.parts", parts.length(), false);
         Artifact artifact = {artifactId: uuid:createType4AsString(), parts};
         if name is string {
@@ -154,7 +154,7 @@ public isolated client class TaskUpdater {
     #
     # + message - An optional final status message
     # + return - An `a2a:Error` if the update could not be stored
-    isolated remote function complete(Message? message = ()) returns Error? {
+    public isolated function complete(Message? message = ()) returns Error? {
         return self.transition(TASK_STATE_COMPLETED, message);
     }
 
@@ -162,7 +162,7 @@ public isolated client class TaskUpdater {
     #
     # + message - An optional status message describing the failure
     # + return - An `a2a:Error` if the update could not be stored
-    isolated remote function failed(Message? message = ()) returns Error? {
+    public isolated function failed(Message? message = ()) returns Error? {
         return self.transition(TASK_STATE_FAILED, message);
     }
 
@@ -170,7 +170,7 @@ public isolated client class TaskUpdater {
     #
     # + message - An optional status message describing the rejection
     # + return - An `a2a:Error` if the update could not be stored
-    isolated remote function reject(Message? message = ()) returns Error? {
+    public isolated function reject(Message? message = ()) returns Error? {
         return self.transition(TASK_STATE_REJECTED, message);
     }
 
@@ -178,7 +178,7 @@ public isolated client class TaskUpdater {
     #
     # + message - The prompt describing what input is needed
     # + return - An `a2a:Error` if the update could not be stored
-    isolated remote function requireInput(Message message) returns Error? {
+    public isolated function requireInput(Message message) returns Error? {
         return self.transition(TASK_STATE_INPUT_REQUIRED, message);
     }
 
@@ -186,7 +186,7 @@ public isolated client class TaskUpdater {
     #
     # + message - The prompt describing what authorization is needed
     # + return - An `a2a:Error` if the update could not be stored
-    isolated remote function requireAuth(Message message) returns Error? {
+    public isolated function requireAuth(Message message) returns Error? {
         return self.transition(TASK_STATE_AUTH_REQUIRED, message);
     }
 
@@ -240,7 +240,7 @@ public isolated client class TaskUpdater {
 
     # Whether `execute` has driven this task through the updater at
     # least once -- `false` only when `execute` returns a direct
-    # `Message` without ever calling a remote method on this updater.
+    # `Message` without ever calling a state-changing method on this updater.
     #
     # Package-private -- `sendMessage`/`sendStreamingMessage` use this to
     # tell "the agent never drove the task" apart from "the agent drove it

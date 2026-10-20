@@ -75,9 +75,9 @@ isolated class CountingAgent {
         lock {
             authAgentCalls += 1;
         }
-        check updater->working();
-        check updater->addArtifact([{text: "handled"}]);
-        check updater->complete();
+        check updater.working();
+        check updater.addArtifact([{text: "handled"}]);
+        check updater.complete();
         return;
     }
 }

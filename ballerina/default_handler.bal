@@ -257,7 +257,7 @@ public isolated class DefaultHandler {
             return result;
         } else if result is Error {
             // driveTask's own failure branch always returns the original
-            // Error, even when its best-effort updater->failed(...)
+            // Error, even when its best-effort updater.failed(...)
             // transition succeeded and genuinely left the task FAILED in
             // the store -- notifyPushConfigs's own doc comment says it
             // fires "unconditional on the state reached", matching every
@@ -454,7 +454,7 @@ public isolated class DefaultHandler {
                 // COMPLETED status, same as any other addArtifact-then-
                 // complete sequence would produce.
                 broadcaster.push(direct);
-                Error? completeResult = updater->complete(direct);
+                Error? completeResult = updater.complete(direct);
                 if completeResult is Error {
                     return completeResult;
                 }
@@ -506,7 +506,7 @@ public isolated class DefaultHandler {
             // terminal state), the original failure is still what's
             // reported -- there is nothing more useful to do with a
             // second error here.
-            Error? failTransitionResult = updater->failed(failMessage);
+            Error? failTransitionResult = updater.failed(failMessage);
             if failTransitionResult is Error {
                 // Deliberately not propagated; see comment above.
             }

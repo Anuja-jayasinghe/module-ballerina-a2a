@@ -23,8 +23,8 @@ isolated class RestRawArtifactAgent {
     *AgentExecutor;
 
     public isolated function execute(RequestContext context, TaskUpdater updater) returns Message|Error? {
-        check updater->addArtifact([{raw: "tck".toBytes(), mediaType: "text/plain", filename: "out.txt"}]);
-        check updater->complete();
+        check updater.addArtifact([{raw: "tck".toBytes(), mediaType: "text/plain", filename: "out.txt"}]);
+        check updater.complete();
         return;
     }
 }

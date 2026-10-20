@@ -51,16 +51,16 @@ isolated class InterruptingAgent {
 
     public isolated function execute(RequestContext context, TaskUpdater updater) returns Message|Error? {
         string? text = context.message.parts[0]?.text;
-        check updater->working();
+        check updater.working();
         if text == "ask" {
-            check updater->requireInput({messageId: "ask-1", role: ROLE_AGENT, parts: [{text: "which one?"}]});
+            check updater.requireInput({messageId: "ask-1", role: ROLE_AGENT, parts: [{text: "which one?"}]});
             return;
         }
         if text == "authorize" {
-            check updater->requireAuth({messageId: "auth-1", role: ROLE_AGENT, parts: [{text: "sign in first"}]});
+            check updater.requireAuth({messageId: "auth-1", role: ROLE_AGENT, parts: [{text: "sign in first"}]});
             return;
         }
-        check updater->complete();
+        check updater.complete();
         return;
     }
 }

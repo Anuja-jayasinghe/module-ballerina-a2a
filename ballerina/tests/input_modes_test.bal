@@ -24,7 +24,7 @@ isolated class InputModesAgent {
     *AgentExecutor;
 
     public isolated function execute(RequestContext context, TaskUpdater updater) returns Message|Error? {
-        check updater->complete();
+        check updater.complete();
         return;
     }
 }

@@ -21,9 +21,9 @@ isolated class WeatherExecutor {
 
     public isolated function execute(a2a:RequestContext context, a2a:TaskUpdater updater)
             returns a2a:Message|a2a:Error? {
-        check updater->working();
-        check updater->addArtifact([{text: "Sunny, 22°C"}]);
-        check updater->complete();
+        check updater.working();
+        check updater.addArtifact([{text: "Sunny, 22°C"}]);
+        check updater.complete();
         return;
     }
 }

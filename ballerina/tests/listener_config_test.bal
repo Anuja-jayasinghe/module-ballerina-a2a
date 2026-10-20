@@ -53,12 +53,12 @@ isolated class SilentAgent {
     public isolated function execute(RequestContext context, TaskUpdater updater)
             returns Message|Error? {
         string text = context.message.parts[0]?.text ?: "";
-        check updater->working();
+        check updater.working();
         Gate? gate = text.startsWith("hold:") ? gateFor(text.substring(5)) : ();
         if gate is Gate {
             gate.awaitStep(1);
         }
-        check updater->complete();
+        check updater.complete();
         return;
     }
 }

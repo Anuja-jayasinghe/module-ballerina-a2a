@@ -69,8 +69,8 @@ isolated class TurnRecordingAgent {
 
     public isolated function execute(RequestContext context, TaskUpdater updater) returns Message|Error? {
         string text = context.message.parts[0]?.text ?: "";
-        check updater->addArtifact([{text}]);
-        check updater->requireInput({messageId: "ask-" + text, role: ROLE_AGENT, parts: [{text: "more?"}]});
+        check updater.addArtifact([{text}]);
+        check updater.requireInput({messageId: "ask-" + text, role: ROLE_AGENT, parts: [{text: "more?"}]});
         return;
     }
 }
@@ -117,11 +117,11 @@ isolated class CancelRaceAgent {
     *AgentExecutor;
 
     public isolated function execute(RequestContext context, TaskUpdater updater) returns Message|Error? {
-        check updater->working();
+        check updater.working();
         cancelRaceGate.advanceTo(1);
         cancelRaceGate.awaitStep(2);
-        check updater->addArtifact([{text: "too late"}]);
-        check updater->complete();
+        check updater.addArtifact([{text: "too late"}]);
+        check updater.complete();
         return;
     }
 }

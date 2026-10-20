@@ -298,9 +298,9 @@ isolated class WeatherExecutor {
 
     public isolated function execute(a2a:RequestContext context, a2a:TaskUpdater updater)
             returns a2a:Message|a2a:Error? {
-        check updater->working();
-        check updater->addArtifact([{text: "Sunny, 22°C"}]);
-        check updater->complete();
+        check updater.working();
+        check updater.addArtifact([{text: "Sunny, 22°C"}]);
+        check updater.complete();
         return;
     }
 }
@@ -410,10 +410,10 @@ Declaring the service on two listeners, `isolated service on publicListener, int
 `a2a:TaskUpdater` moves a long-running task through its states from inside `execute`:
 
 ```ballerina
-check updater->working();
-check updater->addArtifact([{text: "partial result"}]);
-check updater->requireInput(promptMessage);
-check updater->complete();
+check updater.working();
+check updater.addArtifact([{text: "partial result"}]);
+check updater.requireInput(promptMessage);
+check updater.complete();
 ```
 
 `requireInput` pauses the task at `TASK_STATE_INPUT_REQUIRED`; a later message continuing the same task (see [section 7.2](#72-live-streaming-and-continuing-a-task)) runs `execute` again. Every call is persisted through the attached `a2a:TaskStore`. `requireAuth` is the same shape as `requireInput`, for a task that needs the caller to authorize.
