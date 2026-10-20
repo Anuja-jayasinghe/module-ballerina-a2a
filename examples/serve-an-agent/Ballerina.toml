@@ -4,11 +4,5 @@ name = "serve_an_agent"
 version = "0.1.0"
 distribution = "2201.13.5"
 
-[[dependency]]
-org = "ballerina"
-name = "a2a"
-version = "0.1.0"
-repository = "local"
-
 [build-options]
 observabilityIncluded = true
