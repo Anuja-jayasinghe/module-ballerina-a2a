@@ -122,7 +122,7 @@ publishing {
 // anything needs it.
 updateTomlFiles.dependsOn copyStdlibs
 
-// The package's native Java code (the blocking queue behind EventTap) is
+// The package's native Java code (the native/ module, a2a-native) is
 // declared in Ballerina.toml as a platform dependency on the jar this builds,
 // so it has to exist before the Ballerina build and its tests start.
 build.dependsOn ":a2a-native:build"
