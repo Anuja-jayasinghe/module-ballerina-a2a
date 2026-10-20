@@ -16,19 +16,19 @@ The specification defines three transport bindings. This module implements **HTT
 
 ## 1. Connecting to an agent
 
-`HttpClient` is the type to reach for. Give it an agent's base URL and it fetches the Agent Card from the well-known endpoint, confirms the agent serves HTTP+JSON, and connects.
+`RestClient` is the type to reach for. Give it an agent's base URL and it fetches the Agent Card from the well-known endpoint, confirms the agent serves HTTP+JSON, and connects.
 
 ```ballerina
 import ballerina/a2a;
 
-final a2a:HttpClient agent = check new ("https://agent.example.com");
+final a2a:RestClient agent = check new ("https://agent.example.com");
 ```
 
 Construction is where a mismatch surfaces: an unreachable agent, a card that does not parse, or a card offering no binding this module speaks all fail here rather than on the first operation.
 
-An `HttpClient` is cheap to construct and needs no teardown — there is deliberately no `close`. Prefer one long-lived client per agent over one per request.
+An `RestClient` is cheap to construct and needs no teardown — there is deliberately no `close`. Prefer one long-lived client per agent over one per request.
 
-This release implements HTTP+JSON only. When JSON-RPC and gRPC bindings land, a transport-agnostic `Client` that reads the card and picks a binding will join `HttpClient`; client code written against the operations will carry over unchanged.
+This release implements HTTP+JSON only. When JSON-RPC and gRPC bindings land, a transport-agnostic `Client` that reads the card and picks a binding will join `RestClient`; client code written against the operations will carry over unchanged.
 
 ### 1.1 Connecting from an already-resolved card
 
@@ -36,7 +36,7 @@ When you have already fetched the card — to inspect its skills before deciding
 
 ```ballerina
 a2a:AgentCard card = check a2a:resolveAgentCard("https://agent.example.com");
-final a2a:HttpClient agent = check new (card);
+final a2a:RestClient agent = check new (card);
 ```
 
 ## 2. Delegating work
@@ -138,7 +138,7 @@ stream<a2a:StreamResponse, error?> events = check agent->subscribeToTask({id: "t
 Pass `maxReconnectAttempts` to have a dropped connection resubscribe automatically:
 
 ```ballerina
-final a2a:HttpClient agent = check new ("https://agent.example.com", maxReconnectAttempts = 3);
+final a2a:RestClient agent = check new ("https://agent.example.com", maxReconnectAttempts = 3);
 ```
 
 Per specification section 3.1.6 a resubscription replays the task's current state, so no event is lost across a reconnect — only possibly repeated. Callers already have to tolerate duplicate and out-of-order status updates, so this adds no new burden.
@@ -177,7 +177,7 @@ Deletion is idempotent per specification section 3.1.10.
 OAuth2, JWT, mutual TLS, and HTTP basic or bearer are configured through `clientConfig`, which is a standard `http:ClientConfiguration`. Token exchange and refresh are handled by `ballerina/oauth2` and `ballerina/jwt` as usual:
 
 ```ballerina
-final a2a:HttpClient agent = check new ("https://agent.example.com", clientConfig = {
+final a2a:RestClient agent = check new ("https://agent.example.com", clientConfig = {
     auth: {
         tokenUrl: "https://auth.example.com/oauth2/token",
         clientId: "...",
@@ -186,7 +186,7 @@ final a2a:HttpClient agent = check new ("https://agent.example.com", clientConfi
 });
 ```
 
-`ballerina/oauth2` fetches the first token while the client is being built, so a wrong client secret or an unreachable token endpoint surfaces from `new a2a:HttpClient(...)` (and from `a2a:resolveAgentCard`) as an `a2a:InternalError` whose message names the agent and carries the token endpoint's response. It is a returned error, not a panic. A token that cannot be refreshed later fails the call that needed it.
+`ballerina/oauth2` fetches the first token while the client is being built, so a wrong client secret or an unreachable token endpoint surfaces from `new a2a:RestClient(...)` (and from `a2a:resolveAgentCard`) as an `a2a:InternalError` whose message names the agent and carries the token endpoint's response. It is a returned error, not a panic. A token that cannot be refreshed later fails the call that needed it.
 
 ### 4.2 Credentials by security-scheme name
 
@@ -198,7 +198,7 @@ final a2a:InMemoryCredentialStore store = new ({
     "apiKeyAuth": "sk-..."
 });
 
-final a2a:HttpClient agent = check new ("https://agent.example.com", credentials = store);
+final a2a:RestClient agent = check new ("https://agent.example.com", credentials = store);
 ```
 
 An agent built with this package's listener and `auth` publishes its schemes for you, named `bearerAuth` for JWT and OAuth2 entries and `basicAuth` for Basic ones ([section 7.7](#77-authenticating-callers)), so `new a2a:InMemoryCredentialStore({"bearerAuth": token})` is all such an agent needs.
@@ -391,7 +391,7 @@ An agent is a service attached to a listener, and it takes four pieces, each wit
 - **`a2a:RestListener`** is how requests reach the agent: the port, TLS, authentication, the address the card advertises, stream keep-alives. It holds no agent.
 - **The service** carries the agent card and defines the A2A operations the agent supports, each a `resource` function on the route of the HTTP+JSON binding that either runs your own code or hands its request to the handler.
 
-The listener names the binding, so the service is declared without a path: `service on new a2a:RestListener(9090)` serves HTTP+JSON under `/rest`. The card is always served at `/.well-known/agent-card.json`, with an interface URL that ends in `/rest`, so a client given only the agent's root URL, such as this module's `HttpClient`, finds the right address from the card. Further transports will arrive as their own listeners (`a2a:JsonRpcListener`, `a2a:GrpcListener`), and one agent behind several of them is published as one card listing every interface.
+The listener names the binding, so the service is declared without a path: `service on new a2a:RestListener(9090)` serves HTTP+JSON under `/rest`. The card is always served at `/.well-known/agent-card.json`, with an interface URL that ends in `/rest`, so a client given only the agent's root URL, such as this module's `RestClient`, finds the right address from the card. Further transports will arrive as their own listeners (`a2a:JsonRpcListener`, `a2a:GrpcListener`), and one agent behind several of them is published as one card listing every interface.
 
 The operations are the resources `post message\:send`, `post message\:stream`, `get tasks/[string id]/subscribe`, `get tasks/[string id]`, `get tasks`, `post tasks/[string id]/cancel`, `post tasks/[string id]/pushNotificationConfigs`, `get tasks/[string id]/pushNotificationConfigs/[string configId]`, `get tasks/[string id]/pushNotificationConfigs`, `delete tasks/[string id]/pushNotificationConfigs/[string configId]` and `get extendedAgentCard`. On the wire the cancel and subscribe routes are `tasks/{id}:cancel` and `tasks/{id}:subscribe`, as the specification names them; the listener translates, because a Ballerina path parameter cannot carry a suffix. Each resource takes its path parameters, then the operation's request record, and may take an `a2a:Context` among them: `get tasks/[string id](a2a:Context context, a2a:GetTaskRequest request)` or just `get tasks/[string id](a2a:GetTaskRequest request)`. The context says who is calling (the identity authentication established, the tenant, the headers); leave it out when the operation doesn't need it. A service must define `post message\:send`. An operation it does not define answers `UnsupportedOperationError` (`PushNotificationNotSupportedError` for the push operations). Streaming is one capability and push notifications another, so each group is all or nothing: `message\:stream` with `subscribe`, and the four push operations together.
 

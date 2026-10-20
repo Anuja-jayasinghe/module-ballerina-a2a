@@ -109,7 +109,7 @@ function testTlsListenerAdvertisesHttps() returns error? {
 function testClientFollowsATlsCardToACompletedTask() returns error? {
     // The interop failure: a client built from the https URL follows the card
     // and used to fail on an http URL for a TLS port.
-    HttpClient c = check new (string `https://localhost:${TLS_URL_TEST_PORT}`, clientConfig = {
+    RestClient c = check new (string `https://localhost:${TLS_URL_TEST_PORT}`, clientConfig = {
         secureSocket: {cert: TEST_CERT}
     });
     Task|Message result = check c->sendMessage({

@@ -15,7 +15,7 @@
 // under the License.
 
 // A refused or unreachable OAuth2 token endpoint must reach the caller of
-// `HttpClient` and `resolveAgentCard` as a typed `a2a:Error`, never as a panic.
+// `RestClient` and `resolveAgentCard` as a typed `a2a:Error`, never as a panic.
 //
 // `ballerina/oauth2` fetches the first token while the `http:Client` is being
 // built and panics on failure; without the trap in `newHttpClient` a mistyped
@@ -68,8 +68,8 @@ function cardAt(string url) returns AgentCard => {
 };
 
 @test:Config {}
-function testHttpClientRefusedTokenIsATypedError() returns error? {
-    HttpClient|Error c = new (cardAt(tokenStubUrl), clientConfig = oauthConfig(tokenStubUrl + "/token", "wrong-secret"));
+function testRestClientRefusedTokenIsATypedError() returns error? {
+    RestClient|Error c = new (cardAt(tokenStubUrl), clientConfig = oauthConfig(tokenStubUrl + "/token", "wrong-secret"));
     test:assertTrue(c is InternalError, "a refused token request must be a returned error, not a panic");
     if c is Error {
         test:assertTrue(c.message().includes("could not create the HTTP client"), c.message());
@@ -78,16 +78,16 @@ function testHttpClientRefusedTokenIsATypedError() returns error? {
 }
 
 @test:Config {}
-function testHttpClientUnreachableTokenEndpointIsATypedError() returns error? {
-    HttpClient|Error c = new (cardAt(tokenStubUrl), clientConfig = oauthConfig("http://localhost:1/token", "right-secret"));
+function testRestClientUnreachableTokenEndpointIsATypedError() returns error? {
+    RestClient|Error c = new (cardAt(tokenStubUrl), clientConfig = oauthConfig("http://localhost:1/token", "right-secret"));
     test:assertTrue(c is InternalError, "an unreachable token endpoint must be a returned error, not a panic");
 }
 
 @test:Config {}
-function testHttpClientFromUrlRefusedTokenIsATypedError() returns error? {
+function testRestClientFromUrlRefusedTokenIsATypedError() returns error? {
     // Given a URL rather than a card, the card is resolved first, through a
     // second http:Client built from the same configuration.
-    HttpClient|Error c = new (tokenStubUrl, clientConfig = oauthConfig(tokenStubUrl + "/token", "wrong-secret"));
+    RestClient|Error c = new (tokenStubUrl, clientConfig = oauthConfig(tokenStubUrl + "/token", "wrong-secret"));
     test:assertTrue(c is InternalError, "the discovery client's failure must be typed too");
 }
 
@@ -99,10 +99,10 @@ function testResolveAgentCardRefusedTokenIsATypedError() returns error? {
 }
 
 @test:Config {}
-function testHttpClientRightSecretStillConstructs() returns error? {
+function testRestClientRightSecretStillConstructs() returns error? {
     // The happy path, so the trap is not swallowing a working configuration.
-    HttpClient c = check new (cardAt(tokenStubUrl), clientConfig = oauthConfig(tokenStubUrl + "/token", "right-secret"));
-    test:assertTrue(c is HttpClient);
+    RestClient c = check new (cardAt(tokenStubUrl), clientConfig = oauthConfig(tokenStubUrl + "/token", "right-secret"));
+    test:assertTrue(c is RestClient);
     AgentCard card = check resolveAgentCard(tokenStubUrl,
             clientConfig = oauthConfig(tokenStubUrl + "/token", "right-secret"));
     test:assertEquals(card.name, "n");

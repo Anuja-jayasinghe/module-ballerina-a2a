@@ -209,7 +209,7 @@ isolated function sendGuardedMessage(int port, string authorization, string text
     return taskJson.cloneWithType(Task);
 }
 
-isolated function guardedClient(int port, string authorization) returns HttpClient|error =>
+isolated function guardedClient(int port, string authorization) returns RestClient|error =>
     new (string `http://localhost:${port}`, headers = {"Authorization": authorization});
 
 // ---- the card, and rejection --------------------------------------------
@@ -334,11 +334,11 @@ function testAuthScopesTasksToTheAuthenticatedIdentity() returns error? {
 
     Task created = check sendGuardedMessage(JWT_AUTH_TEST_PORT, alice, "alice's task");
 
-    HttpClient aliceClient = check guardedClient(JWT_AUTH_TEST_PORT, alice);
+    RestClient aliceClient = check guardedClient(JWT_AUTH_TEST_PORT, alice);
     Task fetched = check aliceClient->getTask({id: created.id});
     test:assertEquals(fetched.id, created.id, "the owner must see their own task");
 
-    HttpClient bobClient = check guardedClient(JWT_AUTH_TEST_PORT, bob);
+    RestClient bobClient = check guardedClient(JWT_AUTH_TEST_PORT, bob);
     Task|Error bobGet = bobClient->getTask({id: created.id});
     test:assertTrue(bobGet is TaskNotFoundError,
             "another caller must get TaskNotFound, which does not reveal the task exists");
@@ -402,7 +402,7 @@ function testAuthOAuth2IntrospectionActiveTokenIsAccepted() returns error? {
 
     // The identity comes from the introspection response's `sub`.
     Task created = check sendGuardedMessage(OAUTH2_AUTH_TEST_PORT, "Bearer opaque-good", "carol's task");
-    HttpClient carol = check guardedClient(OAUTH2_AUTH_TEST_PORT, "Bearer opaque-good");
+    RestClient carol = check guardedClient(OAUTH2_AUTH_TEST_PORT, "Bearer opaque-good");
     Task fetched = check carol->getTask({id: created.id});
     test:assertEquals(fetched.id, created.id);
 }

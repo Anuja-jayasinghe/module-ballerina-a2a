@@ -98,7 +98,7 @@ function startAuthErrorServers() returns error? {
     check resolverErrorListener.attach(new FullService(resolverErrorHandler, authTestCard), "rest");
 }
 
-isolated function stubClient(int port) returns HttpClient|error {
+isolated function stubClient(int port) returns RestClient|error {
     AgentCard card = {
         name: "Stub",
         description: "A stand-in for a protected agent",
@@ -155,7 +155,7 @@ function testOtherStatusesAreUnchangedByTheAuthMapping() {
 
 @test:Config {}
 function testClientTypesAPlainProxyStyle401And403() returns error? {
-    HttpClient c = check stubClient(STATUS_STUB_PORT);
+    RestClient c = check stubClient(STATUS_STUB_PORT);
     Task|Error plain401 = c->getTask({id: "plain-401"});
     test:assertTrue(plain401 is AuthenticationError, "a bare 401, as a gateway sends it, must be typed");
     Task|Error plain403 = c->getTask({id: "plain-403"});
@@ -166,7 +166,7 @@ function testClientTypesAPlainProxyStyle401And403() returns error? {
 
 @test:Config {}
 function testClientKeepsTheChallengesOnA401() returns error? {
-    HttpClient c = check stubClient(STATUS_STUB_PORT);
+    RestClient c = check stubClient(STATUS_STUB_PORT);
     Task|Error result = c->getTask({id: "challenged"});
     test:assertTrue(result is AuthenticationError);
     if result is Error {
@@ -177,7 +177,7 @@ function testClientKeepsTheChallengesOnA401() returns error? {
 
 @test:Config {}
 function testClientTypesAnA2aBodyedRejectionAndKeepsItsMessage() returns error? {
-    HttpClient c = check stubClient(STATUS_STUB_PORT);
+    RestClient c = check stubClient(STATUS_STUB_PORT);
     Task|Error expired = c->getTask({id: "reason-401"});
     test:assertTrue(expired is AuthenticationError);
     test:assertEquals((<Error>expired).message(), "token expired at 10:00");
@@ -197,7 +197,7 @@ function testAProtectedCardIsAnAuthenticationError() returns error? {
 
 @test:Config {}
 function testEveryOperationTypesAMissingCredential() returns error? {
-    HttpClient c = check new (string `http://localhost:${JWT_AUTH_TEST_PORT}`);
+    RestClient c = check new (string `http://localhost:${JWT_AUTH_TEST_PORT}`);
     SendMessageRequest request = {message: {messageId: "m-typed", role: ROLE_USER, parts: [{text: "hi"}]}};
 
     Task|Message|Error sent = c->sendMessage(request);
@@ -223,7 +223,7 @@ function testEveryOperationTypesAMissingCredential() returns error? {
 @test:Config {}
 function testAMissingScopeIsAnAuthorizationError() returns error? {
     string readOnly = check bearerToken("alice-typed", scope = "a2a:read");
-    HttpClient c = check new (string `http://localhost:${SCOPED_AUTH_TEST_PORT}`,
+    RestClient c = check new (string `http://localhost:${SCOPED_AUTH_TEST_PORT}`,
         credentials = new InMemoryCredentialStore({"bearerAuth": readOnly}));
     ListTasksResponse|Error result = c->listTasks({});
     test:assertTrue(result is AuthorizationError, "the credential is valid but the scope is not enough");
@@ -234,7 +234,7 @@ function testAMissingScopeIsAnAuthorizationError() returns error? {
     test:assertEquals((<Error>result).detail()?.data, {"requiredScopes": "a2a:write"});
 
     string writer = check bearerToken("alice-typed", scope = "a2a:write");
-    HttpClient ok = check new (string `http://localhost:${SCOPED_AUTH_TEST_PORT}`,
+    RestClient ok = check new (string `http://localhost:${SCOPED_AUTH_TEST_PORT}`,
         credentials = new InMemoryCredentialStore({"bearerAuth": writer}));
     ListTasksResponse _ = check ok->listTasks({});
 }
@@ -242,7 +242,7 @@ function testAMissingScopeIsAnAuthorizationError() returns error? {
 @test:Config {}
 function testAWrongCredentialIsAnAuthenticationErrorNotAnAuthorizationError() returns error? {
     string forged = check bearerToken("mallory", secret = "another-secret-another-secret-0123456");
-    HttpClient c = check new (string `http://localhost:${JWT_AUTH_TEST_PORT}`,
+    RestClient c = check new (string `http://localhost:${JWT_AUTH_TEST_PORT}`,
         credentials = new InMemoryCredentialStore({"bearerAuth": forged}));
     Task|Error result = c->getTask({id: "t1"});
     test:assertTrue(result is AuthenticationError);
@@ -269,13 +269,13 @@ function testAResolverCanAnswer401And403() returns error? {
 
 @test:Config {}
 function testTheTwoTypesRoundTripThroughClientAndServer() returns error? {
-    HttpClient unauth = check new (string `http://localhost:${RESOLVER_ERROR_TEST_PORT}`,
+    RestClient unauth = check new (string `http://localhost:${RESOLVER_ERROR_TEST_PORT}`,
         headers = {"X-Test-Fail": "401"});
     ListTasksResponse|Error a = unauth->listTasks({});
     test:assertTrue(a is AuthenticationError, "what the server sends as 401 the client types as AuthenticationError");
     test:assertEquals((<Error>a).message(), "token could not be verified");
 
-    HttpClient forbidden = check new (string `http://localhost:${RESOLVER_ERROR_TEST_PORT}`,
+    RestClient forbidden = check new (string `http://localhost:${RESOLVER_ERROR_TEST_PORT}`,
         headers = {"X-Test-Fail": "403"});
     ListTasksResponse|Error z = forbidden->listTasks({});
     test:assertTrue(z is AuthorizationError);

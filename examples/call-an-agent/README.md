@@ -59,6 +59,6 @@ bal run -- -CagentUrl=http://localhost:9999
 
 - **Agent discovery**: `resolveAgentCard` fetches and parses the target's
   card.
-- **`HttpClient`**: Constructed directly from the already resolved card.
+- **`RestClient`**: Constructed directly from the already resolved card.
 - **Reply handling**: `sendMessage` returns either a `Message` or a `Task`;
   both are matched explicitly.

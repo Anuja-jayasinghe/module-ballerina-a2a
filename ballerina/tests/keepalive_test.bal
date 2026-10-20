@@ -177,7 +177,7 @@ function testKeepAlivesDoNotDefeatTheIdleBackstop() returns error? {
 function testTheTypedClientReadsThroughKeepAliveFrames() returns error? {
     Gate gate = new;
     registerGate("ka-client", gate);
-    HttpClient c = check new (string `http://localhost:${KEEPALIVE_TEST_PORT}`);
+    RestClient c = check new (string `http://localhost:${KEEPALIVE_TEST_PORT}`);
     stream<StreamResponse, Error?> events = check c->sendStreamingMessage({
         message: {messageId: "ka-client-1", role: ROLE_USER, parts: [{text: "hold:ka-client"}]}
     });

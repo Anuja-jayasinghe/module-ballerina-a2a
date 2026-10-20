@@ -259,7 +259,7 @@ function startPlainFormListener() returns error? {
 
 @test:Config {}
 function testAnOperationMayOmitTheContext() returns error? {
-    HttpClient viaPlain = check new (string `http://localhost:${PLAIN_FORM_PORT}`);
+    RestClient viaPlain = check new (string `http://localhost:${PLAIN_FORM_PORT}`);
     Message|Task sent = check viaPlain->sendMessage({
         message: {messageId: "m-plain", role: ROLE_USER, parts: [{text: "no context needed"}]}
     });
@@ -412,8 +412,8 @@ isolated service on declarativeListenerA, declarativeListenerB {
 
 @test:Config {}
 function testDeclarativeServiceOnTwoListenersSharesOneHandler() returns error? {
-    HttpClient viaA = check new (string `http://localhost:${DECLARATIVE_PORT_A}`);
-    HttpClient viaB = check new (string `http://localhost:${DECLARATIVE_PORT_B}`);
+    RestClient viaA = check new (string `http://localhost:${DECLARATIVE_PORT_A}`);
+    RestClient viaB = check new (string `http://localhost:${DECLARATIVE_PORT_B}`);
 
     Message|Task sent = check viaA->sendMessage({
         message: {messageId: "m-declarative", role: ROLE_USER, parts: [{text: "hello"}]}
@@ -470,7 +470,7 @@ function startCustomRegistryListener() returns error? {
 
 @test:Config {}
 function testHandlerUsesTheConfiguredEventRegistry() returns error? {
-    HttpClient agentClient = check new (string `http://localhost:${CUSTOM_REGISTRY_PORT}`);
+    RestClient agentClient = check new (string `http://localhost:${CUSTOM_REGISTRY_PORT}`);
     int before = countingRegistry.acquireCount();
     Message|Task _ = check agentClient->sendMessage({
         message: {messageId: "m-registry", role: ROLE_USER, parts: [{text: "hello"}]}

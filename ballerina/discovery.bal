@@ -19,7 +19,7 @@
 // against.
 //
 // The client itself, and the transport marshaling, live with the binding
-// that owns them: http_client.bal.
+// that owns them: rest_client.bal.
 
 import ballerina/http;
 

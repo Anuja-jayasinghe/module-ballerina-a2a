@@ -72,7 +72,7 @@ function startShortTimeoutServer() returns error? {
 function testListenerAppliesTheCallersHttpTimeout() returns error? {
     Gate gate = new;
     registerGate("listener-config-silent", gate);
-    HttpClient c = check new (listenerConfigServerUrl);
+    RestClient c = check new (listenerConfigServerUrl);
 
     time:Utc started = time:utcNow();
     stream<StreamResponse, Error?> events = check c->sendStreamingMessage({

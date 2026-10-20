@@ -162,7 +162,7 @@ function testNoAuthDerivesNothing() returns error? {
 @test:Config {}
 function testClientAuthenticatesFromTheDerivedCard() returns error? {
     string token = check bearerToken("alice-discovery");
-    HttpClient c = check new (string `http://localhost:${JWT_AUTH_TEST_PORT}`,
+    RestClient c = check new (string `http://localhost:${JWT_AUTH_TEST_PORT}`,
         credentials = new InMemoryCredentialStore({"bearerAuth": token}));
 
     Task|Message reply = check c->sendMessage({
@@ -187,7 +187,7 @@ function testClientResolvesTheDerivedCardIntoTypedSchemes() returns error? {
 
 @test:Config {}
 function testClientWithoutTheCredentialIsRejected() returns error? {
-    HttpClient c = check new (string `http://localhost:${JWT_AUTH_TEST_PORT}`);
+    RestClient c = check new (string `http://localhost:${JWT_AUTH_TEST_PORT}`);
     Task|Message|Error result = c->sendMessage({
         message: {messageId: "m-anon", role: ROLE_USER, parts: [{text: "hello"}]}
     });

@@ -366,7 +366,7 @@ isolated function buildQueryString(map<string> queryParams) returns string|Error
     return "?" + string:'join("&", ...queryParts);
 }
 
-# Configuration for an `a2a:HttpClient`, passed as included record fields:
+# Configuration for an `a2a:RestClient`, passed as included record fields:
 # `check new ("https://agent.example.com", tenant = "acme", maxReconnectAttempts = 3)`.
 public type ClientConfiguration record {|
     # Full `http:ClientConfiguration` — auth, TLS, retry, circuit breaker,
@@ -400,7 +400,7 @@ public type ClientConfiguration record {|
 # rather than at the first call.
 #
 # ```ballerina
-# a2a:HttpClient agent = check new ("https://agent.example.com");
+# a2a:RestClient agent = check new ("https://agent.example.com");
 # a2a:Task|a2a:Message reply = check agent->sendMessage({message: msg});
 # ```
 #
@@ -413,7 +413,7 @@ public type ClientConfiguration record {|
 #
 # Each method's `+ return` names the `a2a:Error` subtype a protocol failure
 # produces; a transport or decode failure comes back as `a2a:InternalError`.
-public isolated client class HttpClient {
+public isolated client class RestClient {
     *Client;
 
     private final http:Client httpClient;
@@ -1007,7 +1007,7 @@ isolated function challengesOf(http:Response resp) returns string[] {
 # `new http:Client` has no error return for a failure inside an auth handler,
 # so it panics: `ballerina/oauth2` fetches the first token while the client is
 # being built and panics when the token endpoint refuses the client or cannot
-# be reached. A caller of `a2a:HttpClient` or `a2a:resolveAgentCard` is
+# be reached. A caller of `a2a:RestClient` or `a2a:resolveAgentCard` is
 # promised a typed `a2a:Error` for that, so the panic is trapped here, at the
 # one place it can occur. The upstream message is folded into the new one,
 # which is where the token endpoint's response is reported.

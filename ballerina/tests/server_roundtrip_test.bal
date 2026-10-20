@@ -161,7 +161,7 @@ function startEchoServer() returns error? {
     check extendedCardListener.attach(new ExtendedService(extendedCardHandler, extendedCardHandlerCard), "rest");
 }
 
-isolated function echoClient() returns HttpClient|error => new (serverUrl);
+isolated function echoClient() returns RestClient|error => new (serverUrl);
 
 @test:Config {}
 function testServerServesAgentCardForClientDiscovery() returns error? {
@@ -1280,7 +1280,7 @@ function testServerRoundTripGetExtendedAgentCardWhenConfigured() returns error? 
     // The extended card is for authenticated callers (section 13.3), so the
     // listener carrying it is configured with `auth` and the client presents a token.
     string token = check bearerToken("alice");
-    HttpClient c = check new (extendedCardServerUrl, headers = {"Authorization": "Bearer " + token});
+    RestClient c = check new (extendedCardServerUrl, headers = {"Authorization": "Bearer " + token});
     AgentCard extended = check c->getExtendedAgentCard();
     test:assertEquals(extended.name, "Echo Agent (extended)");
     test:assertEquals(extended.skills.length(), 2, "the extended card reveals the internal-only skill too");
@@ -1291,7 +1291,7 @@ function testServerRoundTripGetExtendedAgentCardWhenConfigured() returns error? 
     // public card's own capabilities.streaming/pushNotifications are, not left at
     // that placeholder. Left undone, a client that follows specification 13.3's own
     // "replace your held card with the extended one" and then checks capabilities
-    // locally (as this library's own HttpClient does) would refuse operations the
+    // locally (as this library's own RestClient does) would refuse operations the
     // server actually supports.
     test:assertEquals(extended.capabilities.streaming, true,
             "the extended card's capabilities must be derived, not left at the developer's placeholder");
@@ -1534,7 +1534,7 @@ isolated function sendAsOwner(http:Client raw, string owner, string text) return
     return taskJson.cloneWithType(Task);
 }
 
-isolated function httpClientAs(string owner) returns HttpClient|error =>
+isolated function httpClientAs(string owner) returns RestClient|error =>
     new (ownerScopedServerUrl, headers = {"X-Test-Owner": owner});
 
 @test:Config {}
@@ -1542,11 +1542,11 @@ function testOwnerScopedGetTaskHiddenFromDifferentOwner() returns error? {
     http:Client raw = check ownerScopedRawClient();
     Task created = check sendAsOwner(raw, "alice", "alice's task");
 
-    HttpClient aliceClient = check httpClientAs("alice");
+    RestClient aliceClient = check httpClientAs("alice");
     Task fetchedByAlice = check aliceClient->getTask({id: created.id});
     test:assertEquals(fetchedByAlice.id, created.id, "the owner must be able to fetch their own task");
 
-    HttpClient bobClient = check httpClientAs("bob");
+    RestClient bobClient = check httpClientAs("bob");
     Task|Error fetchedByBob = bobClient->getTask({id: created.id});
     test:assertTrue(fetchedByBob is TaskNotFoundError,
             "a different owner must see TaskNotFoundError, not the task or a distinct 'forbidden' error");
@@ -1557,7 +1557,7 @@ function testOwnerScopedCancelAndSubscribeHiddenFromDifferentOwner() returns err
     http:Client raw = check ownerScopedRawClient();
     Task created = check sendAsOwner(raw, "alice", "cancel and subscribe me");
 
-    HttpClient bobClient = check httpClientAs("bob");
+    RestClient bobClient = check httpClientAs("bob");
 
     Task|Error canceled = bobClient->cancelTask({id: created.id});
     test:assertTrue(canceled is TaskNotFoundError,
@@ -1575,7 +1575,7 @@ function testOwnerScopedListTasksShowsOnlyOwnTasks() returns error? {
     Task _ = check sendAsOwner(raw, "alice-list", "alice item two");
     Task _ = check sendAsOwner(raw, "bob-list", "bob item one");
 
-    HttpClient aliceClient = check httpClientAs("alice-list");
+    RestClient aliceClient = check httpClientAs("alice-list");
     ListTasksResponse aliceView = check aliceClient->listTasks({pageSize: 10});
     test:assertEquals(aliceView.totalSize, 2, "alice must see exactly her own two tasks, not bob's");
 }
@@ -1712,7 +1712,7 @@ function startPushNotificationServer() returns error? {
 
 @test:Config {}
 function testServerRoundTripPushNotificationDeliveryOnCompletion() returns error? {
-    HttpClient c = check new (pushNotificationServerUrl);
+    RestClient c = check new (pushNotificationServerUrl);
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "notify me"}]},
         configuration: {taskPushNotificationConfig: {url: testWebhookUrl}}
@@ -1746,7 +1746,7 @@ function testServerRoundTripPushNotificationDeliveryOnFailure() returns error? {
     // blocking call, by contrast, only ever returns the bare Error "boom"
     // produces, which carries no task id at all, exactly like a real
     // caller has no way to identify which task to check either.
-    HttpClient c = check new (pushNotificationServerUrl);
+    RestClient c = check new (pushNotificationServerUrl);
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m-boom", role: ROLE_USER, parts: [{text: "boom"}]},
         configuration: {taskPushNotificationConfig: {url: testWebhookUrl}, returnImmediately: true}
@@ -1769,7 +1769,7 @@ function testServerRoundTripBlockingSendPushNotificationDeliveryOnFailure() retu
     // carries no task id at all (real callers have the same problem), so
     // this is found by the triggering message's own id in the resulting
     // task's history instead.
-    HttpClient c = check new (pushNotificationServerUrl);
+    RestClient c = check new (pushNotificationServerUrl);
     Task|Message|Error result = c->sendMessage({
         message: {messageId: "m-boom-blocking", role: ROLE_USER, parts: [{text: "boom"}]},
         configuration: {taskPushNotificationConfig: {url: testWebhookUrl}}
@@ -1793,7 +1793,7 @@ function testServerRoundTripSendMessageDoesNotBlockOnPushNotificationDelivery() 
     // directly: a receiver that deliberately takes SLOW_WEBHOOK_DELAY
     // (1.5s) to answer must not add anything close to that to how long
     // sendMessage itself takes.
-    HttpClient c = check new (pushNotificationServerUrl);
+    RestClient c = check new (pushNotificationServerUrl);
     time:Utc before = time:utcNow();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "slow-webhook-1", role: ROLE_USER, parts: [{text: "notify me"}]},
@@ -1810,7 +1810,7 @@ function testServerRoundTripSendMessageDoesNotBlockOnPushNotificationDelivery() 
 }
 
 // Polls until the task in `contextId` reaches `want`, and returns its id.
-isolated function awaitTaskInState(HttpClient c, string contextId, TaskState want) returns string|error {
+isolated function awaitTaskInState(RestClient c, string contextId, TaskState want) returns string|error {
     foreach int _ in 0 ..< 250 {
         ListTasksResponse page = check c->listTasks({contextId});
         foreach Task t in page.tasks {
@@ -1832,7 +1832,7 @@ isolated function awaitTaskInState(HttpClient c, string contextId, TaskState wan
 // CANCELED one.
 @test:Config {}
 function testServerRoundTripCancelDuringABlockingSendReportsCanceledAndNotifiesOnce() returns error? {
-    HttpClient c = check new (pushNotificationServerUrl);
+    RestClient c = check new (pushNotificationServerUrl);
     Gate gate = new;
     registerGate("hold-blocking", gate);
     _ = takeWebhookHistory();
@@ -1866,7 +1866,7 @@ function testServerRoundTripCancelDuringABlockingSendReportsCanceledAndNotifiesO
 // on the drive: the webhook must still receive one CANCELED and nothing after.
 @test:Config {}
 function testServerRoundTripCancelDuringADetachedDriveNeverSendsAStaleWebhook() returns error? {
-    HttpClient c = check new (pushNotificationServerUrl);
+    RestClient c = check new (pushNotificationServerUrl);
     Gate gate = new;
     registerGate("hold-detached", gate);
     _ = takeWebhookHistory();
@@ -1903,7 +1903,7 @@ function testServerRoundTripCancelClosesLiveSubscriberStream() returns error? {
     // deterministic, non-racing way to get a non-terminal task a live
     // subscriber can attach to and this test can then cancel out from
     // under it.
-    HttpClient c = check new (pushNotificationServerUrl);
+    RestClient c = check new (pushNotificationServerUrl);
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m3", role: ROLE_USER, parts: [{text: "pause"}]}
     });
@@ -1928,7 +1928,7 @@ function testServerRoundTripCancelClosesLiveSubscriberStream() returns error? {
 
 @test:Config {}
 function testServerRoundTripPushNotificationDeliveryOnCancel() returns error? {
-    HttpClient c = check new (pushNotificationServerUrl);
+    RestClient c = check new (pushNotificationServerUrl);
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m2", role: ROLE_USER, parts: [{text: "pause"}]}
     });
@@ -2048,7 +2048,7 @@ function startExtensionsServer() returns error? {
 
 @test:Config {}
 function testServerRoundTripRequiredExtensionRejectsUndeclaredClient() returns error? {
-    HttpClient c = check new (extensionsServerUrl);
+    RestClient c = check new (extensionsServerUrl);
     Task|Message|Error result = c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hello"}]}
     });
@@ -2061,7 +2061,7 @@ function testServerRoundTripRequiredExtensionAcceptsDeclaredClient() returns err
     // The card also declares a second, non-required extension this
     // client never declares support for -- only required: true is
     // enforced, so that alone must not block the request either.
-    HttpClient c = check new (extensionsServerUrl, requestedExtensions = [REQUIRED_EXTENSION_URI]);
+    RestClient c = check new (extensionsServerUrl, requestedExtensions = [REQUIRED_EXTENSION_URI]);
     Task|Message|Error result = c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hello"}]}
     });

@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// HttpClient: the transport-specific client for the HTTP+JSON binding.
+// RestClient: the transport-specific client for the HTTP+JSON binding.
 //
 // As with jsonrpc_client_test.bal, these exercise the class directly.
 // What is distinctive about this binding is the marshaling — an operation
@@ -26,9 +26,9 @@ import ballerina/test;
 @test:Config {}
 function testRestClientConstructsFromUrl() returns error? {
     setNextRestResponse({task: defaultTaskJson()});
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Task|Message result = check c->sendMessage({message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]}});
-    test:assertTrue(result is Task, "a HttpClient built from a URL should resolve the card and reach the mock");
+    test:assertTrue(result is Task, "a RestClient built from a URL should resolve the card and reach the mock");
 }
 
 @test:Config {}
@@ -36,7 +36,7 @@ function testRestClientConnectionFailureWrapsAsA2AInternalError() {
     // Constructing from a bare URL resolves the AgentCard first (see
     // resolveAgentCard/fetchAgentCardBody, discovery.bal), so an unreachable
     // host fails right here rather than at a later remote call.
-    HttpClient|error result = new ("http://localhost:1");
+    RestClient|error result = new ("http://localhost:1");
     test:assertTrue(result is InternalError,
             "a real connection failure should surface as a typed InternalError, not a bare error");
 }
@@ -45,7 +45,7 @@ function testRestClientConnectionFailureWrapsAsA2AInternalError() {
 function testRestClientConstructsFromAgentCard() returns error? {
     AgentCard card = check resolveAgentCard(getServerBaseUrl());
     setNextRestResponse({task: defaultTaskJson()});
-    HttpClient c = check new (card);
+    RestClient c = check new (card);
     Task|Message result = check c->sendMessage({message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]}});
     test:assertTrue(result is Task);
 }
@@ -61,7 +61,7 @@ function testRestClientRejectsCardWithoutRestInterface() {
         defaultInputModes: ["text"],
         defaultOutputModes: ["text"]
     };
-    HttpClient|error result = new (card);
+    RestClient|error result = new (card);
     test:assertTrue(result is error,
             "a card declaring no HTTP+JSON interface must fail construction");
 }
@@ -82,7 +82,7 @@ function testRestClientStripsTrailingSlashFromInterfaceUrl() returns error? {
         defaultOutputModes: ["text"]
     };
     setNextRestResponse({task: defaultTaskJson()});
-    HttpClient c = check new (card);
+    RestClient c = check new (card);
     Task|Message result = check c->sendMessage({message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]}});
     test:assertTrue(result is Task);
     test:assertEquals(getLastRestRequest().path, "/message:send",
@@ -103,7 +103,7 @@ function testRestClientRejectsV03Card() {
         defaultInputModes: ["text"],
         defaultOutputModes: ["text"]
     };
-    HttpClient|error result = new (card);
+    RestClient|error result = new (card);
     test:assertTrue(result is VersionNotSupportedError,
             "a card resolving to v0.3 must be rejected with a typed error, since this library implements v0.3 over JSON-RPC only");
 }
@@ -112,7 +112,7 @@ function testRestClientRejectsV03Card() {
 // method and a templated path, rather than a method name in a body.
 @test:Config {}
 function testRestClientMapsOperationsToMethodAndPath() returns error? {
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
 
     setNextRestResponse(defaultTaskJson());
     Task _ = check c->getTask({id: "task-123"});
@@ -163,7 +163,7 @@ function testRestClientMapsOperationsToMethodAndPath() returns error? {
 // with "ListTasks response did not match the expected shape".
 @test:Config {}
 function testRestClientTreatsNullTasksAsEmpty() returns error? {
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     setNextRestResponse({tasks: null, nextPageToken: "", pageSize: 0, totalSize: 0});
     ListTasksResponse result = check c->listTasks();
     test:assertEquals(result.tasks, []);
@@ -177,7 +177,7 @@ function testRestClientTreatsNullTasksAsEmpty() returns error? {
 // "ListTasks response did not match the expected shape".
 @test:Config {}
 function testRestClientDefaultsOmittedListTasksFieldsToZeroValue() returns error? {
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     setNextRestResponse({tasks: [defaultTaskJson()]});
     ListTasksResponse result = check c->listTasks();
     test:assertEquals(result.nextPageToken, "");
@@ -190,7 +190,7 @@ function testRestClientDefaultsOmittedListTasksFieldsToZeroValue() returns error
 // field but `tasks` (itself normalized separately, finding 24) absent.
 @test:Config {}
 function testRestClientDecodesEmptyListTasksObject() returns error? {
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     setNextRestResponse({});
     ListTasksResponse result = check c->listTasks();
     test:assertEquals(result.tasks, []);
@@ -207,7 +207,7 @@ function testRestClientDecodesEmptyListTasksObject() returns error? {
 // expects real content and the body has none it could parse.
 @test:Config {}
 function testRestClientRejectsUnparseableTwoxxBody() returns error? {
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     setNextRestResponseRaw("<html><body>Bad Gateway</body></html>", contentType = "text/html");
     ListTaskPushNotificationConfigsResponse|Error result = c->listTaskPushNotificationConfigs({taskId: "task-1"});
     test:assertTrue(result is InvalidAgentResponseError,
@@ -218,7 +218,7 @@ function testRestClientRejectsUnparseableTwoxxBody() returns error? {
 // wire, so it alone tolerates an absent/unparseable body on a 2xx.
 @test:Config {}
 function testRestClientDeleteToleratesUnparseableEmptyBody() returns error? {
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     setNextRestResponseRaw("", contentType = "text/plain");
     Error? result = c->deleteTaskPushNotificationConfig({taskId: "task-1", id: "cfg-1"});
     test:assertTrue(result is (), "DELETE's empty-body success must still be tolerated");
@@ -230,7 +230,7 @@ function testRestClientDeleteToleratesUnparseableEmptyBody() returns error? {
 // clients already read a conforming server this leniently.
 @test:Config {}
 function testRestClientAcceptsNullHistoryAndMetadataOnATask() returns error? {
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     json taskJson = defaultTaskJson();
     map<json> withNulls = <map<json>>taskJson.clone();
     withNulls["history"] = null;
@@ -243,7 +243,7 @@ function testRestClientAcceptsNullHistoryAndMetadataOnATask() returns error? {
 
 @test:Config {}
 function testRestClientAcceptsIntegerTaskState() returns error? {
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     map<json> taskWithIntState = <map<json>>defaultTaskJson().clone();
     map<json> status = <map<json>>(<map<json>>taskWithIntState["status"]).clone();
     status["state"] = 3; // TASK_STATE_COMPLETED's ordinal
@@ -256,7 +256,7 @@ function testRestClientAcceptsIntegerTaskState() returns error? {
 // A tenant becomes a path prefix on this binding, not just a body field.
 @test:Config {}
 function testRestClientPrefixesPathWithTenant() returns error? {
-    HttpClient c = check new (getServerBaseUrl(), tenant = "acme-corp");
+    RestClient c = check new (getServerBaseUrl(), tenant = "acme-corp");
     setNextRestResponse(defaultTaskJson());
     Task _ = check c->getTask({id: "task-1"});
     test:assertEquals(getLastRestRequest().path, "/acme-corp/tasks/task-1");
@@ -267,7 +267,7 @@ function testRestClientPrefixesPathWithTenant() returns error? {
 // default, before any server has ever rejected it.
 @test:Config {}
 function testRestClientSendsSpecContentTypeByDefault() returns error? {
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     setNextRestResponse(defaultTaskJson());
     Task _ = check c->getTask({id: "task-1"});
     test:assertEquals(getLastRestHeaders()["content-type"], "application/a2a+json");
@@ -280,7 +280,7 @@ function testRestClientSendsSpecContentTypeByDefault() returns error? {
 // rather than surfacing the 415 to the caller.
 @test:Config {}
 function testRestClientNegotiatesLegacyContentTypeOn415() returns error? {
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     // setNextRestResponse replaces the whole mock script record, so it
     // must be called before setRestRejectContentType, not after -- same
     // ordering already required by setRestRejectMethod's own callers.
@@ -297,7 +297,7 @@ function testRestClientNegotiatesLegacyContentTypeOn415() returns error? {
 // pay a 415 round trip on every single request forever.
 @test:Config {}
 function testRestClientRemembersNegotiatedContentTypeAcrossCalls() returns error? {
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     setNextRestResponse(defaultTaskJson());
     setRestRejectContentType("application/a2a+json", 415);
     Task _ = check c->getTask({id: "task-1"});
@@ -317,7 +317,7 @@ function testRestClientRemembersNegotiatedContentTypeAcrossCalls() returns error
 // 400 — so the ErrorInfo reason field carries the discrimination.
 @test:Config {}
 function testRestClientMapsErrorInfoReasonToTypedError() returns error? {
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     setNextRestResponse({
         'error: {
             code: 404,
@@ -332,7 +332,7 @@ function testRestClientMapsErrorInfoReasonToTypedError() returns error? {
 
 @test:Config {}
 function testRestClientStreams() returns error? {
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     setNextRestSseResponse([
         {data: string `{"task":{"id":"task-s1","status":{"state":"TASK_STATE_SUBMITTED"}}}`},
         {data: string `{"statusUpdate":{"taskId":"task-s1","contextId":"ctx-1","status":{"state":"TASK_STATE_COMPLETED"}}}`}
@@ -349,7 +349,7 @@ function testRestClientStreams() returns error? {
 @test:Config {}
 function testRestClientSatisfiesClientMethods() returns error? {
     setNextRestResponse({task: defaultTaskJson()});
-    Client c = check new HttpClient(getServerBaseUrl());
+    Client c = check new RestClient(getServerBaseUrl());
     Task|Message result = check c->sendMessage({message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]}});
-    test:assertTrue(result is Task, "a HttpClient must be usable through the Client shape");
+    test:assertTrue(result is Task, "a RestClient must be usable through the Client shape");
 }
