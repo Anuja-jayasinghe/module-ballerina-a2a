@@ -39,10 +39,7 @@ const LIST_TASKS_MAX_PAGE_SIZE = 100;
 # + state - The state to classify
 # + return - Whether the state is terminal
 public isolated function isTerminalState(TaskState state) returns boolean {
-    return state == TASK_STATE_COMPLETED
-        || state == TASK_STATE_FAILED
-        || state == TASK_STATE_CANCELED
-        || state == TASK_STATE_REJECTED;
+    return state is TaskTerminalState;
 }
 
 # Persists and retrieves the tasks a server-side agent is running.

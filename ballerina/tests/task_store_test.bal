@@ -214,3 +214,18 @@ function testStoreRemoveHidesFromNonOwner() returns error? {
     check store.remove("t1", "alice");
     test:assertTrue(check store.get("t1", "alice") is (), "removing as the true owner must succeed");
 }
+
+// Exactly four of the nine states are terminal; the two interrupted states can
+// still resume, so they must not be among them.
+@test:Config {}
+function testOnlyTheFourTerminalStatesAreTerminal() {
+    TaskState[] terminal = [TASK_STATE_COMPLETED, TASK_STATE_FAILED, TASK_STATE_CANCELED, TASK_STATE_REJECTED];
+    TaskState[] all = [TASK_STATE_UNSPECIFIED, TASK_STATE_SUBMITTED, TASK_STATE_WORKING, TASK_STATE_COMPLETED,
+        TASK_STATE_FAILED, TASK_STATE_CANCELED, TASK_STATE_INPUT_REQUIRED, TASK_STATE_REJECTED,
+        TASK_STATE_AUTH_REQUIRED];
+    foreach TaskState state in all {
+        boolean expected = terminal.indexOf(state) is int;
+        test:assertEquals(isTerminalState(state), expected, string `${state} terminal`);
+        test:assertEquals(state is TaskTerminalState, expected, string `${state} in TaskTerminalState`);
+    }
+}
