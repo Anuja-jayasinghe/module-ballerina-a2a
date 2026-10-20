@@ -92,8 +92,6 @@ type CapturedWebhookCall record {|
     string rawPath;
 |};
 
-isolated CapturedWebhookCall? lastWebhookCall = ();
-
 // Every call, in arrival order -- for tests that must prove a webhook was
 // called exactly once, or not again, rather than only look at the last one.
 isolated CapturedWebhookCall[] webhookHistory = [];
@@ -108,35 +106,25 @@ isolated function takeWebhookHistory() returns CapturedWebhookCall[] {
 
 isolated function recordWebhookCall(CapturedWebhookCall call) {
     lock {
-        lastWebhookCall = call.clone();
-    }
-    lock {
         webhookHistory.push(call.clone());
-    }
-}
-
-isolated function takeLastWebhookCall() returns CapturedWebhookCall? {
-    lock {
-        CapturedWebhookCall? call = lastWebhookCall;
-        lastWebhookCall = ();
-        return call.clone();
     }
 }
 
 // Delivery from sendMessage/cancelTask now runs detached (a fix for finding
 // #3: it used to block the response on every registered webhook's own
 // timeout), so a test asserting on it can no longer assume the call has
-// already landed the instant sendMessage/cancelTask returns. Nor can it use
-// the single-slot takeLastWebhookCall: with delivery detached, one test's
-// call can still be in flight when the next one starts (nothing awaits that
-// future), and a shared, destructive "last call" slot lets that straggler
-// overwrite -- or a filtering read steal -- another test's own call. Every
+// already landed the instant sendMessage/cancelTask returns. Nor can it read
+// a single shared "last call" slot: with delivery detached, one test's call
+// can still be in flight when the next one starts (nothing awaits that
+// future), and such a slot lets that straggler overwrite -- or a filtering
+// read steal -- another test's own call. Every
 // call is also recorded into webhookHistory, never overwritten; this reads
 // that non-destructively and waits for the one matching the task this test
 // itself is asserting on, leaving every other entry (this test's own
 // earlier calls, or another test's) exactly where it was for whoever is
-// looking for it. A direct, synchronous PushNotificationSender.send call
-// (most of this file's own tests) needs no such wait.
+// looking for it. A direct, synchronous PushNotificationSender.send call has
+// already landed when it returns, but its test still reads the call by task
+// id, so a straggler from another test cannot be taken for it.
 isolated function peekWebhookHistory() returns CapturedWebhookCall[] {
     lock {
         return webhookHistory.clone();
@@ -240,11 +228,12 @@ function testHttpPushNotificationSenderPostsTaskBody() returns error? {
     // that rejection is what testHttpPushNotificationSenderRejectsDisallowedUrlBeforeSending
     // covers. This test is about the POST mechanics, not validation.
     HttpPushNotificationSender sender = new ({validateUrl: false});
-    Error? result = sender.send({url: string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`},
-            sampleTask());
+    Task posted = sampleTask();
+    posted.id = "push-posts-task-body";
+    Error? result = sender.send({url: string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`}, posted);
     test:assertTrue(result is (), "delivery to a real, reachable receiver must succeed");
 
-    CapturedWebhookCall? call = takeLastWebhookCall();
+    CapturedWebhookCall? call = awaitWebhookCallForTask(posted.id);
     test:assertTrue(call is CapturedWebhookCall, "the receiver must have been called");
     CapturedWebhookCall received = <CapturedWebhookCall>call;
     test:assertEquals(received.rawPath, "/webhook/receiver", "the config's path must reach the receiver intact");
@@ -254,7 +243,7 @@ function testHttpPushNotificationSenderPostsTaskBody() returns error? {
     map<json> envelope = check received.body.ensureType();
     test:assertEquals(envelope.keys(), ["task"], "the body must be a StreamResponse with exactly one arm");
     map<json> task = check envelope["task"].ensureType();
-    test:assertEquals(task["id"], "task-1");
+    test:assertEquals(task["id"], posted.id);
     map<json> status = check task["status"].ensureType();
     test:assertEquals(status["state"], "TASK_STATE_COMPLETED");
     test:assertEquals(received.headers["content-type"], "application/a2a+json");
@@ -266,6 +255,7 @@ function testHttpPushNotificationSenderPostsTaskBody() returns error? {
 function testHttpPushNotificationSenderEncodesFileBytesAsBase64() returns error? {
     HttpPushNotificationSender sender = new ({validateUrl: false});
     Task withFile = sampleTask();
+    withFile.id = "push-encodes-file-bytes";
     withFile.artifacts = [{
         artifactId: "a1",
         parts: [{raw: "tck".toBytes(), mediaType: "text/plain", filename: "output.txt"}]
@@ -273,7 +263,7 @@ function testHttpPushNotificationSenderEncodesFileBytesAsBase64() returns error?
     Error? result = sender.send({url: string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`}, withFile);
     test:assertTrue(result is (), "delivery to a real, reachable receiver must succeed");
 
-    CapturedWebhookCall received = <CapturedWebhookCall>takeLastWebhookCall();
+    CapturedWebhookCall received = <CapturedWebhookCall>awaitWebhookCallForTask(withFile.id);
     map<json> envelope = check received.body.ensureType();
     map<json> task = check envelope["task"].ensureType();
     json[] artifacts = check task["artifacts"].ensureType();
@@ -286,14 +276,16 @@ function testHttpPushNotificationSenderEncodesFileBytesAsBase64() returns error?
 @test:Config {}
 function testHttpPushNotificationSenderSendsTokenAndAuthHeaders() returns error? {
     HttpPushNotificationSender sender = new ({validateUrl: false});
+    Task withHeaders = sampleTask();
+    withHeaders.id = "push-sends-token-and-auth";
     Error? result = sender.send({
         url: string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`,
         token: "corr-42",
         authentication: {scheme: "Bearer", credentials: "secret-token"}
-    }, sampleTask());
+    }, withHeaders);
     test:assertTrue(result is ());
 
-    CapturedWebhookCall received = <CapturedWebhookCall>takeLastWebhookCall();
+    CapturedWebhookCall received = <CapturedWebhookCall>awaitWebhookCallForTask(withHeaders.id);
     test:assertEquals(received.headers["x-a2a-notification-token"], "corr-42",
             "config.token must round-trip as the correlation header");
     test:assertEquals(received.headers["authorization"], "Bearer secret-token",
