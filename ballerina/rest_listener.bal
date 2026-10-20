@@ -263,11 +263,13 @@ public isolated class RestListener {
         if cardServiceIsNew {
             error? cardResult = self.httpListener.attach(cardServiceToAttach);
             if cardResult is error {
+                self.forget(a2aService, mountPath);
                 return wrapTransportError(cardResult);
             }
         }
         error? result = self.httpListener.attach(dispatcherService, mountPath);
         if result is error {
+            self.forget(a2aService, mountPath);
             return wrapTransportError(result);
         }
         log:printInfo("A2A service attached", path = "/" + mountPath, operations = binding.defined.toString());
@@ -283,6 +285,7 @@ public isolated class RestListener {
             foreach int i in 0 ..< self.attached.length() {
                 if self.attached[i].agentService === a2aService {
                     dispatcherService = self.attached[i].dispatcher;
+                    self.registry.remove(self.attached[i].mountPath);
                     _ = self.attached.remove(i);
                     break;
                 }
@@ -292,6 +295,24 @@ public isolated class RestListener {
             error? result = self.httpListener.detach(dispatcherService);
             if result is error {
                 return wrapTransportError(result);
+            }
+        }
+    }
+
+    # Undoes the bookkeeping of an attach that failed partway, so the card does
+    # not advertise an interface that serves nothing and the path can be used
+    # again.
+    #
+    # + a2aService - The service whose attach failed
+    # + mountPath - The path it was being attached at
+    private isolated function forget(Service a2aService, string mountPath) {
+        lock {
+            self.registry.remove(mountPath);
+            foreach int i in 0 ..< self.attached.length() {
+                if self.attached[i].agentService === a2aService {
+                    _ = self.attached.remove(i);
+                    break;
+                }
             }
         }
     }

@@ -51,6 +51,18 @@ isolated class CardRegistry {
         }
     }
 
+    # Forgets the binding at a path, and the card once no binding is left.
+    #
+    # + mountPath - The path the binding was mounted at
+    isolated function remove(string mountPath) {
+        lock {
+            self.bindings = from string[] binding in self.bindings where binding[1] != mountPath select binding;
+            if self.bindings.length() == 0 {
+                self.card = ();
+            }
+        }
+    }
+
     # + baseUrl - The address the listener is reached at, without a trailing slash
     # + return - The public card with one interface per attached binding, or `()` before any attach
     isolated function served(string baseUrl) returns AgentCard? {
