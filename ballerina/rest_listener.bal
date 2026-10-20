@@ -104,7 +104,7 @@ public type RestListenerConfiguration record {|
     boolean validateInputModes = false;
 |};
 
-# The `http:ListenerConfiguration` half of an `RestListenerConfiguration`:
+# The `http:ListenerConfiguration` half of a `RestListenerConfiguration`:
 # everything left once this package's own fields are taken out.
 #
 # `RestListenerConfiguration` includes `http:ListenerConfiguration`, so a
@@ -165,7 +165,7 @@ public isolated class RestListener {
     private AttachedService[] attached = [];
     private CardService? cardService = ();
 
-    # Creates an RestListener.
+    # Creates a RestListener.
     #
     # + listenTo - A port, or an existing `http:Listener` to mount on
     # + config - How requests reach the agent. Given a port, its

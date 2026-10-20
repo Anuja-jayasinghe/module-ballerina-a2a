@@ -26,7 +26,7 @@ final a2a:RestClient agent = check new ("https://agent.example.com");
 
 Construction is where a mismatch surfaces: an unreachable agent, a card that does not parse, or a card offering no binding this module speaks all fail here rather than on the first operation.
 
-An `RestClient` is cheap to construct and needs no teardown — there is deliberately no `close`. Prefer one long-lived client per agent over one per request.
+A `RestClient` is cheap to construct and needs no teardown — there is deliberately no `close`. Prefer one long-lived client per agent over one per request.
 
 This release implements HTTP+JSON only. When JSON-RPC and gRPC bindings land, a transport-agnostic `Client` that reads the card and picks a binding will join `RestClient`; client code written against the operations will carry over unchanged.
 
