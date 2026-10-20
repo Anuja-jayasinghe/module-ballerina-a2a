@@ -154,15 +154,16 @@ public isolated class HttpPushNotificationSender {
 # URL still gets a stored config back; the rejection surfaces the same way
 # an unreachable webhook does, as a swallowed delivery failure.
 #
-# Form-level only, deliberately: Ballerina has no stdlib DNS resolver
-# (`ballerina/socket` no longer exists; `tcp`/`udp` never hand back a
-# resolved address), and this package carries no native Java code by its
-# own build convention, so resolving a hostname to an IP is not available
-# without a dependency this package does not otherwise need. A host that is
-# not itself an IP literal -- `webhook.internal.corp` resolving to a
-# private address, for instance -- is not caught here; that DNS-rebinding
-# gap is real and left open, the same gap the reference Java SDK's own
-# documentation concedes for the same reason.
+# Form-level only: the host is not resolved. Ballerina has no stdlib DNS
+# resolver (`ballerina/socket` no longer exists; `tcp`/`udp` never hand back
+# a resolved address), and although this package now carries native Java
+# code, resolving the host here is not done. So a host that is not itself an
+# IP literal -- `webhook.internal.corp` resolving to a private address, for
+# instance -- is not caught. Resolving it (checking every address
+# `InetAddress.getAllByName` returns) would close that case, but not DNS
+# rebinding, where the name resolves differently when the delivery connects;
+# only a check at connect time stops that. The reference Java SDK's
+# documentation concedes the same gap.
 #
 # + url - The webhook URL to check
 # + return - An `a2a:Error` if the URL's scheme or host is disallowed
