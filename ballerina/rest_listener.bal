@@ -249,31 +249,27 @@ public isolated class RestListener {
         AgentCard & readonly served = cards.publicCard(supplied).cloneReadOnly();
         RestDispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
                 self.interfaceScheme, self.publicUrl, self.streamTiming, mountPath, self.validateInputModes);
-        CardService cardServiceToAttach;
-        boolean cardServiceIsNew = false;
+        error? cardResult = ();
         lock {
             check self.registry.add(served, HTTP_JSON, mountPath);
-            CardService? existing = self.cardService;
-            if existing is () {
+            // Created and mounted under the same lock, so a concurrent attach
+            // sees either no card service or a mounted one, never one that is
+            // about to fail to mount.
+            if self.cardService is () {
                 CardService created = new (self.registry, self.interfaceScheme, self.publicUrl);
-                self.cardService = created;
-                cardServiceToAttach = created;
-                cardServiceIsNew = true;
-            } else {
-                cardServiceToAttach = existing;
-            }
-            self.attached.push({agentService: a2aService, dispatcher: dispatcherService, mountPath});
-        }
-        if cardServiceIsNew {
-            error? cardResult = self.httpListener.attach(cardServiceToAttach);
-            if cardResult is error {
-                self.forget(a2aService, mountPath);
-                // Not mounted, so the next attach must create and mount one.
-                lock {
-                    self.cardService = ();
+                cardResult = self.httpListener.attach(created);
+                if cardResult is () {
+                    self.cardService = created;
                 }
-                return wrapTransportError(cardResult);
             }
+            if cardResult is () {
+                self.attached.push({agentService: a2aService, dispatcher: dispatcherService, mountPath});
+            } else {
+                self.registry.remove(mountPath);
+            }
+        }
+        if cardResult is error {
+            return wrapTransportError(cardResult);
         }
         error? result = self.httpListener.attach(dispatcherService, mountPath);
         if result is error {
