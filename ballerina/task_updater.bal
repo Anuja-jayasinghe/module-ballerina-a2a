@@ -111,9 +111,13 @@ public isolated class TaskUpdater {
 
     # Appends an artifact to the task's output.
     #
+    # The task is stored with the artifact before the artifact is announced,
+    # so `getTask` shows it as soon as a subscriber does.
+    #
     # + parts - The parts of the artifact; at least one is required
     # + name - An optional human-readable label
-    # + return - An `a2a:Error` if `parts` is empty
+    # + return - An `a2a:Error` if `parts` is empty or the store refused the
+    #            update (for example, because the task was canceled)
     public isolated function addArtifact(Part[] parts, string? name = ()) returns Error? {
         check requireNonEmpty("Artifact.parts", parts.length(), false);
         Artifact artifact = {artifactId: uuid:createType4AsString(), parts};
@@ -131,6 +135,16 @@ public isolated class TaskUpdater {
             append: false,
             lastChunk: true
         };
+        Task task;
+        lock {
+            Task withArtifact = self.base.clone();
+            Artifact[] accumulated = self.artifacts.clone();
+            accumulated.push(artifact.clone());
+            withArtifact.artifacts = accumulated;
+            task = withArtifact.clone();
+        }
+        check self.store.put(task, self.owner);
+
         Task? seed = ();
         lock {
             if !self.seedEmitted {
@@ -139,6 +153,7 @@ public isolated class TaskUpdater {
             }
             self.touchedFlag = true;
             self.artifacts.push(artifact.clone());
+            self.base = task.clone();
         }
         if seed is Task {
             // Same historyLength this task's own stream sends its
