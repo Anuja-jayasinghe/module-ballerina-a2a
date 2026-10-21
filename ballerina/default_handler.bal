@@ -28,6 +28,7 @@
 // authentication, the served card, stream keep-alives -- and builds the
 // `Context` every operation receives.
 
+import ballerina/lang.runtime;
 import ballerina/log;
 import ballerina/uuid;
 
@@ -124,6 +125,9 @@ public isolated class DefaultHandler {
     private final TaskOwnerResolver? ownerResolver;
     private final PushNotificationSender pushSender;
     private final EventBroadcasterRegistry registry;
+    // The updater of each task being driven right now, so `cancelTask` can
+    // write its cancellation through it.
+    private map<TaskUpdater> drivers = {};
 
     # Creates a handler.
     #
@@ -221,6 +225,7 @@ public isolated class DefaultHandler {
         // sendStreamingMessage constructs its updater the same way.
         int? historyLength = request?.configuration?.historyLength;
         final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster, historyLength);
+        self.trackDriver(taskId, updater);
 
         boolean returnImmediately = request?.configuration?.returnImmediately ?: false;
         if returnImmediately {
@@ -244,9 +249,10 @@ public isolated class DefaultHandler {
         if stopped {
             broadcaster.close();
         }
+        self.untrackDriver(taskId);
         self.registry.release(taskId, stopped);
         if result is Task {
-            if drivenToThisState {
+            if drivenToThisState && !updater.wasCanceled() {
                 // Untrimmed: a registered webhook gets the task as it
                 // actually is, independent of what this caller happened to
                 // ask this one response to look like.
@@ -484,11 +490,11 @@ public isolated class DefaultHandler {
             failure = invalidAgentResponse(
                     string `execute returned without driving the task to a state for ${taskId}`);
         }
-        if failure is Error && self.endedElsewhere(taskId, owner, updater) {
-            // Another writer, such as `cancelTask`, ended the task while
-            // `execute` ran, and the store refused the agent's next write.
-            // That is not the agent failing: hand back the updater's copy and
-            // let `settledResult` replace it with the stored task.
+        if failure is Error && (updater.wasCanceled() || self.endedElsewhere(taskId, owner, updater)) {
+            // A client canceled the task while `execute` ran, or another
+            // writer ended it, and the agent's next write was refused. That
+            // is not the agent failing: hand back the updater's copy and let
+            // `settledResult` replace it with the stored task.
             return updater.currentTask();
         }
         if failure is Error {
@@ -599,8 +605,9 @@ public isolated class DefaultHandler {
         } else if stopped {
             broadcaster.close();
         }
+        self.untrackDriver(taskId);
         self.registry.release(taskId, stopped);
-        if result is Task && drivenToThisState {
+        if result is Task && drivenToThisState && !updater.wasCanceled() {
             future<()> _ = start self.notifyPushConfigs(taskId, result.clone());
         } else if result is Error {
             // Same reasoning as sendMessage's own identical check: driveTask
@@ -710,6 +717,7 @@ public isolated class DefaultHandler {
         // updater) -- see task_updater.bal's own handling of it.
         int? historyLength = request?.configuration?.historyLength;
         final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster, historyLength);
+        self.trackDriver(taskId, updater);
 
         // returnImmediately has no effect on streaming per the
         // specification -- always false here; see driveTask's own doc.
@@ -827,47 +835,113 @@ public isolated class DefaultHandler {
             return taskNotFound(request.id);
         }
         if isTerminalState(task.status.state) {
-            string msg = string `task ${request.id} is in terminal state ${task.status.state} `
-                + string `and cannot be canceled`;
-            return error TaskNotCancelableError(msg, message = msg, code = -32002);
+            return notCancelable(request.id, task.status.state);
         }
-        task.status = {state: TASK_STATE_CANCELED, timestamp: currentTimestamp()};
-        Error? putResult = self.store.put(task, owner);
-        if putResult is Error {
-            // The task the check above read is no longer the task the store
-            // holds -- a concurrent driver reached a (different) terminal
-            // state first, and the store's own terminal-transition guard
-            // (undocumented on the TaskStore interface itself, so not
-            // something to pattern-match by type or message) refused this
-            // write. Re-read to find out which: if the task is terminal now,
-            // this is the same "cannot be canceled" case the check above
-            // handles, just lost to a race instead of caught up front; any
-            // other failure is a genuine storage fault, reported as-is.
-            Task? nowTask = check self.store.get(request.id, owner);
-            if nowTask is Task && isTerminalState(nowTask.status.state) {
-                string msg = string `task ${request.id} is in terminal state ${nowTask.status.state} `
-                    + string `and cannot be canceled`;
-                return error TaskNotCancelableError(msg, message = msg, code = -32002);
+        // Every write to a task happens under its driver claim, so the
+        // cancellation is written either through the updater driving the task
+        // or under the claim itself, and never over a copy another writer has
+        // since replaced. Between a send taking the claim and registering its
+        // updater there is a short window in which neither is available; the
+        // cancel waits it out.
+        foreach int _ in 0 ..< CANCEL_CLAIM_ATTEMPTS {
+            TaskUpdater? driver;
+            lock {
+                driver = self.drivers[request.id];
             }
-            return putResult;
+            if driver is TaskUpdater {
+                return self.cancelDriven(request.id, driver);
+            }
+            EventBroadcaster? claimed = self.registry.acquire(request.id);
+            if claimed is EventBroadcaster {
+                return self.cancelIdle(request.id, owner, claimed);
+            }
+            runtime:sleep(CANCEL_CLAIM_RETRY_SECONDS);
         }
+        string msg = string `task ${request.id} is busy and could not be canceled; try again`;
+        return error InternalError(msg, message = msg);
+    }
 
-        // Only after the store write lands -- broadcasting first could
-        // hand a live subscriber a phantom CANCELED event for a
-        // transition the store then rejects (e.g. a concurrent driver's
-        // own write already moved the task to a different terminal
-        // state first). Subscribers are latency-sensitive; webhooks
-        // aren't, so this runs before notifyPushConfigs below. No
-        // registry.release here -- see peekBroadcaster's own doc for why.
-        EventBroadcaster? broadcaster = self.registry.peekBroadcaster(request.id);
+    # Cancels a task through the updater that is driving it.
+    #
+    # + taskId - The task to cancel
+    # + driver - The task's updater
+    # + return - The canceled task, or an error
+    private isolated function cancelDriven(string taskId, TaskUpdater driver) returns Task|Error {
+        Task canceled = check driver.cancel();
+        // The updater announced the CANCELED status; the task's streams end
+        // here rather than when the agent next tries to write.
+        EventBroadcaster? broadcaster = self.registry.peekBroadcaster(taskId);
         if broadcaster is EventBroadcaster {
-            TaskStatusUpdateEvent event = {taskId: request.id, contextId: task.contextId ?: "", status: task.status};
-            broadcaster.push(event);
             broadcaster.close();
         }
+        future<()> _ = start self.notifyPushConfigs(taskId, canceled.clone());
+        return canceled;
+    }
 
-        future<()> _ = start self.notifyPushConfigs(request.id, task.clone());
+    # Cancels a task no driver is running, under the driver claim the caller
+    # took for it, and gives the claim back.
+    #
+    # + taskId - The task to cancel
+    # + owner - The caller's resolved owner scope, or `()`
+    # + broadcaster - The task's broadcaster, from taking the claim
+    # + return - The canceled task, or an error
+    private isolated function cancelIdle(string taskId, string? owner, EventBroadcaster broadcaster)
+            returns Task|Error {
+        // Read again under the claim: the copy `cancelTask` checked may have
+        // been replaced by a turn that has since finished.
+        Task|Error canceled = self.writeCancellation(taskId, owner);
+        if canceled is Error {
+            self.registry.release(taskId, false);
+            return canceled;
+        }
+        // Only after the store write lands, so a subscriber never sees a
+        // CANCELED the store refused. Subscribers are latency-sensitive and
+        // webhooks are not, so this runs before notifyPushConfigs below.
+        TaskStatusUpdateEvent event = {taskId, contextId: canceled.contextId ?: "", status: canceled.status};
+        broadcaster.push(event);
+        broadcaster.close();
+        self.registry.release(taskId, true);
+        future<()> _ = start self.notifyPushConfigs(taskId, canceled.clone());
+        return canceled;
+    }
+
+    # Writes a task as canceled, for `cancelIdle`.
+    #
+    # + taskId - The task to cancel
+    # + owner - The caller's resolved owner scope, or `()`
+    # + return - The canceled task, or an error
+    private isolated function writeCancellation(string taskId, string? owner) returns Task|Error {
+        Task? task = check self.store.get(taskId, owner);
+        if task is () {
+            return taskNotFound(taskId);
+        }
+        if isTerminalState(task.status.state) {
+            return notCancelable(taskId, task.status.state);
+        }
+        task.status = {state: TASK_STATE_CANCELED, timestamp: currentTimestamp()};
+        check self.store.put(task, owner);
         return task;
+    }
+
+    # Records the updater driving a task, for `cancelTask`.
+    #
+    # + taskId - The task being driven
+    # + updater - Its updater
+    private isolated function trackDriver(string taskId, TaskUpdater updater) {
+        lock {
+            self.drivers[taskId] = updater;
+        }
+    }
+
+    # Forgets the updater of a task whose drive has ended. Called before the
+    # driver claim is released, so a cancel never finds the claim free while
+    # the updater is still recorded.
+    #
+    # + taskId - The task whose drive ended
+    private isolated function untrackDriver(string taskId) {
+        lock {
+            _ = self.drivers.removeIfHasKey(taskId);
+        }
     }
 
     # Handles listTasks.
@@ -1146,6 +1220,21 @@ isolated function resultStopped(Task|Message|Error result, boolean isNewTask) re
         return isNewTask;
     }
     return true;
+}
+
+// How long `cancelTask` waits for a send that has just taken a task's driver
+// claim to register its updater: 200 tries, 10 milliseconds apart.
+const int CANCEL_CLAIM_ATTEMPTS = 200;
+const decimal CANCEL_CLAIM_RETRY_SECONDS = 0.01;
+
+# The error for canceling a task that has already ended.
+#
+# + id - The task's id
+# + state - The terminal state it is in
+# + return - The error
+isolated function notCancelable(string id, TaskState state) returns TaskNotCancelableError {
+    string msg = string `task ${id} is in terminal state ${state} and cannot be canceled`;
+    return error TaskNotCancelableError(msg, message = msg, code = -32002);
 }
 
 # Builds a TaskNotFoundError for an unknown task id.

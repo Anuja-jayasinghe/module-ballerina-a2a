@@ -52,6 +52,9 @@ public isolated class TaskUpdater {
     // is exactly the one Message event [specification section 3.1.2](https://a2a-protocol.org/latest/specification/#312-send-streaming-message)
     // requires, never a spurious Task first.
     private boolean seedEmitted = false;
+    // Set once a client's cancellation is written through `cancel`; every
+    // later update from the agent is refused.
+    private boolean canceled = false;
     // The requesting call's `configuration.historyLength` (sendMessage/
     // sendStreamingMessage), applied only to the lazily-broadcast seed
     // event below -- never to `self.base`, which must keep the task's full
@@ -135,34 +138,7 @@ public isolated class TaskUpdater {
             append: false,
             lastChunk: true
         };
-        Task task;
-        lock {
-            Task withArtifact = self.base.clone();
-            Artifact[] accumulated = self.artifacts.clone();
-            accumulated.push(artifact.clone());
-            withArtifact.artifacts = accumulated;
-            task = withArtifact.clone();
-        }
-        check self.store.put(task, self.owner);
-
-        Task? seed = ();
-        lock {
-            if !self.seedEmitted {
-                self.seedEmitted = true;
-                seed = self.base.clone();
-            }
-            self.touchedFlag = true;
-            self.artifacts.push(artifact.clone());
-            self.base = task.clone();
-        }
-        if seed is Task {
-            // Same historyLength this task's own stream sends its
-            // TaskArtifactUpdateEvents at -- only the seed carries history
-            // at all, so this is the one place per stream this matters.
-            self.broadcaster.push(projectTask(seed, true, self.historyLength));
-        }
-        self.broadcaster.push(event);
-        return;
+        return self.write((), artifact, event);
     }
 
     # Completes the task successfully: `TASK_STATE_COMPLETED`.
@@ -205,14 +181,23 @@ public isolated class TaskUpdater {
         return self.transition(TASK_STATE_AUTH_REQUIRED, message);
     }
 
+    # Cancels the task: `TASK_STATE_CANCELED`. Called by the library for a
+    # client's `cancelTask` while this updater is driving the task, so the
+    # cancellation is written in turn with the agent's own updates and builds
+    # on the latest of them. Every later update from the agent is refused.
+    #
+    # + return - The canceled task, a `TaskNotCancelableError` if the task has
+    #            already ended, or an `a2a:Error` if the store refused it
+    isolated function cancel() returns Task|Error {
+        TaskStatus status = {state: TASK_STATE_CANCELED, timestamp: currentTimestamp()};
+        TaskStatusUpdateEvent event = {taskId: self.taskId, contextId: self.contextId, status};
+        check self.write(status, (), event, cancelling = true);
+        return self.currentTask();
+    }
+
     # Writes the task at the given state, carrying the artifacts
     # accumulated so far and the task's `history`/`metadata` forward, and
-    # stamps the status timestamp. Broadcasts the resulting
-    # `TaskStatusUpdateEvent` live to `sendStreamingMessage`/
-    # `subscribeToTask` subscribers -- only once the store write actually
-    # succeeds, never before: broadcasting first could hand subscribers a
-    # phantom event for a transition a concurrent `cancelTask` then
-    # rejects.
+    # stamps the status timestamp.
     #
     # + state - The state to move to
     # + message - An optional status message
@@ -222,35 +207,76 @@ public isolated class TaskUpdater {
         if message is Message {
             status.message = message;
         }
-        Task task;
-        Artifact[] accumulated;
-        lock {
-            task = self.base.clone();
-            accumulated = self.artifacts.clone();
-        }
-        task.status = status;
-        if accumulated.length() > 0 {
-            task.artifacts = accumulated;
-        }
-        Error? putResult = self.store.put(task, self.owner);
-        if putResult is Error {
-            return putResult;
-        }
-
         TaskStatusUpdateEvent event = {taskId: self.taskId, contextId: self.contextId, status};
-        Task? seed = ();
+        return self.write(status, (), event);
+    }
+
+    # Stores the task with a new status or one more artifact, then announces it.
+    #
+    # Everything happens under one lock: reading the last-written task,
+    # storing the update, and broadcasting it. Two writers, such as the agent
+    # and a client's cancel, therefore each build on the other's update rather
+    # than on a copy read before it, and subscribers see their events in the
+    # order the store took them. The event is broadcast only once the store
+    # has taken the update, so a subscriber never sees a change the store
+    # refused.
+    #
+    # + status - The new status, or `()` to keep the current one
+    # + artifact - The artifact to append, or `()`
+    # + event - The event announcing the change
+    # + cancelling - Whether this write is a client's cancellation
+    # + return - An `a2a:Error` if the task was canceled, can no longer be
+    #            canceled, or the store refused the update
+    private isolated function write(TaskStatus? status, Artifact? artifact, StreamResponse event,
+            boolean cancelling = false) returns Error? {
         lock {
+            TaskState current = self.base.status.state;
+            if self.canceled {
+                string msg = string `task ${self.taskId} was canceled and can no longer be updated`;
+                return error InternalError(msg, message = msg);
+            }
+            if cancelling && isTerminalState(current) {
+                string msg = string `task ${self.taskId} is in terminal state ${current} and cannot be canceled`;
+                return error TaskNotCancelableError(msg, message = msg, code = -32002);
+            }
+            Task task = self.base.clone();
+            Artifact[] accumulated = self.artifacts.clone();
+            if artifact is Artifact {
+                accumulated.push(artifact.clone());
+            }
+            if status is TaskStatus {
+                task.status = status.clone();
+            }
+            if accumulated.length() > 0 {
+                task.artifacts = accumulated.clone();
+            }
+            Error? putResult = self.store.put(task.clone(), self.owner);
+            if putResult is Error {
+                return putResult;
+            }
+
             if !self.seedEmitted {
                 self.seedEmitted = true;
-                seed = self.base.clone();
+                // The task as it was before the agent's first update. Only
+                // the seed carries history, so this is the one place per
+                // stream the request's historyLength applies.
+                self.broadcaster.push(projectTask(self.base.clone(), true, self.historyLength));
             }
             self.touchedFlag = true;
-            self.base = task.clone();
+            self.canceled = cancelling;
+            self.artifacts = accumulated;
+            self.base = task;
+            self.broadcaster.push(event.clone());
         }
-        if seed is Task {
-            self.broadcaster.push(projectTask(seed, true, self.historyLength));
+    }
+
+    # Whether a client's cancellation went through this updater.
+    #
+    # + return - `true` once `cancel` has succeeded
+    isolated function wasCanceled() returns boolean {
+        lock {
+            return self.canceled;
         }
-        self.broadcaster.push(event);
     }
 
     # Whether `execute` has driven this task through the updater at

@@ -51,3 +51,51 @@ function testAnAddedArtifactIsStoredBeforeTheTaskEnds() returns error? {
     test:assertEquals(texts, ["partial"], "getTask must show the artifact the stream already announced");
     artifactGate.advanceTo(2);
 }
+
+final Gate cancelOrderGate = new;
+
+// Works, adds an artifact when released, then tries to complete.
+isolated class ArtifactDuringCancelAgent {
+    *AgentExecutor;
+
+    public isolated function execute(RequestContext context, TaskUpdater updater) returns Message|Error? {
+        check updater.working();
+        cancelOrderGate.advanceTo(1);
+        cancelOrderGate.awaitStep(2);
+        check updater.addArtifact([{text: "kept"}]);
+        cancelOrderGate.advanceTo(3);
+        cancelOrderGate.awaitStep(4);
+        check updater.complete();
+        return;
+    }
+}
+
+// A cancel that read the task before the agent stored an artifact must not
+// write that older copy back: the canceled task keeps the artifact.
+@test:Config {}
+function testACancelDoesNotDropAnUpdateStoredAfterItsRead() returns error? {
+    HoldingTaskStore store = new;
+    DefaultHandler handler = new (new ArtifactDuringCancelAgent(), taskStore = store);
+    Context context = {headers: {}};
+
+    Task|Message|Error sent = handler.sendMessage(context,
+            {message: {messageId: "cancel-order-1", role: ROLE_USER, parts: [{text: "go"}]}, configuration: {returnImmediately: true}});
+    if sent !is Task {
+        test:assertFail("expected the task back immediately");
+    }
+    cancelOrderGate.awaitStep(1);
+    store.arm();
+    future<Task|Error> cancel = start handler.cancelTask(context, {id: sent.id});
+    store.awaitHeld();
+    cancelOrderGate.advanceTo(2);
+    cancelOrderGate.awaitStep(3);
+    store.release();
+    Task canceled = check wait cancel;
+    cancelOrderGate.advanceTo(4);
+
+    test:assertEquals(canceled.status.state, TASK_STATE_CANCELED);
+    Task stored = <Task>check store.get(sent.id, ());
+    test:assertEquals(stored.status.state, TASK_STATE_CANCELED);
+    string[] texts = from Artifact artifact in stored.artifacts ?: [] select artifact.parts[0]?.text ?: "";
+    test:assertEquals(texts, ["kept"], "the cancel must build on the artifact the agent stored after the cancel's read");
+}
