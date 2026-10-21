@@ -131,13 +131,15 @@ isolated function peekWebhookHistory() returns CapturedWebhookCall[] {
     }
 }
 
-isolated function awaitWebhookCallForTask(string taskId) returns CapturedWebhookCall? {
+// A task's webhook hears of every update, so a test after one state passes it
+// as `state`; unset, the task's first call is returned.
+isolated function awaitWebhookCallForTask(string taskId, string? state = ()) returns CapturedWebhookCall? {
     // 400 * 0.02s = 8s -- longer than the slowest deliberately-slow test
     // receiver this file has (SLOW_WEBHOOK_DELAY, 1.5s), with headroom.
     foreach int _ in 0 ..< 400 {
         foreach CapturedWebhookCall call in peekWebhookHistory() {
             map<json>|error task = webhookTask(call);
-            if task is map<json> && task["id"] == taskId {
+            if task is map<json> && task["id"] == taskId && (state is () || webhookState(task) == state) {
                 return call;
             }
         }
@@ -150,11 +152,12 @@ isolated function awaitWebhookCallForTask(string taskId) returns CapturedWebhook
 // blocking sendMessage call's own Error return carries none, matching what
 // a real caller sees too -- found instead by the triggering message's own
 // id, which last session's fix seeds into a fresh task's history.
-isolated function awaitWebhookCallWithHistoryMessageId(string messageId) returns CapturedWebhookCall? {
+isolated function awaitWebhookCallWithHistoryMessageId(string messageId, string? state = ())
+        returns CapturedWebhookCall? {
     foreach int _ in 0 ..< 400 {
         foreach CapturedWebhookCall call in peekWebhookHistory() {
             map<json>|error task = webhookTask(call);
-            if task is map<json> {
+            if task is map<json> && (state is () || webhookState(task) == state) {
                 json|error history = task["history"];
                 if history is json[] {
                     foreach json m in history {
@@ -169,6 +172,28 @@ isolated function awaitWebhookCallWithHistoryMessageId(string messageId) returns
         runtime:sleep(0.02);
     }
     return;
+}
+
+// The state of a task a webhook received, or `()` if it carries none.
+isolated function webhookState(map<json> task) returns string? {
+    json|error status = task["status"];
+    if status is map<json> {
+        json state = status["state"];
+        return state is string ? state : ();
+    }
+    return;
+}
+
+// The states a task's webhook received, in arrival order.
+isolated function webhookStatesForTask(CapturedWebhookCall[] calls, string taskId) returns string[] {
+    string[] states = [];
+    foreach CapturedWebhookCall call in calls {
+        map<json>|error task = webhookTask(call);
+        if task is map<json> && task["id"] == taskId {
+            states.push(webhookState(task) ?: "");
+        }
+    }
+    return states;
 }
 
 // Unwraps the `task` arm of a captured webhook body: the body is a

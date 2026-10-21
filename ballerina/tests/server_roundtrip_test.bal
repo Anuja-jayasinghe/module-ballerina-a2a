@@ -1722,7 +1722,7 @@ function testServerRoundTripPushNotificationDeliveryOnCompletion() returns error
     });
     test:assertEquals(created.status.state, TASK_STATE_COMPLETED);
 
-    CapturedWebhookCall? call = awaitWebhookCallForTask(created.id);
+    CapturedWebhookCall? call = awaitWebhookCallForTask(created.id, "TASK_STATE_COMPLETED");
     test:assertTrue(call is CapturedWebhookCall,
             "the webhook registered inline on the sendMessage request must have been called");
     CapturedWebhookCall received = <CapturedWebhookCall>call;
@@ -1756,7 +1756,7 @@ function testServerRoundTripPushNotificationDeliveryOnFailure() returns error? {
     });
     string taskId = created.id;
 
-    CapturedWebhookCall? call = awaitWebhookCallForTask(taskId);
+    CapturedWebhookCall? call = awaitWebhookCallForTask(taskId, "TASK_STATE_FAILED");
     test:assertTrue(call is CapturedWebhookCall, "a task that failed must still notify its registered webhook");
     map<json> task = check webhookTask(<CapturedWebhookCall>call);
     test:assertEquals(task["id"], taskId);
@@ -1779,7 +1779,7 @@ function testServerRoundTripBlockingSendPushNotificationDeliveryOnFailure() retu
     });
     test:assertTrue(result is Error, "the trigger must fail the call, same as EchoAgent's own \"boom\" does");
 
-    CapturedWebhookCall? call = awaitWebhookCallWithHistoryMessageId("m-boom-blocking");
+    CapturedWebhookCall? call = awaitWebhookCallWithHistoryMessageId("m-boom-blocking", "TASK_STATE_FAILED");
     test:assertTrue(call is CapturedWebhookCall,
             "a task that failed on the blocking call must still notify its registered webhook");
     map<json> task = check webhookTask(<CapturedWebhookCall>call);
@@ -1831,8 +1831,8 @@ isolated function awaitTaskInState(RestClient c, string contextId, TaskState wan
 // the agent -- which does not check every update -- simply finishes. Neither
 // what a blocking sendMessage reports nor what the webhooks receive may then
 // go back to the state the agent last reached (WORKING): the caller must see
-// CANCELED, and the webhook must have received exactly one notification, the
-// CANCELED one.
+// CANCELED, and the webhook must hear of the WORKING update and then exactly
+// one CANCELED, with nothing after it.
 @test:Config {}
 function testServerRoundTripCancelDuringABlockingSendReportsCanceledAndNotifiesOnce() returns error? {
     RestClient c = check new (pushNotificationServerUrl);
@@ -1858,15 +1858,15 @@ function testServerRoundTripCancelDuringABlockingSendReportsCanceledAndNotifiesO
     test:assertEquals(returned.status.state, TASK_STATE_CANCELED,
             "the caller must be told the real state, not the WORKING the agent last reached");
 
-    CapturedWebhookCall[] calls = takeWebhookHistory();
-    test:assertEquals(calls.length(), 1, "cancelTask already notified; the agent finishing must not notify again");
-    map<json> task = check webhookTask(calls[0]);
-    map<json> status = check task["status"].ensureType();
-    test:assertEquals(status["state"], "TASK_STATE_CANCELED");
+    _ = awaitWebhookCallForTask(taskId, "TASK_STATE_CANCELED");
+    runtime:sleep(0.5);
+    test:assertEquals(webhookStatesForTask(takeWebhookHistory(), taskId), ["TASK_STATE_WORKING", "TASK_STATE_CANCELED"],
+            "cancelTask notified once; the agent finishing must not notify again");
 }
 
 // The same race on the detached path (returnImmediately), where nothing waits
 // on the drive: the webhook must still receive one CANCELED and nothing after.
+// The WORKING update before it is the agent's own, delivered in order.
 @test:Config {}
 function testServerRoundTripCancelDuringADetachedDriveNeverSendsAStaleWebhook() returns error? {
     RestClient c = check new (pushNotificationServerUrl);
@@ -1890,11 +1890,8 @@ function testServerRoundTripCancelDuringADetachedDriveNeverSendsAStaleWebhook() 
     // notification, if the bug were present, would follow within moments.
     runtime:sleep(0.5);
 
-    CapturedWebhookCall[] calls = takeWebhookHistory();
-    test:assertEquals(calls.length(), 1, "exactly the one notification cancelTask sent");
-    map<json> task = check webhookTask(calls[0]);
-    map<json> status = check task["status"].ensureType();
-    test:assertEquals(status["state"], "TASK_STATE_CANCELED");
+    test:assertEquals(webhookStatesForTask(takeWebhookHistory(), seeded.id), ["TASK_STATE_WORKING", "TASK_STATE_CANCELED"],
+            "exactly the one notification cancelTask sent, after the agent's own");
     Task stored = check c->getTask({id: seeded.id});
     test:assertEquals(stored.status.state, TASK_STATE_CANCELED, "and the stored state stays canceled");
 }

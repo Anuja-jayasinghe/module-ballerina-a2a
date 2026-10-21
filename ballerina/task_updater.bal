@@ -17,6 +17,22 @@
 import ballerina/time;
 import ballerina/uuid;
 
+# What a `TaskUpdater` reports each stored update of its task to: the
+# `DefaultHandler`, which delivers it to the task's webhooks.
+type TaskUpdateListener isolated object {
+    # Queues an update the store has taken, in the order updates are stored.
+    #
+    # + taskId - The task that changed
+    # + task - The task as stored
+    # + return - `true` if `deliverUpdates` must be called once outside the lock
+    isolated function queueUpdate(string taskId, Task task) returns boolean;
+
+    # Starts delivering the task's queued updates.
+    #
+    # + taskId - The task whose updates to deliver
+    isolated function deliverUpdates(string taskId);
+};
+
 # Drives one task through its lifecycle from inside `a2a:AgentExecutor.execute`.
 #
 # The library hands the developer a `TaskUpdater` already bound to a freshly
@@ -63,6 +79,8 @@ public isolated class TaskUpdater {
     // reference type, a value type read from a `final` field is always
     // isolated-safe.
     private final int? historyLength;
+    // Told of every update the store takes, or `()`.
+    private final TaskUpdateListener? updateListener;
 
     # Binds an updater to a task. Called by the library, not by agent code.
     #
@@ -79,8 +97,10 @@ public isolated class TaskUpdater {
     #                    applied to the one Task snapshot this updater ever
     #                    broadcasts live (specification 3.2.2/3.2.4). `()`
     #                    imposes no limit.
+    # + updateListener - Told of every update the store takes, in order, so
+    #                    the task's webhooks are notified of each one
     isolated function init(string taskId, string contextId, TaskStore store, string? owner, Task base,
-            EventBroadcaster broadcaster, int? historyLength = ()) {
+            EventBroadcaster broadcaster, int? historyLength = (), TaskUpdateListener? updateListener = ()) {
         self.taskId = taskId;
         self.contextId = contextId;
         self.store = store;
@@ -92,6 +112,7 @@ public isolated class TaskUpdater {
         self.artifacts = base?.artifacts is Artifact[] ? (<Artifact[]>base?.artifacts).clone() : [];
         self.broadcaster = broadcaster;
         self.historyLength = historyLength;
+        self.updateListener = updateListener;
     }
 
     # The task's server-generated id.
@@ -214,12 +235,12 @@ public isolated class TaskUpdater {
     # Stores the task with a new status or one more artifact, then announces it.
     #
     # Everything happens under one lock: reading the last-written task,
-    # storing the update, and broadcasting it. Two writers, such as the agent
-    # and a client's cancel, therefore each build on the other's update rather
-    # than on a copy read before it, and subscribers see their events in the
-    # order the store took them. The event is broadcast only once the store
-    # has taken the update, so a subscriber never sees a change the store
-    # refused.
+    # storing the update, broadcasting it, and queuing it for the task's
+    # webhooks. Two writers, such as the agent and a client's cancel,
+    # therefore each build on the other's update rather than on a copy read
+    # before it, and subscribers and webhooks see the updates in the order the
+    # store took them. Nothing is announced until the store has taken the
+    # update, so no one is told of a change the store refused.
     #
     # + status - The new status, or `()` to keep the current one
     # + artifact - The artifact to append, or `()`
@@ -229,6 +250,7 @@ public isolated class TaskUpdater {
     #            canceled, or the store refused the update
     private isolated function write(TaskStatus? status, Artifact? artifact, StreamResponse event,
             boolean cancelling = false) returns Error? {
+        boolean startDelivery = false;
         lock {
             TaskState current = self.base.status.state;
             if self.canceled {
@@ -267,6 +289,14 @@ public isolated class TaskUpdater {
             self.artifacts = accumulated;
             self.base = task;
             self.broadcaster.push(event.clone());
+            TaskUpdateListener? updateListener = self.updateListener;
+            if updateListener is TaskUpdateListener {
+                startDelivery = updateListener.queueUpdate(self.taskId, task.clone());
+            }
+        }
+        TaskUpdateListener? updateListener = self.updateListener;
+        if startDelivery && updateListener is TaskUpdateListener {
+            updateListener.deliverUpdates(self.taskId);
         }
     }
 

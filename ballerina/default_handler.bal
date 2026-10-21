@@ -115,12 +115,8 @@ public isolated class DefaultHandler {
     private final (AgentCard & readonly)? extendedAgentCard;
     private final AgentExecutor executor;
     private final TaskStore store;
-    // Push-notification config storage: registered, never delivered to (see
-    // decision in the server plan -- outbound webhook delivery is a later
-    // release). Keyed by taskId, then by the config's own server-generated
-    // id. In-memory only, like InMemoryTaskStore; not pluggable in this
-    // release since there is no delivery mechanism yet for a durable store
-    // to matter to.
+    // The registered push-notification configs, keyed by taskId, then by the
+    // config's own id. In-memory only, like InMemoryTaskStore.
     private map<map<TaskPushNotificationConfig>> pushConfigs = {};
     private final TaskOwnerResolver? ownerResolver;
     private final PushNotificationSender pushSender;
@@ -128,6 +124,10 @@ public isolated class DefaultHandler {
     // The updater of each task being driven right now, so `cancelTask` can
     // write its cancellation through it.
     private map<TaskUpdater> drivers = {};
+    // The stored updates of each task still waiting to reach its webhooks,
+    // oldest first. A task has an entry only while a strand is delivering
+    // them; see `taskUpdated`.
+    private map<Task[]> pendingPushes = {};
 
     # Creates a handler.
     #
@@ -224,7 +224,8 @@ public isolated class DefaultHandler {
         // well -- this method's own callers never see that snapshot, but
         // sendStreamingMessage constructs its updater the same way.
         int? historyLength = request?.configuration?.historyLength;
-        final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster, historyLength);
+        final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster, historyLength,
+            self);
         self.trackDriver(taskId, updater);
 
         boolean returnImmediately = request?.configuration?.returnImmediately ?: false;
@@ -243,8 +244,8 @@ public isolated class DefaultHandler {
 
         future<Task|Message|Error> f =
             start self.driveTask(taskId, owner, requestContext.clone(), updater, broadcaster, target.isNewTask, false);
-        [Task|Message|Error, boolean] [result, drivenToThisState] =
-            self.settledResult(taskId, owner, self.awaitDriveTask(f));
+        // Webhooks were notified of each update as the updater stored it.
+        Task|Message|Error result = self.settledResult(taskId, owner, self.awaitDriveTask(f));
         boolean stopped = resultStopped(result, target.isNewTask);
         if stopped {
             broadcaster.close();
@@ -252,40 +253,9 @@ public isolated class DefaultHandler {
         self.untrackDriver(taskId);
         self.registry.release(taskId, stopped);
         if result is Task {
-            if drivenToThisState && !updater.wasCanceled() {
-                // Untrimmed: a registered webhook gets the task as it
-                // actually is, independent of what this caller happened to
-                // ask this one response to look like.
-                future<()> _ = start self.notifyPushConfigs(taskId, result.clone());
-            }
             return projectTask(result, true, historyLength);
-        } else if result is Message {
-            return result;
-        } else if result is Error {
-            // driveTask's own failure branch always returns the original
-            // Error, even when its best-effort updater.failed(...)
-            // transition succeeded and genuinely left the task FAILED in
-            // the store -- notifyPushConfigs's own doc comment says it
-            // fires "unconditional on the state reached", matching every
-            // reference SDK read last session (confirmed again here: the
-            // Python a2a-sdk's own event consumer fires a push notification
-            // for a FAILED TaskStatusUpdateEvent the same way it does for
-            // any other one -- PushNotificationEvent is a type alias
-            // covering it, not a distinct wrapper). updater.currentTask()
-            // -- "the last value written via transition" -- is exactly
-            // right here: it only reflects a transition whose own store
-            // write succeeded, so it correctly stays non-terminal (and
-            // this stays silent) when that best-effort failed() transition
-            // itself lost a race to a concurrent writer -- a case
-            // cancelTask's own notifyPushConfigs call already covers, so
-            // this can't double-notify for it.
-            Task current = updater.currentTask();
-            if isTerminalState(current.status.state) {
-                future<()> _ = start self.notifyPushConfigs(taskId, current.clone());
-            }
-            return result;
         }
-        return invalidAgentResponse("driveTask returned an unexpected type");
+        return result;
     }
 
     # Resolves the task a sendMessage/sendStreamingMessage call would drive: a
@@ -588,7 +558,7 @@ public isolated class DefaultHandler {
     # + returnImmediately - Forwarded to `driveTask`
     private isolated function finishDrivenTask(string taskId, string? owner, RequestContext context,
             TaskUpdater updater, EventBroadcaster broadcaster, boolean isNewTask, boolean returnImmediately) {
-        [Task|Message|Error, boolean] [result, drivenToThisState] = self.settledResult(taskId, owner,
+        Task|Message|Error result = self.settledResult(taskId, owner,
             self.driveTask(taskId, owner, context, updater, broadcaster, isNewTask, returnImmediately));
         boolean stopped = resultStopped(result, isNewTask);
         if result is Error {
@@ -607,54 +577,31 @@ public isolated class DefaultHandler {
         }
         self.untrackDriver(taskId);
         self.registry.release(taskId, stopped);
-        if result is Task && drivenToThisState && !updater.wasCanceled() {
-            future<()> _ = start self.notifyPushConfigs(taskId, result.clone());
-        } else if result is Error {
-            // Same reasoning as sendMessage's own identical check: driveTask
-            // returns the original Error even when its best-effort failed()
-            // transition succeeded, so a FAILED task otherwise never
-            // notifies. See that comment for the full rationale.
-            Task current = updater.currentTask();
-            if isTerminalState(current.status.state) {
-                future<()> _ = start self.notifyPushConfigs(taskId, current.clone());
-            }
-        }
     }
 
     # What a drive that has just ended actually left behind, read from the
     # store rather than taken from the drive's own report.
     #
     # `driveTask` reports the `TaskUpdater`'s last-written copy of the task,
-    # but the store is the truth: `cancelTask` (or any other writer) may have
-    # moved the task since the updater last wrote it, and the store then
-    # refuses the updater's later writes -- so its copy stays behind. A task
-    # canceled while its `execute` was still running would otherwise be
-    # reported, and webhooked, as whatever state the agent last reached
-    # (say WORKING), after the CANCELED that `cancelTask` already announced.
-    #
-    # The boolean says whether the drive itself produced the stored state. It
-    # did not when someone else moved the task, and that someone already
-    # notified the webhooks, so the caller must not do so again.
+    # but the store is the truth: another writer may have moved the task
+    # since the updater last wrote it, and the store then refuses the
+    # updater's later writes -- so its copy stays behind. A task ended that
+    # way while its `execute` was still running would otherwise be reported
+    # as whatever state the agent last reached (say WORKING).
     #
     # + taskId - The task that was driven
     # + owner - The caller's resolved owner scope, or `()`
     # + result - `driveTask`'s already-`wait`ed result
     # + return - The result to act on, with the stored task in place of a
-    #            stale one, and whether the drive itself produced it. A
-    #            `Message` or `Error` result, or an unreadable store, passes
-    #            through unchanged.
+    #            stale one. A `Message` or `Error` result, or an unreadable
+    #            store, passes through unchanged.
     private isolated function settledResult(string taskId, string? owner, Task|Message|Error result)
-            returns [Task|Message|Error, boolean] {
+            returns Task|Message|Error {
         if result !is Task {
-            return [result, true];
+            return result;
         }
         Task|Error? stored = self.store.get(taskId, owner);
-        if stored is Task {
-            boolean produced = stored.status.state == result.status.state
-                && stored.status?.timestamp == result.status?.timestamp;
-            return [stored, produced];
-        }
-        return [result, true];
+        return stored is Task ? stored : result;
     }
 
     # Handles sendStreamingMessage: like `sendMessage`, but returns a live
@@ -716,7 +663,8 @@ public isolated class DefaultHandler {
         // stream ever broadcasts (the seed, on the agent's first touch of
         // updater) -- see task_updater.bal's own handling of it.
         int? historyLength = request?.configuration?.historyLength;
-        final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster, historyLength);
+        final TaskUpdater updater = new (taskId, contextId, self.store, owner, seed, broadcaster, historyLength,
+            self);
         self.trackDriver(taskId, updater);
 
         // returnImmediately has no effect on streaming per the
@@ -874,7 +822,6 @@ public isolated class DefaultHandler {
         if broadcaster is EventBroadcaster {
             broadcaster.close();
         }
-        future<()> _ = start self.notifyPushConfigs(taskId, canceled.clone());
         return canceled;
     }
 
@@ -895,13 +842,14 @@ public isolated class DefaultHandler {
             return canceled;
         }
         // Only after the store write lands, so a subscriber never sees a
-        // CANCELED the store refused. Subscribers are latency-sensitive and
-        // webhooks are not, so this runs before notifyPushConfigs below.
+        // CANCELED the store refused.
         TaskStatusUpdateEvent event = {taskId, contextId: canceled.contextId ?: "", status: canceled.status};
         broadcaster.push(event);
         broadcaster.close();
+        if self.queueUpdate(taskId, canceled) {
+            self.deliverUpdates(taskId);
+        }
         self.registry.release(taskId, true);
-        future<()> _ = start self.notifyPushConfigs(taskId, canceled.clone());
         return canceled;
     }
 
@@ -1120,8 +1068,60 @@ public isolated class DefaultHandler {
         return extended;
     }
 
+    # Queues a stored update of a task for its webhooks. Called for every
+    # update the store takes: by the task's `TaskUpdater`, while it still
+    # holds its write lock, and by `cancelTask` for a task no driver is
+    # running. Updates are queued in the order they were stored.
+    #
+    # One strand per task delivers them, oldest first, so a webhook never
+    # receives a task's updates out of order, and the agent never waits on a
+    # slow webhook. The strand stops once the queue is empty, and the next
+    # update needs another. A strand cannot be started inside a `lock`, so the
+    # caller starts it with `deliverUpdates` once it has left its own.
+    #
+    # + taskId - The task that changed
+    # + task - The task as stored
+    # + return - `true` if no strand is delivering this task's updates, so the
+    #            caller must call `deliverUpdates`
+    isolated function queueUpdate(string taskId, Task task) returns boolean {
+        lock {
+            Task[]? pending = self.pendingPushes[taskId];
+            if pending is Task[] {
+                pending.push(task.clone());
+                return false;
+            }
+            self.pendingPushes[taskId] = [task.clone()];
+            return true;
+        }
+    }
+
+    # Starts the strand that delivers a task's queued updates.
+    #
+    # + taskId - The task whose updates to deliver
+    isolated function deliverUpdates(string taskId) {
+        future<()> _ = start self.deliverPushes(taskId);
+    }
+
+    # Delivers a task's queued updates in order until none are left.
+    #
+    # + taskId - The task whose updates to deliver
+    private isolated function deliverPushes(string taskId) {
+        while true {
+            Task next;
+            lock {
+                Task[]? pending = self.pendingPushes[taskId];
+                if pending is () || pending.length() == 0 {
+                    _ = self.pendingPushes.removeIfHasKey(taskId);
+                    return;
+                }
+                next = pending.shift().clone();
+            }
+            self.notifyPushConfigs(taskId, next);
+        }
+    }
+
     # Notifies every push-notification config registered for a task that it
-    # reached a new state, fire-and-forget.
+    # changed. Called only by `deliverPushes`.
     #
     # Unconditional on the state reached -- not filtered to terminal states
     # -- matching every reference SDK read this session; a deliberate
