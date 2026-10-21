@@ -265,10 +265,12 @@ public isolated class InMemoryTaskStore {
         string nextPageToken = endIndex < matched.length() && page.length() > 0
             ? page[page.length() - 1].id
             : "";
+        // The page size used, not the number of tasks on this page: a last
+        // page can hold fewer.
         return {
             tasks: page,
             nextPageToken,
-            pageSize: page.length(),
+            pageSize,
             totalSize: matched.length()
         };
     }

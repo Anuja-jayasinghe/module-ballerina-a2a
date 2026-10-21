@@ -229,3 +229,19 @@ function testOnlyTheFourTerminalStatesAreTerminal() {
         test:assertEquals(state is TaskTerminalState, expected, string `${state} in TaskTerminalState`);
     }
 }
+
+// `pageSize` is the page size used, so a last page that holds fewer tasks
+// still reports it, and an unset size reports the default.
+@test:Config {}
+function testListReportsThePageSizeUsedNotTheTaskCount() returns error? {
+    InMemoryTaskStore store = new;
+    foreach int i in 1 ... 3 {
+        check store.put(taskAt(string `p${i}`, TASK_STATE_WORKING, string `2026-01-01T00:00:0${i}Z`), ());
+    }
+    ListTasksResponse sized = check store.list({pageSize: 10}, ());
+    test:assertEquals(sized.tasks.length(), 3);
+    test:assertEquals(sized.pageSize, 10);
+
+    ListTasksResponse defaulted = check store.list({}, ());
+    test:assertEquals(defaulted.pageSize, 50);
+}
