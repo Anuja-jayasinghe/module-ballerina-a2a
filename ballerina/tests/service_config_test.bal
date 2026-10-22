@@ -302,7 +302,7 @@ isolated service class GetTaskOnlyService {
     isolated resource function get agentCard() returns AgentCard|Error => self.card;
 
     isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
-        return self.handler.getTask(context, request);
+        return self.handler.onGetTask(context, request);
     }
 }
 
@@ -321,12 +321,12 @@ isolated service class HalfStreamingService {
 
     isolated resource function post message\:send(Context context, SendMessageRequest request)
             returns Task|Message|Error {
-        return self.handler.sendMessage(context, request);
+        return self.handler.onSendMessage(context, request);
     }
 
     isolated resource function post message\:stream(Context context, SendMessageRequest request)
             returns stream<StreamResponse, Error?>|Error {
-        return self.handler.sendStreamingMessage(context, request);
+        return self.handler.onSendStreamingMessage(context, request);
     }
 }
 
@@ -402,11 +402,11 @@ isolated service on declarativeListenerA, declarativeListenerB {
 
     isolated resource function post message\:send(Context context, SendMessageRequest request)
             returns Task|Message|Error {
-        return declarativeHandler.sendMessage(context, request);
+        return declarativeHandler.onSendMessage(context, request);
     }
 
     isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
-        return declarativeHandler.getTask(context, request);
+        return declarativeHandler.onGetTask(context, request);
     }
 }
 

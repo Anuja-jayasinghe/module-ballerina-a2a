@@ -91,13 +91,13 @@ function testAContinuationDoesNotOverwriteATurnThatFinishedFirst() returns error
     DefaultHandler handler = new (new TurnRecordingAgent(), taskStore = store);
     Context context = {headers: {}};
 
-    Task first = <Task>check handler.sendMessage(context, turn("first"));
+    Task first = <Task>check handler.onSendMessage(context, turn("first"));
     test:assertEquals(first.status.state, TASK_STATE_INPUT_REQUIRED);
 
     store.arm();
-    future<Task|Message|Error> late = start handler.sendMessage(context, turn("b", first.id));
+    future<Task|Message|Error> late = start handler.onSendMessage(context, turn("b", first.id));
     store.awaitHeld();
-    Task a = <Task>check handler.sendMessage(context, turn("a", first.id));
+    Task a = <Task>check handler.onSendMessage(context, turn("a", first.id));
     test:assertEquals(a.status.state, TASK_STATE_INPUT_REQUIRED);
     store.release();
     Task b = <Task>check wait late;
@@ -133,11 +133,11 @@ function testABlockingSendCanceledMidwayReturnsTheCanceledTask() returns error? 
     DefaultHandler handler = new (new CancelRaceAgent());
     Context context = {headers: {}};
 
-    future<Task|Message|Error> sent = start handler.sendMessage(context, turn("cancel-race"));
+    future<Task|Message|Error> sent = start handler.onSendMessage(context, turn("cancel-race"));
     cancelRaceGate.awaitStep(1);
-    Task[] listed = (check handler.listTasks(context, {})).tasks;
+    Task[] listed = (check handler.onListTasks(context, {})).tasks;
     test:assertEquals(listed.length(), 1);
-    Task canceled = check handler.cancelTask(context, {id: listed[0].id});
+    Task canceled = check handler.onCancelTask(context, {id: listed[0].id});
     test:assertEquals(canceled.status.state, TASK_STATE_CANCELED);
     cancelRaceGate.advanceTo(2);
 

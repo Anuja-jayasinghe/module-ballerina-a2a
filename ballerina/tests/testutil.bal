@@ -766,43 +766,43 @@ isolated service class FullService {
     }
 
     isolated resource function post message\:send(Context context, SendMessageRequest request) returns Task|Message|Error {
-        return self.handler.sendMessage(context, request);
+        return self.handler.onSendMessage(context, request);
     }
 
     isolated resource function post message\:stream(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
-        return self.handler.sendStreamingMessage(context, request);
+        return self.handler.onSendStreamingMessage(context, request);
     }
 
     isolated resource function get tasks/[string id]/subscribe(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
-        return self.handler.subscribeToTask(context, request);
+        return self.handler.onSubscribeToTask(context, request);
     }
 
     isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
-        return self.handler.getTask(context, request);
+        return self.handler.onGetTask(context, request);
     }
 
     isolated resource function get tasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
-        return self.handler.listTasks(context, request);
+        return self.handler.onListTasks(context, request);
     }
 
     isolated resource function post tasks/[string id]/cancel(Context context, CancelTaskRequest request) returns Task|Error {
-        return self.handler.cancelTask(context, request);
+        return self.handler.onCancelTask(context, request);
     }
 
     isolated resource function post tasks/[string id]/pushNotificationConfigs(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
-        return self.handler.createTaskPushNotificationConfig(context, request);
+        return self.handler.onCreateTaskPushNotificationConfig(context, request);
     }
 
     isolated resource function get tasks/[string id]/pushNotificationConfigs/[string configId](Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
-        return self.handler.getTaskPushNotificationConfig(context, request);
+        return self.handler.onGetTaskPushNotificationConfig(context, request);
     }
 
     isolated resource function get tasks/[string id]/pushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
-        return self.handler.listTaskPushNotificationConfigs(context, request);
+        return self.handler.onListTaskPushNotificationConfigs(context, request);
     }
 
     isolated resource function delete tasks/[string id]/pushNotificationConfigs/[string configId](Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
-        return self.handler.deleteTaskPushNotificationConfig(context, request);
+        return self.handler.onDeleteTaskPushNotificationConfig(context, request);
     }
 }
 
@@ -823,47 +823,47 @@ isolated service class ExtendedService {
     }
 
     isolated resource function post message\:send(Context context, SendMessageRequest request) returns Task|Message|Error {
-        return self.handler.sendMessage(context, request);
+        return self.handler.onSendMessage(context, request);
     }
 
     isolated resource function post message\:stream(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
-        return self.handler.sendStreamingMessage(context, request);
+        return self.handler.onSendStreamingMessage(context, request);
     }
 
     isolated resource function get tasks/[string id]/subscribe(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
-        return self.handler.subscribeToTask(context, request);
+        return self.handler.onSubscribeToTask(context, request);
     }
 
     isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
-        return self.handler.getTask(context, request);
+        return self.handler.onGetTask(context, request);
     }
 
     isolated resource function get tasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
-        return self.handler.listTasks(context, request);
+        return self.handler.onListTasks(context, request);
     }
 
     isolated resource function post tasks/[string id]/cancel(Context context, CancelTaskRequest request) returns Task|Error {
-        return self.handler.cancelTask(context, request);
+        return self.handler.onCancelTask(context, request);
     }
 
     isolated resource function post tasks/[string id]/pushNotificationConfigs(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
-        return self.handler.createTaskPushNotificationConfig(context, request);
+        return self.handler.onCreateTaskPushNotificationConfig(context, request);
     }
 
     isolated resource function get tasks/[string id]/pushNotificationConfigs/[string configId](Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
-        return self.handler.getTaskPushNotificationConfig(context, request);
+        return self.handler.onGetTaskPushNotificationConfig(context, request);
     }
 
     isolated resource function get tasks/[string id]/pushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
-        return self.handler.listTaskPushNotificationConfigs(context, request);
+        return self.handler.onListTaskPushNotificationConfigs(context, request);
     }
 
     isolated resource function delete tasks/[string id]/pushNotificationConfigs/[string configId](Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
-        return self.handler.deleteTaskPushNotificationConfig(context, request);
+        return self.handler.onDeleteTaskPushNotificationConfig(context, request);
     }
 
     isolated resource function get extendedAgentCard(Context context, GetExtendedAgentCardRequest request) returns AgentCard|Error {
-        return self.handler.getExtendedAgentCard(context, request);
+        return self.handler.onGetExtendedAgentCard(context, request);
     }
 }
 
@@ -884,35 +884,35 @@ isolated service class NoStreamingService {
     }
 
     isolated resource function post message\:send(Context context, SendMessageRequest request) returns Task|Message|Error {
-        return self.handler.sendMessage(context, request);
+        return self.handler.onSendMessage(context, request);
     }
 
     isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
-        return self.handler.getTask(context, request);
+        return self.handler.onGetTask(context, request);
     }
 
     isolated resource function get tasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
-        return self.handler.listTasks(context, request);
+        return self.handler.onListTasks(context, request);
     }
 
     isolated resource function post tasks/[string id]/cancel(Context context, CancelTaskRequest request) returns Task|Error {
-        return self.handler.cancelTask(context, request);
+        return self.handler.onCancelTask(context, request);
     }
 
     isolated resource function post tasks/[string id]/pushNotificationConfigs(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
-        return self.handler.createTaskPushNotificationConfig(context, request);
+        return self.handler.onCreateTaskPushNotificationConfig(context, request);
     }
 
     isolated resource function get tasks/[string id]/pushNotificationConfigs/[string configId](Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
-        return self.handler.getTaskPushNotificationConfig(context, request);
+        return self.handler.onGetTaskPushNotificationConfig(context, request);
     }
 
     isolated resource function get tasks/[string id]/pushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
-        return self.handler.listTaskPushNotificationConfigs(context, request);
+        return self.handler.onListTaskPushNotificationConfigs(context, request);
     }
 
     isolated resource function delete tasks/[string id]/pushNotificationConfigs/[string configId](Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
-        return self.handler.deleteTaskPushNotificationConfig(context, request);
+        return self.handler.onDeleteTaskPushNotificationConfig(context, request);
     }
 }
 
@@ -933,27 +933,27 @@ isolated service class NoPushService {
     }
 
     isolated resource function post message\:send(Context context, SendMessageRequest request) returns Task|Message|Error {
-        return self.handler.sendMessage(context, request);
+        return self.handler.onSendMessage(context, request);
     }
 
     isolated resource function post message\:stream(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
-        return self.handler.sendStreamingMessage(context, request);
+        return self.handler.onSendStreamingMessage(context, request);
     }
 
     isolated resource function get tasks/[string id]/subscribe(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
-        return self.handler.subscribeToTask(context, request);
+        return self.handler.onSubscribeToTask(context, request);
     }
 
     isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
-        return self.handler.getTask(context, request);
+        return self.handler.onGetTask(context, request);
     }
 
     isolated resource function get tasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
-        return self.handler.listTasks(context, request);
+        return self.handler.onListTasks(context, request);
     }
 
     isolated resource function post tasks/[string id]/cancel(Context context, CancelTaskRequest request) returns Task|Error {
-        return self.handler.cancelTask(context, request);
+        return self.handler.onCancelTask(context, request);
     }
 }
 
@@ -975,7 +975,7 @@ isolated service class MessageOnlyService {
 
     isolated resource function post message\:send(Context context, SendMessageRequest request)
             returns Task|Message|Error {
-        return self.handler.sendMessage(context, request);
+        return self.handler.onSendMessage(context, request);
     }
 }
 

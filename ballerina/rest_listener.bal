@@ -138,7 +138,7 @@ isolated function httpListenerConfigurationOf(RestListenerConfiguration config) 
 #
 #     isolated resource function post message\:send(a2a:Context context, a2a:SendMessageRequest request)
 #             returns a2a:Task|a2a:Message|a2a:Error {
-#         return self.handler.sendMessage(context, request);
+#         return self.handler.onSendMessage(context, request);
 #     }
 #     // ...the other operations the agent supports
 # }

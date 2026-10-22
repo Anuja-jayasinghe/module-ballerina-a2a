@@ -849,7 +849,7 @@ function testServerRoundTripSubscribeRacingCompletionEndsCleanly() returns error
     DefaultHandler handler = new (new CountingAgent(), taskStore = store);
 
     stream<StreamResponse, Error?>|Error result =
-        handler.subscribeToTask({headers: {}, streamTiming: {idleTimeout: 300}}, {id: "race-1"});
+        handler.onSubscribeToTask({headers: {}, streamTiming: {idleTimeout: 300}}, {id: "race-1"});
     if result is Error {
         test:assertFail(result.message());
     }
@@ -933,7 +933,7 @@ function testServerRoundTripCancelRacingCompletionIsNotCancelable() returns erro
     TaskStore store = new RefusesWriteAfterFirstGet("race-2");
     DefaultHandler handler = new (new CountingAgent(), taskStore = store);
 
-    Task|Error canceled = handler.cancelTask({headers: {}}, {id: "race-2"});
+    Task|Error canceled = handler.onCancelTask({headers: {}}, {id: "race-2"});
     test:assertTrue(canceled is TaskNotCancelableError,
             "a cancel that loses the race to the task's own completion must be TaskNotCancelableError, not a bare 500");
 }

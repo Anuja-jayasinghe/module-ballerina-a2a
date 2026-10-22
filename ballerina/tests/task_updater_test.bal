@@ -40,13 +40,13 @@ function testAnAddedArtifactIsStoredBeforeTheTaskEnds() returns error? {
     DefaultHandler handler = new (new ArtifactThenWaitAgent());
     Context context = {headers: {}};
 
-    Task|Message|Error sent = handler.sendMessage(context,
+    Task|Message|Error sent = handler.onSendMessage(context,
             {message: {messageId: "artifact-1", role: ROLE_USER, parts: [{text: "go"}]}, configuration: {returnImmediately: true}});
     if sent !is Task {
         test:assertFail("expected the task back immediately");
     }
     artifactGate.awaitStep(1);
-    Task working = check handler.getTask(context, {id: sent.id});
+    Task working = check handler.onGetTask(context, {id: sent.id});
     test:assertEquals(working.status.state, TASK_STATE_WORKING);
     string[] texts = from Artifact artifact in working.artifacts ?: [] select artifact.parts[0]?.text ?: "";
     test:assertEquals(texts, ["partial"], "getTask must show the artifact the stream already announced");
@@ -79,14 +79,14 @@ function testACancelDoesNotDropAnUpdateStoredAfterItsRead() returns error? {
     DefaultHandler handler = new (new ArtifactDuringCancelAgent(), taskStore = store);
     Context context = {headers: {}};
 
-    Task|Message|Error sent = handler.sendMessage(context,
+    Task|Message|Error sent = handler.onSendMessage(context,
             {message: {messageId: "cancel-order-1", role: ROLE_USER, parts: [{text: "go"}]}, configuration: {returnImmediately: true}});
     if sent !is Task {
         test:assertFail("expected the task back immediately");
     }
     cancelOrderGate.awaitStep(1);
     store.arm();
-    future<Task|Error> cancel = start handler.cancelTask(context, {id: sent.id});
+    future<Task|Error> cancel = start handler.onCancelTask(context, {id: sent.id});
     store.awaitHeld();
     cancelOrderGate.advanceTo(2);
     cancelOrderGate.awaitStep(3);
@@ -156,7 +156,7 @@ function testAWebhookHearsEveryUpdateInOrder() returns error? {
     DefaultHandler handler = new (new ThreeUpdatesAgent(), pushSender = sender);
     Context context = {headers: {}};
 
-    Task|Message|Error sent = handler.sendMessage(context, {
+    Task|Message|Error sent = handler.onSendMessage(context, {
         message: {messageId: "push-order-1", role: ROLE_USER, parts: [{text: "go"}]},
         configuration: {taskPushNotificationConfig: {url: "https://client.example.com/hook"}}
     });
@@ -188,7 +188,7 @@ function testAWebhookHearsACancelOnceAndInOrder() returns error? {
     DefaultHandler handler = new (new CanceledWhileWorkingAgent(), pushSender = sender);
     Context context = {headers: {}};
 
-    Task|Message|Error sent = handler.sendMessage(context, {
+    Task|Message|Error sent = handler.onSendMessage(context, {
         message: {messageId: "push-cancel-1", role: ROLE_USER, parts: [{text: "go"}]},
         configuration: {returnImmediately: true, taskPushNotificationConfig: {url: "https://client.example.com/hook"}}
     });
@@ -196,7 +196,7 @@ function testAWebhookHearsACancelOnceAndInOrder() returns error? {
         test:assertFail("expected the task back immediately");
     }
     pushCancelGate.awaitStep(1);
-    Task canceled = check handler.cancelTask(context, {id: sent.id});
+    Task canceled = check handler.onCancelTask(context, {id: sent.id});
     test:assertEquals(canceled.status.state, TASK_STATE_CANCELED);
     pushCancelGate.advanceTo(2);
 
