@@ -84,7 +84,8 @@ isolated class CardRegistry {
 }
 
 # Serves the public Agent Card at `/.well-known/agent-card.json` (specification
-# section 8.2). Public: it is the one path that needs no authentication.
+# section 8.2). Public: it is the one path that needs no authentication. Any
+# other path outside a mounted binding gets the HTTP module's own 404 or 405.
 isolated service class CardService {
     *http:Service;
 
@@ -98,23 +99,13 @@ isolated service class CardService {
         self.publicUrl = publicUrl;
     }
 
-    isolated resource function get [string... path](http:Request req) returns http:Response {
-        if path == [".well-known", "agent-card.json"] {
-            string|http:HeaderNotFoundError host = req.getHeader("Host");
-            string baseUrl = interfaceUrlFor(self.publicUrl, self.interfaceScheme, host is string ? host : "");
-            AgentCard? card = self.registry.served(baseUrl);
-            if card is AgentCard {
-                return cardHttpResponse(card);
-            }
+    isolated resource function get \.well\-known/agent\-card\.json(http:Request req) returns http:Response|http:NotFound {
+        string|http:HeaderNotFoundError host = req.getHeader("Host");
+        string baseUrl = interfaceUrlFor(self.publicUrl, self.interfaceScheme, host is string ? host : "");
+        AgentCard? card = self.registry.served(baseUrl);
+        if card is () {
+            return http:NOT_FOUND;
         }
-        return toRestErrorResponse(methodNotFound(string `no A2A operation at GET /${string:'join("/", ...path)}`));
-    }
-
-    isolated resource function post [string... path](http:Request req) returns http:Response {
-        return toRestErrorResponse(methodNotFound(string `no A2A operation at POST /${string:'join("/", ...path)}`));
-    }
-
-    isolated resource function delete [string... path](http:Request req) returns http:Response {
-        return toRestErrorResponse(methodNotFound(string `no A2A operation at DELETE /${string:'join("/", ...path)}`));
+        return cardHttpResponse(card);
     }
 }

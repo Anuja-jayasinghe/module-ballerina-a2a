@@ -2190,10 +2190,21 @@ isolated function reasonOf(http:Response resp) returns string?|error {
 @test:Config {}
 function testUnknownPathIs404NotFound() returns error? {
     http:Client raw = check new (serverUrl);
-    http:Response resp = check raw->get("/nope", {"A2A-Version": "1.0"});
+    http:Response resp = check raw->get("/rest/nope", {"A2A-Version": "1.0"});
     test:assertEquals(resp.statusCode, 404, "a path that is no A2A operation is not a server fault");
     test:assertEquals(check reasonOf(resp), "METHOD_NOT_FOUND");
     test:assertTrue(resp.getContentType().startsWith("application/a2a+json"));
+}
+
+// Outside a mounted binding only the card's own path is routed; anything else
+// is the HTTP module's plain 404.
+@test:Config {}
+function testUnknownPathOutsideABindingIsAPlain404() returns error? {
+    http:Client raw = check new (serverUrl);
+    http:Response resp = check raw->get("/nope", {"A2A-Version": "1.0"});
+    test:assertEquals(resp.statusCode, 404);
+    http:Response post = check raw->post("/nope", (), {"A2A-Version": "1.0"});
+    test:assertEquals(post.statusCode, 404);
 }
 
 // Finding 37: the proto's `{id=*}` matches exactly one path segment, so a
@@ -2239,7 +2250,7 @@ function testBarePushConfigPathWithNoTaskIdIs404NotACrash() returns error? {
     // start index); routing a bare "/pushNotificationConfigs" (no task id, no /tasks/
     // prefix at all) into it took that start index past the slice's own end.
     http:Client raw = check new (serverUrl);
-    http:Response resp = check raw->get("/pushNotificationConfigs", {"A2A-Version": "1.0"});
+    http:Response resp = check raw->get("/rest/pushNotificationConfigs", {"A2A-Version": "1.0"});
     test:assertEquals(resp.statusCode, 404, "never a legal path; must fall through cleanly, not crash the handler");
     test:assertEquals(check reasonOf(resp), "METHOD_NOT_FOUND");
 }
@@ -2276,7 +2287,7 @@ function testUnservedTenantIs400InvalidParams() returns error? {
 function testUnknownRouteAndUnknownTaskStayDistinguishable() returns error? {
     // Both are 404, but they mean different things and must say so.
     http:Client raw = check new (serverUrl);
-    http:Response route = check raw->get("/nope", {"A2A-Version": "1.0"});
+    http:Response route = check raw->get("/rest/nope", {"A2A-Version": "1.0"});
     http:Response task = check raw->get("/rest/tasks/does-not-exist", {"A2A-Version": "1.0"});
     test:assertEquals(route.statusCode, 404);
     test:assertEquals(task.statusCode, 404);
