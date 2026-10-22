@@ -17,14 +17,13 @@
 
 // How a service reaches the wire: the path that names its binding, where its
 // agent card comes from, which operations it defines and what the card says as
-// a result, an operation it does not define, a service shared by two
-// listeners, and a replacement `a2a:EventBroadcasterRegistry` actually used.
+// a result, an operation it does not define, and a service shared by two
+// listeners.
 
 import ballerina/http;
 import ballerina/test;
 
 const int RPC_REJECTION_PORT = 19268;
-const int CUSTOM_REGISTRY_PORT = 19269;
 const int DECLARATIVE_PORT_A = 19270;
 const int DECLARATIVE_PORT_B = 19271;
 const int ATTACH_RULES_PORT = 19273;
@@ -423,59 +422,6 @@ function testDeclarativeServiceOnTwoListenersSharesOneHandler() returns error? {
 
     Task fetched = check viaB->getTask({id: created.id});
     test:assertEquals(fetched.id, created.id, "both listeners serve the one handler's tasks");
-}
-
-// ---- a replacement event registry ----------------------------------------
-
-// Delegates to the in-memory default, counting the driver claims it is asked
-// for -- enough to prove the handler uses the registry it was given.
-isolated class CountingEventRegistry {
-    *EventBroadcasterRegistry;
-
-    private final InMemoryEventBroadcasterRegistry delegate = new;
-    private int acquired = 0;
-
-    public isolated function acquire(string taskId) returns EventBroadcaster? {
-        lock {
-            self.acquired += 1;
-        }
-        return self.delegate.acquire(taskId);
-    }
-
-    public isolated function subscribe(string taskId) returns EventBroadcaster => self.delegate.subscribe(taskId);
-
-    public isolated function release(string taskId, boolean closed) {
-        self.delegate.release(taskId, closed);
-    }
-
-    public isolated function peekBroadcaster(string taskId) returns EventBroadcaster? =>
-        self.delegate.peekBroadcaster(taskId);
-
-    isolated function acquireCount() returns int {
-        lock {
-            return self.acquired;
-        }
-    }
-}
-
-final CountingEventRegistry countingRegistry = new;
-final DefaultHandler customRegistryHandler = new (new CountingAgent(), eventRegistry = countingRegistry);
-
-listener RestListener customRegistryListener = new (CUSTOM_REGISTRY_PORT);
-
-@test:BeforeSuite
-function startCustomRegistryListener() returns error? {
-    check customRegistryListener.attach(new FullService(customRegistryHandler, authTestCard), "rest");
-}
-
-@test:Config {}
-function testHandlerUsesTheConfiguredEventRegistry() returns error? {
-    RestClient agentClient = check new (string `http://localhost:${CUSTOM_REGISTRY_PORT}`);
-    int before = countingRegistry.acquireCount();
-    Message|Task _ = check agentClient->sendMessage({
-        message: {messageId: "m-registry", role: ROLE_USER, parts: [{text: "hello"}]}
-    });
-    test:assertEquals(countingRegistry.acquireCount(), before + 1, "every driven message claims its task once");
 }
 
 @ServiceConfig {

@@ -477,14 +477,6 @@ final a2a:DefaultHandler handler = new (new WeatherExecutor(), taskStore = new M
 
 `a2a:InMemoryTaskStore` is the default, and its tasks do not survive a restart. Implement `a2a:TaskStore` (`put`, `get`, `list`, `remove`) to back an agent with real storage. `list` must sort by status timestamp, newest first, and omit `artifacts` unless asked.
 
-Live streams reach their subscribers through an `a2a:EventBroadcasterRegistry`. The default, `a2a:InMemoryEventBroadcasterRegistry`, reaches subscribers in the same process. A deployment that needs something else, such as a broker so a subscriber on one instance follows a task driven on another, supplies its own as `eventRegistry`:
-
-```ballerina
-final a2a:DefaultHandler handler = new (new WeatherExecutor(), eventRegistry = new MyBrokerEventRegistry());
-```
-
-A replacement must keep two guarantees: only one driver at a time per in-flight task (`acquire` returns `()` while another holds it), and every subscriber gets every event in the same order (specification section 3.5.2). To follow a task across instances without replacing anything, use push notifications ([section 7.5](#75-push-notifications)).
-
 ### 7.4 The extended Agent Card
 
 ```ballerina

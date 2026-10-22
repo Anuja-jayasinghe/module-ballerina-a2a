@@ -75,10 +75,6 @@ public type DefaultHandlerConfiguration record {|
     # `ownerResolver`, delivery needs no identity this library cannot
     # invent, so it has a working default rather than an optional hook.
     PushNotificationSender pushSender = new HttpPushNotificationSender();
-    # Where a task's live events travel to its streaming subscribers. Defaults
-    # to `a2a:InMemoryEventBroadcasterRegistry`, which reaches subscribers in
-    # this process; see `a2a:EventBroadcasterRegistry` for replacing it.
-    EventBroadcasterRegistry eventRegistry = new InMemoryEventBroadcasterRegistry();
 |};
 
 # How one live stream behaves while nothing is happening: the listener's
@@ -141,7 +137,7 @@ public isolated class DefaultHandler {
         self.store = config.taskStore;
         self.ownerResolver = config.ownerResolver;
         self.pushSender = config.pushSender;
-        self.registry = config.eventRegistry;
+        self.registry = new InMemoryEventBroadcasterRegistry();
     }
 
     # Resolves a caller's owner scope: the configured `a2a:TaskOwnerResolver`'s
