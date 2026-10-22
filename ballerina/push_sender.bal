@@ -32,7 +32,7 @@ import ballerina/http;
 # different retry policy, a non-HTTP transport); to only change how a
 # webhook URL is validated or how the request is built, configure
 # `a2a:HttpPushNotificationSender` instead of replacing it.
-public type PushNotificationSender isolated object {
+public type PushNotificationSender isolated client object {
 
     # Delivers one update.
     #
@@ -41,7 +41,7 @@ public type PushNotificationSender isolated object {
     # + task - The task's state at the moment of this call
     # + return - An `a2a:Error` if delivery failed; callers are expected to
     #            log and continue, not fail the operation that triggered it
-    public isolated function send(TaskPushNotificationConfig config, Task task) returns Error?;
+    isolated remote function send(TaskPushNotificationConfig config, Task task) returns Error?;
 };
 
 # Configuration for `a2a:HttpPushNotificationSender`.
@@ -76,7 +76,7 @@ public type PushNotificationSenderConfiguration record {|
 # shape a streaming client receives -- so a receiver can tell a task from a
 # status or artifact update by the key alone. The media type is
 # `application/a2a+json`.
-public isolated class HttpPushNotificationSender {
+public isolated client class HttpPushNotificationSender {
     *PushNotificationSender;
 
     private final decimal timeout;
@@ -93,7 +93,7 @@ public isolated class HttpPushNotificationSender {
     # + config - The webhook to call
     # + task - The task's state at the moment of this call
     # + return - An `a2a:Error` if delivery failed
-    public isolated function send(TaskPushNotificationConfig config, Task task) returns Error? {
+    isolated remote function send(TaskPushNotificationConfig config, Task task) returns Error? {
         if self.validateUrl {
             check validateWebhookUrl(config.url);
         }

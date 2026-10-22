@@ -1141,7 +1141,7 @@ public isolated class DefaultHandler {
             configs = (self.pushConfigs[taskId] ?: {}).clone();
         }
         foreach TaskPushNotificationConfig config in configs {
-            Error? deliveryResult = self.pushSender.send(config, task);
+            Error? deliveryResult = self.pushSender->send(config, task);
             if deliveryResult is Error {
                 // Fire-and-forget: a delivery failure must not fail the
                 // operation that triggered it, so it is logged here rather

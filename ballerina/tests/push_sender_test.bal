@@ -122,7 +122,7 @@ isolated function recordWebhookCall(CapturedWebhookCall call) {
 // that non-destructively and waits for the one matching the task this test
 // itself is asserting on, leaving every other entry (this test's own
 // earlier calls, or another test's) exactly where it was for whoever is
-// looking for it. A direct, synchronous PushNotificationSender.send call has
+// looking for it. A direct, synchronous PushNotificationSender->send call has
 // already landed when it returns, but its test still reads the call by task
 // id, so a straggler from another test cannot be taken for it.
 isolated function peekWebhookHistory() returns CapturedWebhookCall[] {
@@ -255,7 +255,7 @@ function testHttpPushNotificationSenderPostsTaskBody() returns error? {
     HttpPushNotificationSender sender = new ({validateUrl: false});
     Task posted = sampleTask();
     posted.id = "push-posts-task-body";
-    Error? result = sender.send({url: string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`}, posted);
+    Error? result = sender->send({url: string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`}, posted);
     test:assertTrue(result is (), "delivery to a real, reachable receiver must succeed");
 
     CapturedWebhookCall? call = awaitWebhookCallForTask(posted.id);
@@ -285,7 +285,7 @@ function testHttpPushNotificationSenderEncodesFileBytesAsBase64() returns error?
         artifactId: "a1",
         parts: [{raw: "tck".toBytes(), mediaType: "text/plain", filename: "output.txt"}]
     }];
-    Error? result = sender.send({url: string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`}, withFile);
+    Error? result = sender->send({url: string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`}, withFile);
     test:assertTrue(result is (), "delivery to a real, reachable receiver must succeed");
 
     CapturedWebhookCall received = <CapturedWebhookCall>awaitWebhookCallForTask(withFile.id);
@@ -303,7 +303,7 @@ function testHttpPushNotificationSenderSendsTokenAndAuthHeaders() returns error?
     HttpPushNotificationSender sender = new ({validateUrl: false});
     Task withHeaders = sampleTask();
     withHeaders.id = "push-sends-token-and-auth";
-    Error? result = sender.send({
+    Error? result = sender->send({
         url: string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`,
         token: "corr-42",
         authentication: {scheme: "Bearer", credentials: "secret-token"}
@@ -320,7 +320,7 @@ function testHttpPushNotificationSenderSendsTokenAndAuthHeaders() returns error?
 @test:Config {}
 function testHttpPushNotificationSenderRejectsDisallowedUrlBeforeSending() returns error? {
     HttpPushNotificationSender sender = new ();
-    Error? result = sender.send({url: "http://127.0.0.1:9/unreachable"}, sampleTask());
+    Error? result = sender->send({url: "http://127.0.0.1:9/unreachable"}, sampleTask());
     test:assertTrue(result is Error, "a loopback URL must be rejected before any connection is attempted");
 }
 
@@ -330,7 +330,7 @@ function testHttpPushNotificationSenderValidationCanBeDisabled() returns error? 
     // listens -- proving validateUrl: false genuinely lets a deployment
     // reach an internal host, not just that the flag exists.
     HttpPushNotificationSender sender = new ({validateUrl: false});
-    Error? result = sender.send({url: string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`},
+    Error? result = sender->send({url: string `http://localhost:${PUSH_SENDER_TEST_PORT}/webhook/receiver`},
             sampleTask());
     test:assertTrue(result is (), "validateUrl: false must allow a loopback webhook through");
 }
@@ -338,7 +338,7 @@ function testHttpPushNotificationSenderValidationCanBeDisabled() returns error? 
 @test:Config {}
 function testHttpPushNotificationSenderUnreachableHostIsAnError() returns error? {
     HttpPushNotificationSender sender = new ({validateUrl: false, retryConfig: ()});
-    Error? result = sender.send({url: "http://localhost:1/nobody-listens-here"}, sampleTask());
+    Error? result = sender->send({url: "http://localhost:1/nobody-listens-here"}, sampleTask());
     test:assertTrue(result is Error, "an unreachable webhook must return an Error, not panic or hang");
 }
 
@@ -380,7 +380,7 @@ final http:RetryConfig & readonly quickRetry = {
 @test:Config {}
 function testHttpPushNotificationSenderRetriesATransientFailure() returns error? {
     HttpPushNotificationSender sender = new ({validateUrl: false, retryConfig: quickRetry});
-    Error? result = sender.send({url: flakyUrl("transient", 2, 503)}, sampleTask());
+    Error? result = sender->send({url: flakyUrl("transient", 2, 503)}, sampleTask());
     test:assertTrue(result is (), "a webhook that recovers within the retries must count as delivered");
     test:assertEquals(flakyAttempts("transient"), 3, "two 503s, then the 200");
 }
@@ -388,7 +388,7 @@ function testHttpPushNotificationSenderRetriesATransientFailure() returns error?
 @test:Config {}
 function testHttpPushNotificationSenderGivesUpAfterTheLastRetry() returns error? {
     HttpPushNotificationSender sender = new ({validateUrl: false, retryConfig: quickRetry});
-    Error? result = sender.send({url: flakyUrl("down", 99, 500)}, sampleTask());
+    Error? result = sender->send({url: flakyUrl("down", 99, 500)}, sampleTask());
     test:assertTrue(result is Error, "a webhook still failing after every retry is a failed delivery");
     test:assertEquals(flakyAttempts("down"), 4, "the first attempt and three retries");
 }
@@ -396,7 +396,7 @@ function testHttpPushNotificationSenderGivesUpAfterTheLastRetry() returns error?
 @test:Config {}
 function testHttpPushNotificationSenderDoesNotRetryAClientError() returns error? {
     HttpPushNotificationSender sender = new ({validateUrl: false, retryConfig: quickRetry});
-    Error? result = sender.send({url: flakyUrl("refused", 99, 404)}, sampleTask());
+    Error? result = sender->send({url: flakyUrl("refused", 99, 404)}, sampleTask());
     test:assertTrue(result is Error, "a 404 is not an acknowledgement");
     test:assertEquals(flakyAttempts("refused"), 1, "a 4xx other than 408 and 429 will not change on retry");
 }
@@ -404,7 +404,7 @@ function testHttpPushNotificationSenderDoesNotRetryAClientError() returns error?
 @test:Config {}
 function testHttpPushNotificationSenderRetriesByDefault() returns error? {
     HttpPushNotificationSender sender = new ({validateUrl: false});
-    Error? result = sender.send({url: flakyUrl("default", 1, 503)}, sampleTask());
+    Error? result = sender->send({url: flakyUrl("default", 1, 503)}, sampleTask());
     test:assertTrue(result is (), "the default configuration must retry a 503");
     test:assertEquals(flakyAttempts("default"), 2);
 }
@@ -412,7 +412,7 @@ function testHttpPushNotificationSenderRetriesByDefault() returns error? {
 @test:Config {}
 function testHttpPushNotificationSenderRetryCanBeDisabled() returns error? {
     HttpPushNotificationSender sender = new ({validateUrl: false, retryConfig: ()});
-    Error? result = sender.send({url: flakyUrl("once", 1, 503)}, sampleTask());
+    Error? result = sender->send({url: flakyUrl("once", 1, 503)}, sampleTask());
     test:assertTrue(result is Error);
     test:assertEquals(flakyAttempts("once"), 1, "retryConfig: () must send each update once");
 }

@@ -103,12 +103,12 @@ function testACancelDoesNotDropAnUpdateStoredAfterItsRead() returns error? {
 
 // Records what each push delivery carried, in delivery order, and holds the
 // first delivery a while so later updates queue up behind it.
-isolated class RecordingPushSender {
+isolated client class RecordingPushSender {
     *PushNotificationSender;
 
     private string[] delivered = [];
 
-    public isolated function send(TaskPushNotificationConfig config, Task task) returns Error? {
+    isolated remote function send(TaskPushNotificationConfig config, Task task) returns Error? {
         boolean first;
         lock {
             first = self.delivered.length() == 0;
