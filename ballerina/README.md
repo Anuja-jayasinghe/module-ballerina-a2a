@@ -520,7 +520,7 @@ a2a:TaskPushNotificationConfig config = check agent->createTaskPushNotificationC
 
 `config.token`, if set, is echoed back as the `X-A2A-Notification-Token` header on every delivery, for correlation. `config.authentication`, if set, becomes a standard `Authorization: <scheme> <credentials>` header on the outbound call.
 
-Delivery uses `a2a:HttpPushNotificationSender` by default, an HTTP POST with a configurable timeout. It rejects a webhook URL that is not `http`/`https`, or whose host is a loopback, link-local, private (RFC 1918), carrier-grade-NAT, or otherwise non-public address — specification section 13.2's SSRF-protection obligation — before ever connecting:
+Delivery uses `a2a:HttpPushNotificationSender` by default, an HTTP POST with a configurable timeout. It rejects a webhook URL that is not `http`/`https`, or whose host is a loopback, link-local, private (RFC 1918), carrier-grade-NAT, or otherwise non-public address — specification section 13.2's SSRF-protection obligation — before ever connecting. A numeric host written in hex or with a leading zero, such as `0x7f.0.0.1` or `0177.0.0.1`, is refused too, since resolvers do not agree on what address it names:
 
 ```ballerina
 final a2a:DefaultHandler handler = new (new WeatherExecutor(),

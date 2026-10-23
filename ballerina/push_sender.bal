@@ -222,7 +222,8 @@ isolated function validateWebhookUrl(string url) returns Error? {
 # names a loopback, link-local (which covers the
 # `169.254.169.254`-style cloud metadata endpoint), private (RFC 1918),
 # carrier-grade-NAT (`100.64.0.0/10`), or IPv6 unique-local/loopback/
-# link-local address.
+# link-local address, or is a numeric host written in hex or with a leading
+# zero, which resolvers do not all read the same way.
 #
 # + host - The lowercased host, brackets and port already stripped
 # + return - Whether the host is a disallowed IP literal
