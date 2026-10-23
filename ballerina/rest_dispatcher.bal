@@ -486,7 +486,7 @@ isolated service class RestDispatcherService {
 
     # Handles GET /tasks/{id}:subscribe: the task's current state, followed
     # live by every further event a driver still running against it
-    # produces. See `DefaultHandler.subscribeToTask` for the terminal-task
+    # produces. See `DefaultHandler.handleSubscribeToTask` for the terminal-task
     # rejection and the attach-before-snapshot ordering.
     #
     # + id - The task id

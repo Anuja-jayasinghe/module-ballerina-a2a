@@ -43,7 +43,7 @@ public type Context record {|
     map<string[]> headers;
     # How long a live stream may stay quiet, and how often it sends a
     # keep-alive. The listener's policy, set for the streaming operations
-    # (`a2a:DefaultHandler.sendStreamingMessage`/`subscribeToTask` apply it);
+    # (`a2a:DefaultHandler.handleSendStreamingMessage`/`handleSubscribeToTask` apply it);
     # unset means no timeout and no keep-alive.
     StreamTiming streamTiming?;
 |};

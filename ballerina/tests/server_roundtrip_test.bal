@@ -88,8 +88,8 @@ listener RestListener extendedCardListener = new (EXTENDED_CARD_TEST_PORT, auth 
 //   as text, "raw: <bytes>".
 // - "ping": a direct Message reply, no task at all.
 // - "ask": pauses at TASK_STATE_INPUT_REQUIRED, for continuation tests.
-// - "boom": onMessage returns an a2a:Error directly.
-// - "panic": onMessage panics, for driveTask's own `trap` to catch.
+// - "boom": execute returns an a2a:Error directly.
+// - "panic": execute panics, for driveTask's own `trap` to catch.
 // - "paced:<key>": blocks at each of three checkpoints on the Gate
 //   registered under <key> (see testutil.bal's registerGate), for
 //   deterministic live-streaming and multi-subscriber fan-out tests.
@@ -106,7 +106,7 @@ isolated class EchoAgent {
             }
         }
         // A message carrying file bytes: echo them back as text, so a test can
-        // see exactly which bytes onMessage received.
+        // see exactly which bytes execute received.
         foreach Part part in context.message.parts {
             byte[]? raw = part?.raw;
             if raw is byte[] {
@@ -231,7 +231,7 @@ function testServerStillRejectsADifferentMinorVersion() returns error? {
 // ---- inbound request bodies ----------------------------------------------
 
 // File bytes go over the wire as base64 in Part.raw. The server must decode
-// them, so onMessage receives the bytes, not a string that fails conversion
+// them, so execute receives the bytes, not a string that fails conversion
 // to byte[] (which used to be a 500 on every file part).
 @test:Config {}
 function testServerRoundTripFileBytesReachTheAgentAsBytes() returns error? {
@@ -453,7 +453,7 @@ isolated function pollUntilTerminal(Client c, string taskId) returns Task|error 
 @test:Config {}
 function testServerRoundTripContinuePausedTaskSucceeds() returns error? {
     // The happy path: "ask" pauses at TASK_STATE_INPUT_REQUIRED with no
-    // driver left running (onMessage already returned), so continuing it
+    // driver left running (execute already returned), so continuing it
     // is a clean, non-racing acquire.
     Client c = check echoClient();
     Task paused = <Task>check c->sendMessage({
@@ -1886,7 +1886,7 @@ function testServerRoundTripCancelDuringADetachedDriveNeverSendsAStaleWebhook() 
 
     gate.advanceTo(1);
     gate.awaitStep(2);
-    // The drive's own follow-up runs just after onMessage returns; a stale
+    // The drive's own follow-up runs just after execute returns; a stale
     // notification, if the bug were present, would follow within moments.
     runtime:sleep(0.5);
 
@@ -1899,7 +1899,7 @@ function testServerRoundTripCancelDuringADetachedDriveNeverSendsAStaleWebhook() 
 @test:Config {}
 function testServerRoundTripCancelClosesLiveSubscriberStream() returns error? {
     // "pause" leaves the task genuinely parked at TASK_STATE_WORKING with
-    // no driver left running (onMessage already returned) -- a
+    // no driver left running (execute already returned) -- a
     // deterministic, non-racing way to get a non-terminal task a live
     // subscriber can attach to and this test can then cancel out from
     // under it.
