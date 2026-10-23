@@ -2187,13 +2187,43 @@ isolated function reasonOf(http:Response resp) returns string?|error {
     return reason is string ? reason : ();
 }
 
+// Whether a response carries an A2A error body with a reason, as opposed to the
+// HTTP module's own error body for a path no resource matches.
+isolated function hasA2aReason(http:Response resp) returns boolean {
+    string?|error reason = reasonOf(resp);
+    return reason is string;
+}
+
+// A path no resource matches is the HTTP module's own 404, not an A2A error:
+// the binding defines a resource per operation and leaves the rest to it.
 @test:Config {}
 function testUnknownPathIs404NotFound() returns error? {
     http:Client raw = check new (serverUrl);
     http:Response resp = check raw->get("/rest/nope", {"A2A-Version": "1.0"});
     test:assertEquals(resp.statusCode, 404, "a path that is no A2A operation is not a server fault");
-    test:assertEquals(check reasonOf(resp), "METHOD_NOT_FOUND");
-    test:assertTrue(resp.getContentType().startsWith("application/a2a+json"));
+    test:assertFalse(hasA2aReason(resp), "an unknown path is the HTTP module's 404");
+}
+
+// A path that exists, called with a method it does not take, is the HTTP
+// module's 405.
+@test:Config {}
+function testKnownPathWithTheWrongMethodIs405() returns error? {
+    http:Client raw = check new (serverUrl);
+    http:Response resp = check raw->get("/rest/message:send", {"A2A-Version": "1.0"});
+    test:assertEquals(resp.statusCode, 405);
+}
+
+// A task-id segment with a suffix that is not :cancel or :subscribe reaches
+// the task route but names no operation, so it is an A2A METHOD_NOT_FOUND.
+@test:Config {}
+function testUnknownTaskVerbIs404MethodNotFound() returns error? {
+    http:Client raw = check new (serverUrl);
+    http:Response post = check raw->post("/rest/tasks/t1:pause", (), {"A2A-Version": "1.0"});
+    test:assertEquals(post.statusCode, 404);
+    test:assertEquals(check reasonOf(post), "METHOD_NOT_FOUND");
+    http:Response get = check raw->get("/rest/tasks/t1:cancel", {"A2A-Version": "1.0"});
+    test:assertEquals(get.statusCode, 404, "cancel is POST only");
+    test:assertEquals(check reasonOf(get), "METHOD_NOT_FOUND");
 }
 
 // Outside a mounted binding only the card's own path is routed; anything else
@@ -2211,48 +2241,43 @@ function testUnknownPathOutsideABindingIsAPlain404() returns error? {
 // slash in what would otherwise be the id names no A2A operation at all --
 // found because a real client's legacy fallback called GET on a `:subscribe`
 // path and hit this via a different route. Previously served as a lookup
-// for a task literally named "a/b/c" (a 404 either way, since no such task
-// exists, but the wrong reason and route).
+// for a task literally named "a/b/c". Each route now takes the id as one
+// segment, so no resource matches and the HTTP module answers 404.
 @test:Config {}
 function testTaskIdWithASlashIs404NotACrossSegmentLookup() returns error? {
     http:Client raw = check new (serverUrl);
 
     http:Response getResp = check raw->get("/rest/tasks/a/b/c", {"A2A-Version": "1.0"});
     test:assertEquals(getResp.statusCode, 404);
-    test:assertEquals(check reasonOf(getResp), "METHOD_NOT_FOUND");
+    test:assertFalse(hasA2aReason(getResp), "no route matches, so this is not a task lookup");
 
     http:Response cancelResp = check raw->post("/rest/tasks/a/b:cancel", (), {"A2A-Version": "1.0"});
     test:assertEquals(cancelResp.statusCode, 404);
-    test:assertEquals(check reasonOf(cancelResp), "METHOD_NOT_FOUND");
+    test:assertFalse(hasA2aReason(cancelResp));
 
     http:Response subscribeResp = check raw->get("/rest/tasks/a/b:subscribe", {"A2A-Version": "1.0"});
     test:assertEquals(subscribeResp.statusCode, 404);
-    test:assertEquals(check reasonOf(subscribeResp), "METHOD_NOT_FOUND");
+    test:assertFalse(hasA2aReason(subscribeResp));
 }
 
 @test:Config {}
-function testUnknownPushConfigSubRouteIs404() returns error? {
-    // The second place a path can fall through: under a task's push-config
-    // collection, with a method the collection does not offer (it has POST and
-    // GET; DELETE is only for an item). Not PUT: the HTTP layer answers that
-    // 405 itself, before the dispatcher is reached.
+function testUnknownPushConfigSubRouteIs405() returns error? {
+    // A task's push-config collection offers POST and GET; DELETE is only for
+    // an item. The path exists, so the HTTP module answers 405.
     http:Client raw = check new (serverUrl);
     http:Response resp = check raw->delete("/rest/tasks/t1/pushNotificationConfigs",
             headers = {"A2A-Version": "1.0"});
-    test:assertEquals(resp.statusCode, 404);
-    test:assertEquals(check reasonOf(resp), "METHOD_NOT_FOUND");
+    test:assertEquals(resp.statusCode, 405);
 }
 
 @test:Config {}
 function testBarePushConfigPathWithNoTaskIdIs404NotACrash() returns error? {
-    // onPushNotificationConfigs assumes a "/rest/tasks/{taskId}/pushNotificationConfigs..."
-    // shape and slices the path on that assumption (TASKS_PATH_PREFIX.length() as the
-    // start index); routing a bare "/pushNotificationConfigs" (no task id, no /tasks/
-    // prefix at all) into it took that start index past the slice's own end.
+    // The old catch-all sliced the path on a "/tasks/{taskId}/pushNotificationConfigs"
+    // assumption, and a bare "/pushNotificationConfigs" took the slice past its own end.
+    // No route matches it now.
     http:Client raw = check new (serverUrl);
     http:Response resp = check raw->get("/rest/pushNotificationConfigs", {"A2A-Version": "1.0"});
     test:assertEquals(resp.statusCode, 404, "never a legal path; must fall through cleanly, not crash the handler");
-    test:assertEquals(check reasonOf(resp), "METHOD_NOT_FOUND");
 }
 
 @test:Config {}
@@ -2283,14 +2308,44 @@ function testUnservedTenantIs400InvalidParams() returns error? {
             "that reason is for an agent's own malformed response");
 }
 
+// Every operation has a /{tenant} twin. This listener serves no tenant, so
+// each twin must reach the tenant check and answer 400, not 404.
+@test:Config {}
+function testEveryTenantRouteReachesTheTenantCheck() returns error? {
+    http:Client raw = check new (serverUrl);
+    [string, string][] routes = [
+        ["POST", "/rest/acme/message:send"], ["POST", "/rest/acme/message:stream"],
+        ["GET", "/rest/acme/extendedAgentCard"], ["GET", "/rest/acme/tasks"], ["GET", "/rest/acme/tasks/t1"],
+        ["GET", "/rest/acme/tasks/t1:subscribe"], ["POST", "/rest/acme/tasks/t1:subscribe"],
+        ["POST", "/rest/acme/tasks/t1:cancel"], ["POST", "/rest/acme/tasks/t1/pushNotificationConfigs"],
+        ["GET", "/rest/acme/tasks/t1/pushNotificationConfigs"],
+        ["GET", "/rest/acme/tasks/t1/pushNotificationConfigs/c1"],
+        ["DELETE", "/rest/acme/tasks/t1/pushNotificationConfigs/c1"]
+    ];
+    map<string> headers = {"A2A-Version": "1.0"};
+    foreach [string, string] [method, path] in routes {
+        http:Response resp;
+        if method == "GET" {
+            resp = check raw->get(path, headers);
+        } else if method == "POST" {
+            resp = check raw->post(path, {}, headers);
+        } else {
+            resp = check raw->delete(path, headers = headers);
+        }
+        test:assertEquals(resp.statusCode, 400, string `${method} ${path} must reach the tenant check`);
+        test:assertEquals(check reasonOf(resp), "INVALID_PARAMS", string `${method} ${path}`);
+    }
+}
+
 @test:Config {}
 function testUnknownRouteAndUnknownTaskStayDistinguishable() returns error? {
-    // Both are 404, but they mean different things and must say so.
+    // Both are 404, but they mean different things and must say so: only the
+    // unknown task is an A2A error.
     http:Client raw = check new (serverUrl);
     http:Response route = check raw->get("/rest/nope", {"A2A-Version": "1.0"});
     http:Response task = check raw->get("/rest/tasks/does-not-exist", {"A2A-Version": "1.0"});
     test:assertEquals(route.statusCode, 404);
     test:assertEquals(task.statusCode, 404);
-    test:assertEquals(check reasonOf(route), "METHOD_NOT_FOUND");
+    test:assertFalse(hasA2aReason(route));
     test:assertEquals(check reasonOf(task), "TASK_NOT_FOUND");
 }

@@ -278,19 +278,28 @@ function testAuthRejectedRequestNeverReachesTheAgent() returns error? {
 
 @test:Config {}
 function testAuthEveryRouteRequiresCredentials() returns error? {
-    // Each operation, and paths that do not exist: an unauthenticated caller
-    // must learn nothing, not even which routes there are.
+    // Each operation, and a tenant the agent does not serve: an unauthenticated
+    // caller learns nothing about either.
     [string, string][] routes = [
         ["GET", "/rest/tasks"], ["GET", "/rest/tasks/t1"], ["POST", "/rest/tasks/t1:cancel"], ["POST", "/rest/tasks/t1:subscribe"],
         ["POST", "/rest/message:send"], ["POST", "/rest/message:stream"],
         ["GET", "/rest/tasks/t1/pushNotificationConfigs"], ["POST", "/rest/tasks/t1/pushNotificationConfigs"],
         ["GET", "/rest/tasks/t1/pushNotificationConfigs/c1"], ["DELETE", "/rest/tasks/t1/pushNotificationConfigs/c1"],
-        ["GET", "/rest/extendedAgentCard"], ["GET", "/rest/no/such/route"], ["GET", "/rest/unknown-tenant/tasks"]
+        ["GET", "/rest/extendedAgentCard"], ["GET", "/rest/unknown-tenant/tasks"]
     ];
     foreach [string, string] [method, path] in routes {
         http:Response r = check authCall(JWT_AUTH_TEST_PORT, method, path, ());
         test:assertEquals(r.statusCode, 401, string `${method} ${path} must require authentication`);
     }
+}
+
+// A path that names no operation has no resource, so the HTTP module answers
+// 404 before authentication runs. It reveals only that the path is not one of
+// the binding's published routes.
+@test:Config {}
+function testAuthUnknownPathIs404WithoutCredentials() returns error? {
+    http:Response r = check authCall(JWT_AUTH_TEST_PORT, "GET", "/rest/no/such/route", ());
+    test:assertEquals(r.statusCode, 404);
 }
 
 // ---- scopes --------------------------------------------------------------

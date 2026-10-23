@@ -176,7 +176,8 @@ isolated function fieldViolationsOf(Error err) returns json[]? {
     return [{"field": fieldName, "description": err.message()}];
 }
 
-# Builds the error for a request to a path that is no A2A operation.
+# Builds the error for a request that names no A2A operation, such as a task
+# path whose suffix is neither `:cancel` nor `:subscribe`.
 #
 # `InternalError` carrying the JSON-RPC "method not found" code (-32601), which
 # `errorBindingFor` serves as a 404 and `toA2AErrorFromRest` already decodes for

@@ -23,16 +23,18 @@
 // client decodes. The task lifecycle itself lives in `default_handler.bal`;
 // this file is transport.
 //
-// A single catch-all resource matches every request and dispatches on the raw
-// path. The A2A paths use literal colons (`/message:send`, `/tasks/{id}:cancel`)
-// which are not ordinary path segments, so matching the raw path is simpler
-// and more faithful than trying to express them as typed resource paths.
+// Each operation is a resource at its HTTP+JSON path, and again under the
+// /{tenant} prefix the proto's additional bindings give it, so a path that
+// names no operation gets the HTTP module's own 404 (or 405 for a known path
+// and a wrong method). Two operations cannot be resource paths:
+// `/tasks/{id}:cancel` and `/tasks/{id}:subscribe` put a literal suffix after
+// a path parameter, which a resource path cannot express. They arrive at
+// `tasks/[string idAndVerb]` and are told apart by that suffix.
 //
-// This is also why operation handlers build `http:Response` directly instead
-// of returning the `http:Ok|http:BadRequest|...` status-typed unions other
-// listeners in this ecosystem use: that pattern relies on a typed resource
-// signature per operation, which the colon-paths rule out here. `jsonResponse`
-// and `toRestErrorResponse` are the substitute -- one place each that builds
+// Operation handlers build `http:Response` directly instead of returning the
+// `http:Ok|http:BadRequest|...` status-typed unions other listeners use: every
+// operation shares one error path, `toRestErrorResponse`, which maps an
+// `a2a:Error` to its status and google.rpc.Status body.
 // the response, rather than one return type per operation.
 
 import ballerina/http;
@@ -42,11 +44,25 @@ import ballerina/time;
 # The A2A protocol version this server implements.
 const A2A_PROTOCOL_VERSION = "1.0";
 
-# The task-scoped path prefix every task operation's path starts with.
-const TASKS_PATH_PREFIX = "/tasks/";
+# The operations a REST route can name. `GET_TASK_SEGMENT` and
+# `POST_TASK_SEGMENT` are the routes whose task-id segment may carry a
+# `:cancel` or `:subscribe` suffix.
+type RestOperation SEND_MESSAGE|SEND_STREAMING_MESSAGE|GET_EXTENDED_AGENT_CARD|LIST_TASKS|GET_TASK_SEGMENT
+    |POST_TASK_SEGMENT|CREATE_PUSH_CONFIG|LIST_PUSH_CONFIGS|GET_PUSH_CONFIG|DELETE_PUSH_CONFIG;
 
-# The push-notification-config collection segment under a task's path.
-const PUSH_NOTIFICATION_CONFIGS_SEGMENT = "/pushNotificationConfigs";
+# What a route answers with: a response, or a live SSE stream.
+type RestResult http:Response|stream<http:SseEvent, error?>;
+
+const SEND_MESSAGE = "SendMessage";
+const SEND_STREAMING_MESSAGE = "SendStreamingMessage";
+const GET_EXTENDED_AGENT_CARD = "GetExtendedAgentCard";
+const LIST_TASKS = "ListTasks";
+const GET_TASK_SEGMENT = "GetTaskSegment";
+const POST_TASK_SEGMENT = "PostTaskSegment";
+const CREATE_PUSH_CONFIG = "CreateTaskPushNotificationConfig";
+const LIST_PUSH_CONFIGS = "ListTaskPushNotificationConfigs";
+const GET_PUSH_CONFIG = "GetTaskPushNotificationConfig";
+const DELETE_PUSH_CONFIG = "DeleteTaskPushNotificationConfig";
 
 isolated service class RestDispatcherService {
     *http:Service;
@@ -76,40 +92,117 @@ isolated service class RestDispatcherService {
         self.validateInputModes = validateInputModes;
     }
 
-    isolated resource function get [string... path](http:Request req)
-            returns http:Response|stream<http:SseEvent, error?> {
-        return self.dispatch("GET", "/" + string:'join("/", ...path), req);
-    }
+    // ---- the operations, each at its path and again under /{tenant} ----
 
-    isolated resource function post [string... path](http:Request req)
-            returns http:Response|stream<http:SseEvent, error?> {
-        return self.dispatch("POST", "/" + string:'join("/", ...path), req);
-    }
+    isolated resource function post message\:send(http:Request req) returns RestResult =>
+        self.serve(req, (), SEND_MESSAGE);
 
-    isolated resource function delete [string... path](http:Request req)
-            returns http:Response|stream<http:SseEvent, error?> {
-        return self.dispatch("DELETE", "/" + string:'join("/", ...path), req);
-    }
+    isolated resource function post [string tenant]/message\:send(http:Request req) returns RestResult =>
+        self.serve(req, tenant, SEND_MESSAGE);
 
-    # Routes one request to the operation its method and path name, applying
-    # the tenant, version, and capability gates first.
+    isolated resource function post message\:stream(http:Request req) returns RestResult =>
+        self.serve(req, (), SEND_STREAMING_MESSAGE);
+
+    isolated resource function post [string tenant]/message\:stream(http:Request req) returns RestResult =>
+        self.serve(req, tenant, SEND_STREAMING_MESSAGE);
+
+    isolated resource function get extendedAgentCard(http:Request req) returns RestResult =>
+        self.serve(req, (), GET_EXTENDED_AGENT_CARD);
+
+    isolated resource function get [string tenant]/extendedAgentCard(http:Request req) returns RestResult =>
+        self.serve(req, tenant, GET_EXTENDED_AGENT_CARD);
+
+    isolated resource function get tasks(http:Request req) returns RestResult =>
+        self.serve(req, (), LIST_TASKS);
+
+    isolated resource function get [string tenant]/tasks(http:Request req) returns RestResult =>
+        self.serve(req, tenant, LIST_TASKS);
+
+    // GET /tasks/{id}, and GET /tasks/{id}:subscribe, which arrives here too:
+    // the proto annotates SubscribeToTask as GET, and a resource path cannot
+    // put `:subscribe` after `[string id]`.
+    isolated resource function get tasks/[string idAndVerb](http:Request req) returns RestResult =>
+        self.serve(req, (), GET_TASK_SEGMENT, idAndVerb);
+
+    isolated resource function get [string tenant]/tasks/[string idAndVerb](http:Request req) returns RestResult =>
+        self.serve(req, tenant, GET_TASK_SEGMENT, idAndVerb);
+
+    // POST /tasks/{id}:cancel and POST /tasks/{id}:subscribe.
+    isolated resource function post tasks/[string idAndVerb](http:Request req) returns RestResult =>
+        self.serve(req, (), POST_TASK_SEGMENT, idAndVerb);
+
+    isolated resource function post [string tenant]/tasks/[string idAndVerb](http:Request req) returns RestResult =>
+        self.serve(req, tenant, POST_TASK_SEGMENT, idAndVerb);
+
+    isolated resource function post tasks/[string id]/pushNotificationConfigs(http:Request req) returns RestResult =>
+        self.serve(req, (), CREATE_PUSH_CONFIG, id);
+
+    isolated resource function post [string tenant]/tasks/[string id]/pushNotificationConfigs(
+            http:Request req) returns RestResult =>
+        self.serve(req, tenant, CREATE_PUSH_CONFIG, id);
+
+    isolated resource function get tasks/[string id]/pushNotificationConfigs(http:Request req) returns RestResult =>
+        self.serve(req, (), LIST_PUSH_CONFIGS, id);
+
+    isolated resource function get [string tenant]/tasks/[string id]/pushNotificationConfigs(
+            http:Request req) returns RestResult =>
+        self.serve(req, tenant, LIST_PUSH_CONFIGS, id);
+
+    isolated resource function get tasks/[string id]/pushNotificationConfigs/[string configId](
+            http:Request req) returns RestResult =>
+        self.serve(req, (), GET_PUSH_CONFIG, id, configId);
+
+    isolated resource function get [string tenant]/tasks/[string id]/pushNotificationConfigs/[string configId](
+            http:Request req) returns RestResult =>
+        self.serve(req, tenant, GET_PUSH_CONFIG, id, configId);
+
+    isolated resource function delete tasks/[string id]/pushNotificationConfigs/[string configId](
+            http:Request req) returns RestResult =>
+        self.serve(req, (), DELETE_PUSH_CONFIG, id, configId);
+
+    isolated resource function delete [string tenant]/tasks/[string id]/pushNotificationConfigs/[string configId](
+            http:Request req) returns RestResult =>
+        self.serve(req, tenant, DELETE_PUSH_CONFIG, id, configId);
+
+    # Admits a request and runs the operation its route names.
     #
-    # + method - The HTTP method
-    # + rawPath - The request path with a leading slash, tenant prefix intact
     # + req - The HTTP request
+    # + tenant - The `/{tenant}` path segment, or `()` for the untenanted path
+    # + operation - The operation the route names
+    # + id - The task id path segment, with any `:cancel`/`:subscribe` suffix
+    # + configId - The push-notification config id path segment
     # + return - The response to send
-    private isolated function dispatch(string method, string rawPath, http:Request req)
-            returns http:Response|stream<http:SseEvent, error?> {
-        // Authentication comes before everything else, so a caller that has
-        // not proved who it is learns nothing about the server -- not even
-        // whether a path or a tenant exists (specification section 7.4).
+    private isolated function serve(http:Request req, string? tenant, RestOperation operation, string id = "",
+            string configId = "") returns RestResult {
+        Context|http:Response context = self.admit(req, tenant);
+        if context is http:Response {
+            return context;
+        }
+        http:Response|stream<http:SseEvent, error?>|Error result = self.run(operation, context, req, id, configId);
+        if result is Error {
+            return toRestErrorResponse(result);
+        }
+        return result;
+    }
+
+    # Applies the checks every operation shares, in order: authentication,
+    # the protocol version, required extensions, and the tenant.
+    #
+    # + req - The HTTP request
+    # + tenant - The `/{tenant}` path segment, or `()`
+    # + return - The caller's context, or the response refusing the request
+    private isolated function admit(http:Request req, string? tenant) returns Context|http:Response {
+        // Authentication comes first, so a caller that has not proved who it
+        // is learns nothing else about the server -- not even whether a tenant
+        // exists.
         string? identity = ();
         ListenerAuthenticator? authenticator = self.authenticator;
         if authenticator is ListenerAuthenticator {
             string|http:HeaderNotFoundError authorization = req.getHeader(AUTHORIZATION_HEADER);
             string|AuthFailure authenticated = authenticator.authenticate(authorization is string ? authorization : ());
             if authenticated is AuthFailure {
-                logAuthFailure(authenticated, method, rawPath, authorization is string ? schemeOf(authorization) : ());
+                logAuthFailure(authenticated, req.method, pathOf(req),
+                        authorization is string ? schemeOf(authorization) : ());
                 return toAuthErrorResponse(authenticated, authenticator.challengeHeaders());
             }
             identity = authenticated;
@@ -125,25 +218,24 @@ isolated service class RestDispatcherService {
             return toRestErrorResponse(extensionsError);
         }
 
-        // Strip a leading /{tenant} segment. The tenant must match the card's
-        // declared one; the untenanted form carries no tenant.
-        [string, string?]|Error routed = self.stripTenant(rawPath);
-        if routed is Error {
-            return toRestErrorResponse(routed);
+        // A tenanted path must name the tenant the card declares. Naming one
+        // the agent does not serve is the caller's mistake, so a 400 -- not
+        // InvalidAgentResponseError, which is for an agent's own malformed
+        // response and is a 500.
+        if tenant is string {
+            string? declared = declaredTenant(self.card);
+            if declared is () || declared != tenant {
+                return toRestErrorResponse(invalidParams(
+                        string `request routed under tenant "${tenant}", which the agent does not serve`));
+            }
         }
-        [string, string?] [path, tenant] = routed;
 
         // The caller as the operations see it: who authentication established,
-        // the tenant, the headers, and the stream policy. Built once per request,
-        // after the tenant is known; each operation resolves the owner itself.
+        // the tenant, the headers, and the stream policy. Each operation
+        // resolves the owner itself.
         Context context = callerContextOf(req, identity, tenant);
         context.streamTiming = self.streamTiming;
-
-        http:Response|stream<http:SseEvent, error?>|Error result = self.route(method, path, context, req);
-        if result is Error {
-            return toRestErrorResponse(result);
-        }
-        return result;
+        return context;
     }
 
     # A card with its HTTP+JSON interface URL filled in: the configured
@@ -248,130 +340,82 @@ isolated service class RestDispatcherService {
         }
     }
 
-    # Splits an optional leading /{tenant} segment off the path.
+    # Runs one operation for an admitted request.
     #
-    # The proto gives every operation a /{tenant}-prefixed additional binding.
-    # A prefixed request must carry the tenant the card declares, or it is
-    # rejected; the bare form carries no tenant.
-    #
-    # + rawPath - The request path
-    # + return - The path with any tenant prefix removed, and the tenant (or
-    #            `()`); or an error if a tenant prefix does not match the card
-    private isolated function stripTenant(string rawPath) returns [string, string?]|Error {
-        // The known operation paths all begin with one of these. "/message:"
-        // is self-delimited (its own ':' is the boundary), but "/tasks" and
-        // "/extendedAgentCard" are not: a bare startsWith check on those two
-        // also matches a tenant segment that happens to share the prefix,
-        // e.g. "/tasks-eu/message:send" -- so for those, the character right
-        // after the prefix must actually end the path or start the next
-        // segment ('/' or ':'), not continue the same word.
-        foreach string known in ["/message:", "/tasks", "/extendedAgentCard"] {
-            if !rawPath.startsWith(known) {
-                continue;
-            }
-            if known.endsWith(":") || rawPath.length() == known.length() {
-                return [rawPath, ()];
-            }
-            string next = rawPath.substring(known.length(), known.length() + 1);
-            if next == "/" || next == ":" {
-                return [rawPath, ()];
-            }
-        }
-        // Otherwise the first segment is a tenant: /{tenant}/rest...
-        int? secondSlash = rawPath.indexOf("/", 1);
-        if secondSlash is int {
-            string tenant = rawPath.substring(1, secondSlash);
-            string rest = rawPath.substring(secondSlash);
-            string? declared = declaredTenant(self.card);
-            if declared is () || declared != tenant {
-                // The caller named a tenant this agent does not serve: its
-                // own mistake, so a 400 -- not InvalidAgentResponseError, which
-                // is for an *agent's* malformed response and is a 500.
-                return invalidParams(string `request routed under tenant "${tenant}", which the agent does not serve`);
-            }
-            return [rest, tenant];
-        }
-        return [rawPath, ()];
-    }
-
-    # Dispatches a tenant-stripped path to its operation.
-    #
-    # The unary operations and the two streaming ones are wired in this
-    # release; the push-config store and the extended card are added in
-    # later changes, and an unmatched path is a 404 (`methodNotFound`).
-    #
-    # + method - The HTTP method
-    # + path - The path with no tenant prefix
+    # + operation - The operation the route names
     # + context - Who is calling, as the listener established it
     # + req - The HTTP request
+    # + id - The task id path segment, with any `:cancel`/`:subscribe` suffix
+    # + configId - The push-notification config id path segment
     # + return - The response, or an error to serialise
-    private isolated function route(string method, string path, Context context, http:Request req)
-            returns http:Response|stream<http:SseEvent, error?>|Error {
-        // The exact-match operations dispatch by [method, path] equality; the
-        // rest below need startsWith/endsWith/includes on the path, which a
-        // match pattern can't express, so they stay as guarded `if`s.
-        match [method, path] {
-            ["POST", "/message:send"] => {
+    private isolated function run(RestOperation operation, Context context, http:Request req, string id,
+            string configId) returns http:Response|stream<http:SseEvent, error?>|Error {
+        match operation {
+            SEND_MESSAGE => {
                 return self.onSendMessage(context, req);
             }
-            ["POST", "/message:stream"] => {
+            SEND_STREAMING_MESSAGE => {
                 return self.onSendStreamingMessage(context, req);
             }
-            ["GET", "/extendedAgentCard"] => {
+            GET_EXTENDED_AGENT_CARD => {
                 AgentCard supplied = check self.binding.getExtendedAgentCard(context, {tenant: context?.tenant});
                 return cardHttpResponse(self.cardWithInterfaceUrl(self.cards.extendedCard(supplied), req),
                         authenticated = true);
             }
-            ["GET", "/tasks"] => {
+            LIST_TASKS => {
                 ListTasksRequest filter = check queryToListFilter(req);
                 return taskResultResponse(check self.binding.listTasks(context, filter));
             }
+            GET_TASK_SEGMENT => {
+                // The proto's own annotation for SubscribeToTask is GET; the
+                // client sends GET first and falls back to POST on a 404, a
+                // compat workaround for servers that registered only POST.
+                if id.endsWith(":subscribe") {
+                    return self.onSubscribeToTask(id.substring(0, id.length() - ":subscribe".length()), context);
+                }
+                if id.includes(":") {
+                    return methodNotFound(string `no A2A operation at GET /tasks/${id}`);
+                }
+                int? historyLength = check queryInt(req, "historyLength");
+                return taskResultResponse(check self.binding.getTask(context, {id, historyLength}));
+            }
+            POST_TASK_SEGMENT => {
+                if id.endsWith(":cancel") {
+                    return taskResultResponse(check self.binding.cancelTask(context,
+                            {id: id.substring(0, id.length() - ":cancel".length())}));
+                }
+                if id.endsWith(":subscribe") {
+                    return self.onSubscribeToTask(id.substring(0, id.length() - ":subscribe".length()), context);
+                }
+                return methodNotFound(string `no A2A operation at POST /tasks/${id}`);
+            }
         }
 
-        if method == "POST" && path.startsWith(TASKS_PATH_PREFIX) && path.endsWith(":cancel") {
-            string id = path.substring(TASKS_PATH_PREFIX.length(), path.length() - ":cancel".length());
-            // The proto's `{id=*}` matches exactly one path segment; a
-            // slash in what would otherwise be the id means this path
-            // names no A2A operation at all, not a lookup for a task
-            // literally named "a/b".
-            if id.includes("/") {
-                return methodNotFound(string `no A2A operation at ${method} ${path}`);
+        // The four push-notification config operations. Per
+        // [specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation),
+        // capability validation applies to Create/Get/List/Delete alike, so
+        // one gate covers all four, the same way cardDeniesPushNotifications
+        // gates all four on the client side.
+        if !self.card.capabilities.pushNotifications {
+            return serverPushNotificationsUnsupportedError("push-notification-config operations");
+        }
+        match operation {
+            CREATE_PUSH_CONFIG => {
+                return self.onCreateTaskPushNotificationConfig(id, context, req);
             }
-            return taskResultResponse(check self.binding.cancelTask(context, {id}));
-        }
-        // The proto's own annotation is GET, but the client falls back to
-        // POST on a 404 -- a compat workaround for a non-reference server
-        // that only registered POST here (mirroring the reference *client*,
-        // which sends POST) -- and 404 is also what a genuinely-unknown
-        // task's TaskNotFoundError carries. Accepting POST here too means
-        // that fallback still reaches the real handler and surfaces the
-        // correct typed error, rather than a second, unrelated 404 for "no
-        // such route" masking the first.
-        if (method == "GET" || method == "POST") && path.startsWith(TASKS_PATH_PREFIX) && path.endsWith(":subscribe") {
-            string id = path.substring(TASKS_PATH_PREFIX.length(), path.length() - ":subscribe".length());
-            if id.includes("/") {
-                return methodNotFound(string `no A2A operation at ${method} ${path}`);
+            LIST_PUSH_CONFIGS => {
+                return self.onListTaskPushNotificationConfigs(id, context, req);
             }
-            return self.onSubscribeToTask(id, context);
-        }
-        // onPushNotificationConfigs assumes a "/tasks/{taskId}/pushNotificationConfigs..." shape
-        // (the only shape the spec's HTTP+JSON binding defines) and slices the path on that
-        // assumption; requiring the /tasks/ prefix here keeps a bare "/pushNotificationConfigs" --
-        // never a legal path -- from reaching that slicing at all, and falling through to the
-        // 404 below instead.
-        if path.startsWith(TASKS_PATH_PREFIX) && path.includes(PUSH_NOTIFICATION_CONFIGS_SEGMENT) {
-            return self.onPushNotificationConfigs(method, path, context, req);
-        }
-        if method == "GET" && path.startsWith(TASKS_PATH_PREFIX) && !path.includes(":")
-                && !path.includes(PUSH_NOTIFICATION_CONFIGS_SEGMENT) {
-            string id = path.substring(TASKS_PATH_PREFIX.length());
-            if id.includes("/") {
-                return methodNotFound(string `no A2A operation at ${method} ${path}`);
+            GET_PUSH_CONFIG => {
+                TaskPushNotificationConfig config =
+                        check self.binding.getTaskPushNotificationConfig(context, {taskId: id, id: configId});
+                return jsonResponse(config.toJson());
             }
-            int? historyLength = check queryInt(req, "historyLength");
-            return taskResultResponse(check self.binding.getTask(context, {id, historyLength}));
+            _ => {
+                check self.binding.deleteTaskPushNotificationConfig(context, {taskId: id, id: configId});
+                return jsonResponse({});
+            }
         }
-        return methodNotFound(string `no A2A operation at ${method} ${path}`);
     }
 
     # Refuses an inline push-notification config when the service defines no
@@ -456,50 +500,6 @@ isolated service class RestDispatcherService {
         stream<StreamResponse, Error?> events = check self.binding.subscribeToTask(context, {id});
         stream<http:SseEvent, error?> framed = new (new SseFramingGenerator(events));
         return framed;
-    }
-
-    # Routes one of the four push-notification config operations, all under
-    # `/tasks/{taskId}/pushNotificationConfigs[/{id}]`: POST (create) and GET
-    # (list) on the collection path; GET (get) and DELETE (delete) on the
-    # item path.
-    #
-    # + method - The HTTP method
-    # + path - The path with no tenant prefix, already known to contain
-    #          "/pushNotificationConfigs"
-    # + context - Who is calling, as the listener established it
-    # + req - The HTTP request
-    # + return - The response, or an error to serialise
-    private isolated function onPushNotificationConfigs(string method, string path, Context context,
-            http:Request req)
-            returns http:Response|Error {
-        // Per [specification section 3.3.4](https://a2a-protocol.org/latest/specification/#334-capability-validation), capability validation applies
-        // to Create/Get/List/Delete explicitly -- all four route through
-        // here, so one gate covers all four, the same way
-        // cardDeniesPushNotifications gates all four on the client side.
-        if !self.card.capabilities.pushNotifications {
-            return serverPushNotificationsUnsupportedError("push-notification-config operations");
-        }
-
-        int marker = <int>path.indexOf(PUSH_NOTIFICATION_CONFIGS_SEGMENT);
-        string taskId = path.substring(TASKS_PATH_PREFIX.length(), marker);
-        string rest = path.substring(marker + PUSH_NOTIFICATION_CONFIGS_SEGMENT.length());
-
-        if rest == "" && method == "POST" {
-            return self.onCreateTaskPushNotificationConfig(taskId, context, req);
-        }
-        if rest == "" && method == "GET" {
-            return self.onListTaskPushNotificationConfigs(taskId, context, req);
-        }
-        if rest.startsWith("/") && method == "GET" {
-            return jsonResponse(
-                    (check self.binding.getTaskPushNotificationConfig(context, {taskId, id: rest.substring(1)}))
-                        .toJson());
-        }
-        if rest.startsWith("/") && method == "DELETE" {
-            check self.binding.deleteTaskPushNotificationConfig(context, {taskId, id: rest.substring(1)});
-            return jsonResponse({});
-        }
-        return methodNotFound(string `no A2A operation at ${method} ${path}`);
     }
 
     # Handles POST /tasks/{taskId}/pushNotificationConfigs: decode the
@@ -660,6 +660,16 @@ class SseFramingGenerator {
     public isolated function close() returns error? {
         return self.events.close();
     }
+}
+
+# The request's path without its query string, for logging.
+#
+# + req - The HTTP request
+# + return - The path
+isolated function pathOf(http:Request req) returns string {
+    string raw = req.rawPath;
+    int? query = raw.indexOf("?");
+    return query is int ? raw.substring(0, query) : raw;
 }
 
 # Logs a request that authentication refused, per
