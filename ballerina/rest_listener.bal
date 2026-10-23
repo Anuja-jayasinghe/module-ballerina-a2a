@@ -31,8 +31,9 @@ public type RestListenerConfiguration record {|
     # optionally requiring `scopes`. The entries are alternatives; a request
     # that any one accepts is admitted.
     #
-    # When set, every request except the public card
-    # (`/.well-known/agent-card.json`) must authenticate, per [specification
+    # When set, every A2A operation must authenticate (the public card at
+    # `/.well-known/agent-card.json` stays open, and a path the listener does
+    # not serve is a plain 404), per [specification
     # section 7.4](https://a2a-protocol.org/latest/specification/#74-server-authentication-responsibilities):
     # a missing or invalid credential is a 401 with a `WWW-Authenticate`
     # challenge, and a valid one that lacks a required scope is a 403. Unset

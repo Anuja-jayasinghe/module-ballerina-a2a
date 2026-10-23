@@ -580,7 +580,7 @@ The four kinds of entry are JWT validation (`jwtValidatorConfig`), OAuth2 token 
 
 With `auth` set:
 
-- every request except the public card at `/.well-known/agent-card.json` must authenticate, including requests for paths that do not exist, so an unauthenticated caller learns nothing about the server;
+- every A2A operation must authenticate; only the public card at `/.well-known/agent-card.json` is open. A path the listener does not serve is a plain `404` without a credential check, since the A2A paths are public in the specification anyway. Authentication comes before every other check, so an unauthenticated caller learns nothing about tasks or tenants;
 - a missing or invalid credential is a `401` with a `WWW-Authenticate` challenge for each scheme the entries accept, and a valid one that lacks a required scope is a `403`. Both carry the same `google.rpc.Status` body as any other error, with `ErrorInfo.reason` `UNAUTHENTICATED` or `PERMISSION_DENIED`, and a message that names no resource;
 - the rejection happens before the agent runs and before a stream opens, so a rejected `sendStreamingMessage` is a plain `401`, not an event stream;
 - the authenticated identity is the task owner. That is a JWT's `sub` (or `username`) claim, the introspected `sub` (or `username`), or the Basic username. A caller sees only its own tasks ([section 7.6](#76-task-ownership-and-authorization-scoping)). A credential that validates but names no one is rejected, since there is no owner to scope to. An `ownerResolver` configured on the handler takes precedence.
