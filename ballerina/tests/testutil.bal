@@ -747,7 +747,7 @@ public isolated function gateFor(string key) returns Gate? {
 // ---- test services ---------------------------------------------------------
 //
 // Each delegates the operations it defines to a DefaultHandler and returns its
-// card from onGetAgentCard, so a test chooses the card per instance.
+// card from handleGetAgentCard, so a test chooses the card per instance.
 
 // Every operation but the extended card.
 isolated service class FullService {

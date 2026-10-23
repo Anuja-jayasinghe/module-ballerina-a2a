@@ -25,7 +25,7 @@
 // for the push-notification operations), which is what the specification asks
 // of a capability the agent does not offer.
 //
-// The names below, such as `onGetTask`, are this package's internal names for
+// The names below, such as `handleGetTask`, are this package's internal names for
 // the operations; the service itself declares resources, not functions with
 // these names.
 
@@ -39,18 +39,18 @@ type ResourceRoute record {|
 |};
 
 final readonly & map<ResourceRoute> OPERATION_ROUTES = {
-    "onSendMessage": {accessor: "post", path: "message:send"},
-    "onSendStreamingMessage": {accessor: "post", path: "message:stream"},
-    "onSubscribeToTask": {accessor: "get", path: "tasks/*/subscribe"},
-    "onGetTask": {accessor: "get", path: "tasks/*"},
-    "onListTasks": {accessor: "get", path: "tasks"},
-    "onCancelTask": {accessor: "post", path: "tasks/*/cancel"},
-    "onCreateTaskPushNotificationConfig": {accessor: "post", path: "tasks/*/pushNotificationConfigs"},
-    "onGetTaskPushNotificationConfig": {accessor: "get", path: "tasks/*/pushNotificationConfigs/*"},
-    "onListTaskPushNotificationConfigs": {accessor: "get", path: "tasks/*/pushNotificationConfigs"},
-    "onDeleteTaskPushNotificationConfig": {accessor: "delete", path: "tasks/*/pushNotificationConfigs/*"},
-    "onGetExtendedAgentCard": {accessor: "get", path: "extendedAgentCard"},
-    "onGetAgentCard": {accessor: "get", path: "agentCard"}
+    "handleSendMessage": {accessor: "post", path: "message:send"},
+    "handleSendStreamingMessage": {accessor: "post", path: "message:stream"},
+    "handleSubscribeToTask": {accessor: "get", path: "tasks/*/subscribe"},
+    "handleGetTask": {accessor: "get", path: "tasks/*"},
+    "handleListTasks": {accessor: "get", path: "tasks"},
+    "handleCancelTask": {accessor: "post", path: "tasks/*/cancel"},
+    "handleCreateTaskPushNotificationConfig": {accessor: "post", path: "tasks/*/pushNotificationConfigs"},
+    "handleGetTaskPushNotificationConfig": {accessor: "get", path: "tasks/*/pushNotificationConfigs/*"},
+    "handleListTaskPushNotificationConfigs": {accessor: "get", path: "tasks/*/pushNotificationConfigs"},
+    "handleDeleteTaskPushNotificationConfig": {accessor: "delete", path: "tasks/*/pushNotificationConfigs/*"},
+    "handleGetExtendedAgentCard": {accessor: "get", path: "extendedAgentCard"},
+    "handleGetAgentCard": {accessor: "get", path: "agentCard"}
 };
 
 # The error for an operation the service does not define.
@@ -92,76 +92,76 @@ isolated class OperationBinding {
         self.defined = names.cloneReadOnly();
     }
 
-    # + operationName - An operation's internal name such as `onGetTask`
+    # + operationName - An operation's internal name such as `handleGetTask`
     # + return - Whether the service defines it
     isolated function isDefined(string operationName) returns boolean => self.defined.indexOf(operationName) is int;
 
     isolated function sendMessage(Context context, SendMessageRequest request) returns Task|Message|Error {
-        anydata|stream<StreamResponse, Error?> result = check self.run("onSendMessage", [], context, request);
+        anydata|stream<StreamResponse, Error?> result = check self.run("handleSendMessage", [], context, request);
         return <Task|Message>result;
     }
 
     isolated function sendStreamingMessage(Context context, SendMessageRequest request)
             returns stream<StreamResponse, Error?>|Error {
-        anydata|stream<StreamResponse, Error?> result = check self.run("onSendStreamingMessage", [], context, request);
+        anydata|stream<StreamResponse, Error?> result = check self.run("handleSendStreamingMessage", [], context, request);
         return <stream<StreamResponse, Error?>>result;
     }
 
     isolated function subscribeToTask(Context context, SubscribeToTaskRequest request)
             returns stream<StreamResponse, Error?>|Error {
-        anydata|stream<StreamResponse, Error?> result = check self.run("onSubscribeToTask", [request.id], context, request);
+        anydata|stream<StreamResponse, Error?> result = check self.run("handleSubscribeToTask", [request.id], context, request);
         return <stream<StreamResponse, Error?>>result;
     }
 
     isolated function getTask(Context context, GetTaskRequest request) returns Task|Error {
-        anydata|stream<StreamResponse, Error?> result = check self.run("onGetTask", [request.id], context, request);
+        anydata|stream<StreamResponse, Error?> result = check self.run("handleGetTask", [request.id], context, request);
         return <Task>result;
     }
 
     isolated function listTasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
-        anydata|stream<StreamResponse, Error?> result = check self.run("onListTasks", [], context, request);
+        anydata|stream<StreamResponse, Error?> result = check self.run("handleListTasks", [], context, request);
         return <ListTasksResponse>result;
     }
 
     isolated function cancelTask(Context context, CancelTaskRequest request) returns Task|Error {
-        anydata|stream<StreamResponse, Error?> result = check self.run("onCancelTask", [request.id], context, request);
+        anydata|stream<StreamResponse, Error?> result = check self.run("handleCancelTask", [request.id], context, request);
         return <Task>result;
     }
 
     isolated function createTaskPushNotificationConfig(Context context, TaskPushNotificationConfig request)
             returns TaskPushNotificationConfig|Error {
         anydata|stream<StreamResponse, Error?> result =
-            check self.run("onCreateTaskPushNotificationConfig", [request.taskId ?: ""], context, request);
+            check self.run("handleCreateTaskPushNotificationConfig", [request.taskId ?: ""], context, request);
         return <TaskPushNotificationConfig>result;
     }
 
     isolated function getTaskPushNotificationConfig(Context context, GetTaskPushNotificationConfigRequest request)
             returns TaskPushNotificationConfig|Error {
         anydata|stream<StreamResponse, Error?> result =
-            check self.run("onGetTaskPushNotificationConfig", [request.taskId, request.id], context, request);
+            check self.run("handleGetTaskPushNotificationConfig", [request.taskId, request.id], context, request);
         return <TaskPushNotificationConfig>result;
     }
 
     isolated function listTaskPushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request)
             returns ListTaskPushNotificationConfigsResponse|Error {
         anydata|stream<StreamResponse, Error?> result =
-            check self.run("onListTaskPushNotificationConfigs", [request.taskId], context, request);
+            check self.run("handleListTaskPushNotificationConfigs", [request.taskId], context, request);
         return <ListTaskPushNotificationConfigsResponse>result;
     }
 
     isolated function deleteTaskPushNotificationConfig(Context context, DeleteTaskPushNotificationConfigRequest request)
             returns Error? {
-        _ = check self.run("onDeleteTaskPushNotificationConfig", [request.taskId, request.id], context, request);
+        _ = check self.run("handleDeleteTaskPushNotificationConfig", [request.taskId, request.id], context, request);
     }
 
     isolated function getExtendedAgentCard(Context context, GetExtendedAgentCardRequest request)
             returns AgentCard|Error {
-        anydata|stream<StreamResponse, Error?> result = check self.run("onGetExtendedAgentCard", [], context, request);
+        anydata|stream<StreamResponse, Error?> result = check self.run("handleGetExtendedAgentCard", [], context, request);
         return <AgentCard>result;
     }
 
     isolated function getAgentCard() returns AgentCard|Error {
-        anydata|stream<StreamResponse, Error?> result = check self.run("onGetAgentCard", [], {headers: {}}, ());
+        anydata|stream<StreamResponse, Error?> result = check self.run("handleGetAgentCard", [], {headers: {}}, ());
         return <AgentCard>result;
     }
 
@@ -192,14 +192,14 @@ isolated class OperationBinding {
 
     private isolated function undefinedError(string operation) returns Error {
         match operation {
-            "onSendStreamingMessage"|"onSubscribeToTask" => {
+            "handleSendStreamingMessage"|"handleSubscribeToTask" => {
                 return serverStreamingUnsupportedError(operation);
             }
-            "onCreateTaskPushNotificationConfig"|"onGetTaskPushNotificationConfig"|
-            "onListTaskPushNotificationConfigs"|"onDeleteTaskPushNotificationConfig" => {
+            "handleCreateTaskPushNotificationConfig"|"handleGetTaskPushNotificationConfig"|
+            "handleListTaskPushNotificationConfigs"|"handleDeleteTaskPushNotificationConfig" => {
                 return serverPushNotificationsUnsupportedError(operation);
             }
-            "onGetExtendedAgentCard" => {
+            "handleGetExtendedAgentCard" => {
                 return extendedAgentCardUnsupportedError();
             }
         }

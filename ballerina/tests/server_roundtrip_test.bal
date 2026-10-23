@@ -1309,7 +1309,7 @@ function testServerRoundTripGetExtendedAgentCardWhenConfigured() returns error? 
 @test:Config {}
 function testExtendedCardNotDefinedByTheServiceIsUnsupported() {
     // Direct unit test, not a wire round trip: a service without
-    // onGetExtendedAgentCard declares capabilities.extendedAgentCard false, so
+    // handleGetExtendedAgentCard declares capabilities.extendedAgentCard false, so
     // the Client already refuses client-side with the same
     // UnsupportedOperationError this asserts, per the test above. The binding's
     // stand-in for an undefined operation is still the code that answers a

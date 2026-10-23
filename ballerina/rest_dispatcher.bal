@@ -352,10 +352,10 @@ isolated service class RestDispatcherService {
             string configId) returns http:Response|stream<http:SseEvent, error?>|Error {
         match operation {
             SEND_MESSAGE => {
-                return self.onSendMessage(context, req);
+                return self.handleSendMessage(context, req);
             }
             SEND_STREAMING_MESSAGE => {
-                return self.onSendStreamingMessage(context, req);
+                return self.handleSendStreamingMessage(context, req);
             }
             GET_EXTENDED_AGENT_CARD => {
                 AgentCard supplied = check self.binding.getExtendedAgentCard(context, {tenant: context?.tenant});
@@ -371,7 +371,7 @@ isolated service class RestDispatcherService {
                 // client sends GET first and falls back to POST on a 404, a
                 // compat workaround for servers that registered only POST.
                 if id.endsWith(":subscribe") {
-                    return self.onSubscribeToTask(id.substring(0, id.length() - ":subscribe".length()), context);
+                    return self.handleSubscribeToTask(id.substring(0, id.length() - ":subscribe".length()), context);
                 }
                 if id.includes(":") {
                     return methodNotFound(string `no A2A operation at GET /tasks/${id}`);
@@ -385,7 +385,7 @@ isolated service class RestDispatcherService {
                             {id: id.substring(0, id.length() - ":cancel".length())}));
                 }
                 if id.endsWith(":subscribe") {
-                    return self.onSubscribeToTask(id.substring(0, id.length() - ":subscribe".length()), context);
+                    return self.handleSubscribeToTask(id.substring(0, id.length() - ":subscribe".length()), context);
                 }
                 return methodNotFound(string `no A2A operation at POST /tasks/${id}`);
             }
@@ -401,10 +401,10 @@ isolated service class RestDispatcherService {
         }
         match operation {
             CREATE_PUSH_CONFIG => {
-                return self.onCreateTaskPushNotificationConfig(id, context, req);
+                return self.handleCreateTaskPushNotificationConfig(id, context, req);
             }
             LIST_PUSH_CONFIGS => {
-                return self.onListTaskPushNotificationConfigs(id, context, req);
+                return self.handleListTaskPushNotificationConfigs(id, context, req);
             }
             GET_PUSH_CONFIG => {
                 TaskPushNotificationConfig config =
@@ -427,7 +427,7 @@ isolated service class RestDispatcherService {
     # + return - A `PushNotificationNotSupportedError`, or `()`
     private isolated function checkInlinePushConfig(SendMessageRequest request, string operation) returns Error? {
         if request?.configuration?.taskPushNotificationConfig is TaskPushNotificationConfig
-                && !self.binding.isDefined("onCreateTaskPushNotificationConfig") {
+                && !self.binding.isDefined("handleCreateTaskPushNotificationConfig") {
             return serverPushNotificationsUnsupportedError(operation);
         }
     }
@@ -449,7 +449,7 @@ isolated service class RestDispatcherService {
     # + context - Who is calling, as the listener established it
     # + req - The HTTP request
     # + return - The response, or an error
-    private isolated function onSendMessage(Context context, http:Request req)
+    private isolated function handleSendMessage(Context context, http:Request req)
             returns http:Response|Error {
         SendMessageRequest request = check decodeSendMessageRequest(req.getJsonPayload());
         check self.checkInputModes(request);
@@ -471,7 +471,7 @@ isolated service class RestDispatcherService {
     # + context - Who is calling, as the listener established it
     # + req - The HTTP request
     # + return - The SSE stream, or an error
-    private isolated function onSendStreamingMessage(Context context, http:Request req)
+    private isolated function handleSendStreamingMessage(Context context, http:Request req)
             returns stream<http:SseEvent, error?>|Error {
         if !self.card.capabilities.streaming {
             return serverStreamingUnsupportedError("sendStreamingMessage");
@@ -492,7 +492,7 @@ isolated service class RestDispatcherService {
     # + id - The task id
     # + context - Who is calling, as the listener established it
     # + return - The SSE stream, or an error
-    private isolated function onSubscribeToTask(string id, Context context)
+    private isolated function handleSubscribeToTask(string id, Context context)
             returns stream<http:SseEvent, error?>|Error {
         if !self.card.capabilities.streaming {
             return serverStreamingUnsupportedError("subscribeToTask");
@@ -509,7 +509,7 @@ isolated service class RestDispatcherService {
     # + context - Who is calling, as the listener established it
     # + req - The HTTP request
     # + return - The stored config, or an error
-    private isolated function onCreateTaskPushNotificationConfig(string taskId, Context context,
+    private isolated function handleCreateTaskPushNotificationConfig(string taskId, Context context,
             http:Request req)
             returns http:Response|Error {
         TaskPushNotificationConfig request = check decodePushConfigRequest(req.getJsonPayload(), taskId);
@@ -523,7 +523,7 @@ isolated service class RestDispatcherService {
     # + context - Who is calling, as the listener established it
     # + req - The HTTP request
     # + return - The page of configs, or an error
-    private isolated function onListTaskPushNotificationConfigs(string taskId, Context context,
+    private isolated function handleListTaskPushNotificationConfigs(string taskId, Context context,
             http:Request req)
             returns http:Response|Error {
         ListTaskPushNotificationConfigsRequest request = {taskId};

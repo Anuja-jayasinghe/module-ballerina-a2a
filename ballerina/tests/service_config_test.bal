@@ -140,7 +140,7 @@ function testAttachRefusesAServiceWithNoCardOrTwo() returns error? {
 function testAttachRefusesAnErroringCardFunction() returns error? {
     RestListener agentListener = check attachRulesListener();
     error? rejected = agentListener.attach(new FailingCardService(), "rest");
-    test:assertTrue(rejected is InternalError, "onGetAgentCard failing must fail the attach, not serve a blank card");
+    test:assertTrue(rejected is InternalError, "handleGetAgentCard failing must fail the attach, not serve a blank card");
     test:assertTrue((<error>rejected).message().includes("card unavailable"), (<error>rejected).message());
 }
 
@@ -262,21 +262,21 @@ function testAnOperationMayOmitTheContext() returns error? {
     Message|Task sent = check viaPlain->sendMessage({
         message: {messageId: "m-plain", role: ROLE_USER, parts: [{text: "no context needed"}]}
     });
-    test:assertTrue(sent is Message, "the plain-form onSendMessage answered");
+    test:assertTrue(sent is Message, "the plain-form handleSendMessage answered");
     test:assertEquals((<Message>sent).parts[0].text, "plain: no context needed");
 
     Task|Error missing = viaPlain->getTask({id: "anything"});
-    test:assertTrue(missing is TaskNotFoundError, "the plain-form onGetTask answered");
+    test:assertTrue(missing is TaskNotFoundError, "the plain-form handleGetTask answered");
 }
 
 @test:Config {}
 function testBothFormsAreDetectedAsDefined() {
     OperationBinding withContext = new (new FullService(attachRulesHandler(), authTestCard));
     OperationBinding plain = new (new PlainFormService());
-    test:assertTrue(withContext.isDefined("onGetTask"));
-    test:assertTrue(plain.isDefined("onGetTask"));
-    test:assertTrue(plain.isDefined("onSendMessage"));
-    test:assertFalse(plain.isDefined("onListTasks"));
+    test:assertTrue(withContext.isDefined("handleGetTask"));
+    test:assertTrue(plain.isDefined("handleGetTask"));
+    test:assertTrue(plain.isDefined("handleSendMessage"));
+    test:assertFalse(plain.isDefined("handleListTasks"));
 }
 
 @test:Config {}

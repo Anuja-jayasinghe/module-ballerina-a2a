@@ -51,16 +51,16 @@ isolated function serviceConfigurationOf(Service a2aService) returns ServiceConf
 # + binding - The attached service
 # + return - The capabilities, or an `a2a:InternalError` naming what is missing
 isolated function capabilitiesOf(OperationBinding binding) returns Capabilities|Error {
-    if !binding.isDefined("onSendMessage") {
+    if !binding.isDefined("handleSendMessage") {
         string msg = "an a2a:Service must define the `post message\\:send` resource";
         return error InternalError(msg, message = msg);
     }
-    boolean streaming = check wholeGroup(binding, "streaming", ["onSendStreamingMessage", "onSubscribeToTask"]);
+    boolean streaming = check wholeGroup(binding, "streaming", ["handleSendStreamingMessage", "handleSubscribeToTask"]);
     boolean push = check wholeGroup(binding, "push notifications", [
-        "onCreateTaskPushNotificationConfig", "onGetTaskPushNotificationConfig",
-        "onListTaskPushNotificationConfigs", "onDeleteTaskPushNotificationConfig"
+        "handleCreateTaskPushNotificationConfig", "handleGetTaskPushNotificationConfig",
+        "handleListTaskPushNotificationConfigs", "handleDeleteTaskPushNotificationConfig"
     ]);
-    return {streaming, pushNotifications: push, extendedAgentCard: binding.isDefined("onGetExtendedAgentCard")};
+    return {streaming, pushNotifications: push, extendedAgentCard: binding.isDefined("handleGetExtendedAgentCard")};
 }
 
 # Whether a group of operations that must come together is defined, all or none.
@@ -84,7 +84,7 @@ isolated function wholeGroup(OperationBinding binding, string capability, string
 
 # Names the resources that serve a set of operations, for an error message.
 #
-# + operations - Operation names such as `onGetTask`
+# + operations - Operation names such as `handleGetTask`
 # + return - The resources, e.g. `get tasks/*`, comma separated
 isolated function resourcesOf(string[] operations) returns string {
     string[] resources = [];
@@ -104,7 +104,7 @@ isolated function resourcesOf(string[] operations) returns string {
 #            two, or the `get agentCard` resource failed
 isolated function agentCardOf(Service a2aService, OperationBinding binding) returns AgentCard|Error {
     ServiceConfiguration? config = serviceConfigurationOf(a2aService);
-    boolean hasFunction = binding.isDefined("onGetAgentCard");
+    boolean hasFunction = binding.isDefined("handleGetAgentCard");
     if config is ServiceConfiguration && hasFunction {
         string msg = "an a2a:Service declares its agent card with @a2a:ServiceConfig or a get agentCard resource, not both";
         return error InternalError(msg, message = msg);
