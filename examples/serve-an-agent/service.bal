@@ -53,55 +53,55 @@ isolated service on new a2a:RestListener(listenerPort) {
 
     isolated resource function post message\:send(a2a:Context context, a2a:SendMessageRequest request)
             returns a2a:Task|a2a:Message|a2a:Error {
-        return self.handler.onSendMessage(context, request);
+        return self.handler.handleSendMessage(context, request);
     }
 
     isolated resource function post message\:stream(a2a:Context context, a2a:SendMessageRequest request)
             returns stream<a2a:StreamResponse, a2a:Error?>|a2a:Error {
-        return self.handler.onSendStreamingMessage(context, request);
+        return self.handler.handleSendStreamingMessage(context, request);
     }
 
     isolated resource function get tasks/[string id]/subscribe(a2a:Context context, a2a:SubscribeToTaskRequest request)
             returns stream<a2a:StreamResponse, a2a:Error?>|a2a:Error {
-        return self.handler.onSubscribeToTask(context, request);
+        return self.handler.handleSubscribeToTask(context, request);
     }
 
     isolated resource function get tasks/[string id](a2a:Context context, a2a:GetTaskRequest request)
             returns a2a:Task|a2a:Error {
-        return self.handler.onGetTask(context, request);
+        return self.handler.handleGetTask(context, request);
     }
 
     isolated resource function get tasks(a2a:Context context, a2a:ListTasksRequest request)
             returns a2a:ListTasksResponse|a2a:Error {
-        return self.handler.onListTasks(context, request);
+        return self.handler.handleListTasks(context, request);
     }
 
     isolated resource function post tasks/[string id]/cancel(a2a:Context context, a2a:CancelTaskRequest request)
             returns a2a:Task|a2a:Error {
-        return self.handler.onCancelTask(context, request);
+        return self.handler.handleCancelTask(context, request);
     }
 
     isolated resource function post tasks/[string id]/pushNotificationConfigs(a2a:Context context,
             a2a:TaskPushNotificationConfig request)
             returns a2a:TaskPushNotificationConfig|a2a:Error {
-        return self.handler.onCreateTaskPushNotificationConfig(context, request);
+        return self.handler.handleCreateTaskPushNotificationConfig(context, request);
     }
 
     isolated resource function get tasks/[string id]/pushNotificationConfigs/[string configId](a2a:Context context,
             a2a:GetTaskPushNotificationConfigRequest request)
             returns a2a:TaskPushNotificationConfig|a2a:Error {
-        return self.handler.onGetTaskPushNotificationConfig(context, request);
+        return self.handler.handleGetTaskPushNotificationConfig(context, request);
     }
 
     isolated resource function get tasks/[string id]/pushNotificationConfigs(a2a:Context context,
             a2a:ListTaskPushNotificationConfigsRequest request)
             returns a2a:ListTaskPushNotificationConfigsResponse|a2a:Error {
-        return self.handler.onListTaskPushNotificationConfigs(context, request);
+        return self.handler.handleListTaskPushNotificationConfigs(context, request);
     }
 
     isolated resource function delete tasks/[string id]/pushNotificationConfigs/[string configId](a2a:Context context,
             a2a:DeleteTaskPushNotificationConfigRequest request)
             returns a2a:Error? {
-        return self.handler.onDeleteTaskPushNotificationConfig(context, request);
+        return self.handler.handleDeleteTaskPushNotificationConfig(context, request);
     }
 }

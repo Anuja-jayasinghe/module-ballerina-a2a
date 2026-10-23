@@ -32,8 +32,8 @@ import ballerina/lang.runtime;
 import ballerina/log;
 import ballerina/uuid;
 
-# What `DefaultHandler.resolveTaskForSend` hands `onSendMessage`/
-# `onSendStreamingMessage`: the task id and context id to drive, its
+# What `DefaultHandler.resolveTaskForSend` hands `handleSendMessage`/
+# `handleSendStreamingMessage`: the task id and context id to drive, its
 # current stored state to seed the `TaskUpdater` with, and whether this
 # is a fresh task (as opposed to a continuation of one that already
 # existed before this call).
@@ -57,7 +57,7 @@ public type DefaultHandlerConfiguration record {|
     # that does not survive a restart; supply an `a2a:TaskStore` of your own
     # for durable storage.
     TaskStore taskStore = new InMemoryTaskStore();
-    # The richer card `onGetExtendedAgentCard` returns to callers who request
+    # The richer card `handleGetExtendedAgentCard` returns to callers who request
     # it. Unset, the operation fails with `a2a:ExtendedAgentCardNotConfiguredError`.
     # The listener derives the capabilities and interfaces of what is served.
     #
@@ -98,7 +98,7 @@ public type StreamTiming record {|
 #
 #     isolated resource function get tasks/[string id](a2a:Context context, a2a:GetTaskRequest request)
 #             returns a2a:Task|a2a:Error {
-#         return self.handler.onGetTask(context, request);
+#         return self.handler.handleGetTask(context, request);
 #     }
 #     // ...
 # }
@@ -117,7 +117,7 @@ public isolated class DefaultHandler {
     private final TaskOwnerResolver? ownerResolver;
     private final PushNotificationSender pushSender;
     private final EventBroadcasterRegistry registry;
-    // The updater of each task being driven right now, so `onCancelTask` can
+    // The updater of each task being driven right now, so `handleCancelTask` can
     // write its cancellation through it.
     private map<TaskUpdater> drivers = {};
     // The stored updates of each task still waiting to reach its webhooks,
@@ -166,7 +166,7 @@ public isolated class DefaultHandler {
     # + request - The decoded send request
     # + context - Who is calling, and the tenant the request was routed under
     # + return - The finished Task or a direct Message, or an error
-    public isolated function onSendMessage(Context context, SendMessageRequest request)
+    public isolated function handleSendMessage(Context context, SendMessageRequest request)
             returns Task|Message|Error {
         string? tenant = context?.tenant;
         string? owner = check self.resolveOwner(context);
@@ -369,7 +369,7 @@ public isolated class DefaultHandler {
 
     # Runs `execute` for one task, detached from the request that started
     # it -- so a slow agent never blocks the strand a separate
-    # `onSubscribeToTask` call needs to attach to the same task's live events.
+    # `handleSubscribeToTask` call needs to attach to the same task's live events.
     #
     # A panic in agent code is trapped rather than left to propagate: with
     # `returnImmediately: true`, or once a subscriber is watching live,
@@ -389,17 +389,17 @@ public isolated class DefaultHandler {
     #                 broadcasts a `Task`-lifecycle event, so a direct
     #                 `Message` reply (which never touches `updater`) is
     #                 pushed here instead, the one event a live
-    #                 `onSendStreamingMessage` subscriber must still see
+    #                 `handleSendStreamingMessage` subscriber must still see
     # + isNewTask - Whether `taskId` was freshly seeded for this call
     #               (as opposed to an existing task being continued) --
     #               controls whether a direct `Message` reply removes it
     #               from the store, below
-    # + returnImmediately - Whether `onSendMessage`'s caller already
+    # + returnImmediately - Whether `handleSendMessage`'s caller already
     #                        received this task's id before `execute`
     #                        even started -- if so, a direct `Message`
     #                        reply can no longer make the task disappear
     #                        as if it never existed (see below). Always
-    #                        `false` from `onSendStreamingMessage`, which
+    #                        `false` from `handleSendStreamingMessage`, which
     #                        the specification says this configuration
     #                        field has no effect on: a live subscriber
     #                        only ever learns a taskId once the seed is
@@ -528,8 +528,8 @@ public isolated class DefaultHandler {
     }
 
     # Runs `driveTask` to completion and closes out its driving turn, all
-    # on one detached strand -- used both by `onSendStreamingMessage`
-    # (always) and by `onSendMessage` when `returnImmediately: true`, the
+    # on one detached strand -- used both by `handleSendStreamingMessage`
+    # (always) and by `handleSendMessage` when `returnImmediately: true`, the
     # two cases where nothing is synchronously waiting on `driveTask`'s
     # own result, so there is nothing to hand it back to directly.
     # `driveTask` runs directly rather than through its own further
@@ -542,7 +542,7 @@ public isolated class DefaultHandler {
     # Order matters: the broadcaster only closes (or ends with an error)
     # once every live subscriber has already received whatever
     # `TaskStatusUpdateEvent` the store write produced, so a stream never
-    # ends silently one event short of what a concurrent `onGetTask` would
+    # ends silently one event short of what a concurrent `handleGetTask` would
     # already show.
     #
     # + taskId - The task being driven
@@ -600,11 +600,11 @@ public isolated class DefaultHandler {
         return stored is Task ? stored : result;
     }
 
-    # Handles sendStreamingMessage: like `onSendMessage`, but returns a live
+    # Handles sendStreamingMessage: like `handleSendMessage`, but returns a live
     # stream of every event the task produces, for the caller to frame as
     # SSE.
     #
-    # `driveTask` runs detached, exactly as `onSendMessage`'s does; the
+    # `driveTask` runs detached, exactly as `handleSendMessage`'s does; the
     # difference is this returns as soon as a tap is attached to the
     # task's broadcaster, instead of waiting for `driveTask` to finish.
     # Per specification 3.1.2, what reaches the wire is: the just-seeded
@@ -618,7 +618,7 @@ public isolated class DefaultHandler {
     # + context - Who is calling, the tenant the request was routed under, and
     #             the listener's idle-timeout and keep-alive policy for the stream
     # + return - A live stream of the task's events, or an error
-    public isolated function onSendStreamingMessage(Context context, SendMessageRequest request)
+    public isolated function handleSendStreamingMessage(Context context, SendMessageRequest request)
             returns stream<StreamResponse, Error?>|Error {
         string? tenant = context?.tenant;
         string? owner = check self.resolveOwner(context);
@@ -677,7 +677,7 @@ public isolated class DefaultHandler {
     #
     # Per specification 3.1.6, a task already in a terminal state cannot be
     # subscribed to -- `UnsupportedOperationError`, the same rejection
-    # `onSendMessage`/`onSendStreamingMessage` give a message aimed at one.
+    # `handleSendMessage`/`handleSendStreamingMessage` give a message aimed at one.
     # (This corrects this server's previous behavior, which answered a
     # one-event snapshot instead; see the changelog.) Otherwise, the tap
     # attaches to the task's broadcaster *before* the snapshot actually
@@ -695,7 +695,7 @@ public isolated class DefaultHandler {
     #             policy for the stream
     # + return - The live stream, a TaskNotFoundError, or an
     #            UnsupportedOperationError if the task is already terminal
-    public isolated function onSubscribeToTask(Context context, SubscribeToTaskRequest request)
+    public isolated function handleSubscribeToTask(Context context, SubscribeToTaskRequest request)
             returns stream<StreamResponse, Error?>|Error {
         string? owner = check self.resolveOwner(context);
         StreamTiming timing = context?.streamTiming ?: {};
@@ -755,7 +755,7 @@ public isolated class DefaultHandler {
     # + request - The task identifier and optional history length
     # + context - Who is calling, as the listener established it
     # + return - The task, or a TaskNotFoundError
-    public isolated function onGetTask(Context context, GetTaskRequest request) returns Task|Error {
+    public isolated function handleGetTask(Context context, GetTaskRequest request) returns Task|Error {
         string? owner = check self.resolveOwner(context);
         Task? task = check self.store.get(request.id, owner);
         if task is () {
@@ -772,7 +772,7 @@ public isolated class DefaultHandler {
     # + request - The task identifier
     # + context - Who is calling, as the listener established it
     # + return - The canceled task, or an error
-    public isolated function onCancelTask(Context context, CancelTaskRequest request) returns Task|Error {
+    public isolated function handleCancelTask(Context context, CancelTaskRequest request) returns Task|Error {
         string? owner = check self.resolveOwner(context);
         Task? task = check self.store.get(request.id, owner);
         if task is () {
@@ -830,7 +830,7 @@ public isolated class DefaultHandler {
     # + return - The canceled task, or an error
     private isolated function cancelIdle(string taskId, string? owner, EventBroadcaster broadcaster)
             returns Task|Error {
-        // Read again under the claim: the copy `onCancelTask` checked may have
+        // Read again under the claim: the copy `handleCancelTask` checked may have
         // been replaced by a turn that has since finished.
         Task|Error canceled = self.writeCancellation(taskId, owner);
         if canceled is Error {
@@ -867,7 +867,7 @@ public isolated class DefaultHandler {
         return task;
     }
 
-    # Records the updater driving a task, for `onCancelTask`.
+    # Records the updater driving a task, for `handleCancelTask`.
     #
     # + taskId - The task being driven
     # + updater - Its updater
@@ -893,7 +893,7 @@ public isolated class DefaultHandler {
     # + request - The filter and pagination parameters
     # + context - Who is calling, as the listener established it
     # + return - A page of tasks
-    public isolated function onListTasks(Context context, ListTasksRequest request)
+    public isolated function handleListTasks(Context context, ListTasksRequest request)
             returns ListTasksResponse|Error {
         string? owner = check self.resolveOwner(context);
         return self.store.list(request, owner);
@@ -909,7 +909,7 @@ public isolated class DefaultHandler {
     # + return - The stored config, with `id` filled in, or a
     #            TaskNotFoundError if `taskId` names no task visible to
     #            `owner`
-    public isolated function onCreateTaskPushNotificationConfig(Context context,
+    public isolated function handleCreateTaskPushNotificationConfig(Context context,
             TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
         string? owner = check self.resolveOwner(context);
         check validatePushConfigId(request, "id");
@@ -926,8 +926,8 @@ public isolated class DefaultHandler {
     }
 
     # Registers a config against a task already known to exist. Shared by
-    # `onCreateTaskPushNotificationConfig` (after its own taskId-existence
-    # check) and `onSendMessage`/`onSendStreamingMessage`'s inline
+    # `handleCreateTaskPushNotificationConfig` (after its own taskId-existence
+    # check) and `handleSendMessage`/`handleSendStreamingMessage`'s inline
     # `SendMessageConfiguration.taskPushNotificationConfig` registration --
     # the seed `store.put` immediately above each call site already
     # establishes the task exists, so neither needs the check again.
@@ -966,7 +966,7 @@ public isolated class DefaultHandler {
     # + context - Who is calling, as the listener established it
     # + return - The config, or a TaskNotFoundError if either id is unknown,
     #            or the task is not visible to `owner`
-    public isolated function onGetTaskPushNotificationConfig(Context context,
+    public isolated function handleGetTaskPushNotificationConfig(Context context,
             GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
         string? owner = check self.resolveOwner(context);
         Task? task = check self.store.get(request.taskId, owner);
@@ -997,7 +997,7 @@ public isolated class DefaultHandler {
     # + context - Who is calling, as the listener established it
     # + return - Every config registered for the task, or an empty page if
     #            the task is not visible to `owner`
-    public isolated function onListTaskPushNotificationConfigs(Context context,
+    public isolated function handleListTaskPushNotificationConfigs(Context context,
             ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
         string? owner = check self.resolveOwner(context);
         Task? task = check self.store.get(request.taskId, owner);
@@ -1024,14 +1024,14 @@ public isolated class DefaultHandler {
 
     # Handles deleteTaskPushNotificationConfig. Idempotent per [specification section 3.1.10](https://a2a-protocol.org/latest/specification/#3110-delete-push-notification-config):
     # deleting an unknown config is not an error -- and, for the same
-    # [section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping) reasoning as `onListTaskPushNotificationConfigs`,
+    # [section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping) reasoning as `handleListTaskPushNotificationConfigs`,
     # neither is deleting on a task that exists but is not visible to
     # `owner`; both are a silent no-op, never distinguished from each other.
     #
     # + request - The parent task id and the config's own id
     # + context - Who is calling, as the listener established it
     # + return - Nil; always succeeds
-    public isolated function onDeleteTaskPushNotificationConfig(Context context,
+    public isolated function handleDeleteTaskPushNotificationConfig(Context context,
             DeleteTaskPushNotificationConfigRequest request) returns Error? {
         string? owner = check self.resolveOwner(context);
         Task? task = check self.store.get(request.taskId, owner);
@@ -1054,7 +1054,7 @@ public isolated class DefaultHandler {
     # + context - Who is calling; the listener has already authenticated them
     # + return - The extended card, or an `a2a:ExtendedAgentCardNotConfiguredError`
     #            if none was configured
-    public isolated function onGetExtendedAgentCard(Context context, GetExtendedAgentCardRequest request)
+    public isolated function handleGetExtendedAgentCard(Context context, GetExtendedAgentCardRequest request)
             returns AgentCard|Error {
         AgentCard? extended = self.extendedAgentCard;
         if extended is () {
@@ -1066,7 +1066,7 @@ public isolated class DefaultHandler {
 
     # Queues a stored update of a task for its webhooks. Called for every
     # update the store takes: by the task's `TaskUpdater`, while it still
-    # holds its write lock, and by `onCancelTask` for a task no driver is
+    # holds its write lock, and by `handleCancelTask` for a task no driver is
     # running. Updates are queued in the order they were stored.
     #
     # One strand per task delivers them, oldest first, so a webhook never
@@ -1218,7 +1218,7 @@ isolated function resultStopped(Task|Message|Error result, boolean isNewTask) re
     return true;
 }
 
-// How long `onCancelTask` waits for a send that has just taken a task's driver
+// How long `handleCancelTask` waits for a send that has just taken a task's driver
 // claim to register its updater: 200 tries, 10 milliseconds apart.
 const int CANCEL_CLAIM_ATTEMPTS = 200;
 const decimal CANCEL_CLAIM_RETRY_SECONDS = 0.01;
