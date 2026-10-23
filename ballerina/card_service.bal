@@ -34,10 +34,12 @@ isolated class CardRegistry {
     # + mountPath - The path it is mounted at
     # + return - An `a2a:InternalError` if the card differs or the path is taken
     isolated function add(AgentCard served, string protocolBinding, string mountPath) returns Error? {
+        json servedWithoutInterfaces = withoutInterfaces(served).toJson();
         lock {
             AgentCard? existing = self.card;
-            if existing is AgentCard && existing.toJson() != served.toJson() {
-                string msg = "every a2a:Service attached to one a2a:RestListener must declare the same agent card";
+            if existing is AgentCard && withoutInterfaces(existing).toJson() != servedWithoutInterfaces {
+                string msg = "every a2a:Service attached to one http:Listener must declare the same agent card and define the same "
+                    + "capabilities (streaming, push notifications, extended card)";
                 return error InternalError(msg, message = msg);
             }
             foreach string[] binding in self.bindings {
@@ -80,6 +82,74 @@ isolated class CardRegistry {
             copy.supportedInterfaces = interfaces;
             return copy.clone();
         }
+    }
+}
+
+# A card with its interface list emptied, for comparing two services' cards
+# whose interfaces differ only in the binding their listener speaks.
+#
+# + card - The card
+# + return - A copy without `supportedInterfaces` entries
+isolated function withoutInterfaces(AgentCard card) returns AgentCard {
+    AgentCard copy = {...card.clone()};
+    copy.supportedInterfaces = [];
+    return copy;
+}
+
+// Listeners built on one `http:Listener` publish one card between them, so the
+// registry and the card service are kept per `http:Listener`: whichever
+// listener attaches first creates and mounts them, the others only add their
+// interface.
+isolated [http:Listener, CardRegistry, CardService][] sharedCardStates = [];
+
+# Finds the card registry of an `http:Listener`, creating it and mounting its
+# card service on first use.
+#
+# The card service is created and mounted under the lock that records it, so a
+# concurrent attach sees either no card state or one whose card service is
+# mounted, never one that is about to fail to mount. A card service that fails
+# to mount is not recorded, so the next attach tries again.
+#
+# + httpListener - The listener the cards are served on
+# + interfaceScheme - The scheme the listener serves
+# + publicUrl - The configured public URL, if any
+# + return - The registry, or the error mounting the card service
+isolated function cardRegistryFor(http:Listener httpListener, string interfaceScheme, string? publicUrl)
+        returns CardRegistry|error {
+    lock {
+        foreach [http:Listener, CardRegistry, CardService] [existingListener, registry, _] in sharedCardStates {
+            if existingListener === httpListener {
+                return registry;
+            }
+        }
+        CardRegistry registry = new;
+        CardService cardService = new (registry, interfaceScheme, publicUrl);
+        error? mounted = httpListener.attach(cardService);
+        if mounted is error {
+            return mounted;
+        }
+        sharedCardStates.push([httpListener, registry, cardService]);
+        return registry;
+    }
+}
+
+# Takes an interface off the card served on an `http:Listener`. A no-op when no
+# A2A listener has attached on it, so a detach never creates card state.
+#
+# + httpListener - The listener the cards are served on
+# + mountPath - The interface's mount path
+isolated function removeCardBinding(http:Listener httpListener, string mountPath) {
+    CardRegistry? found = ();
+    lock {
+        foreach [http:Listener, CardRegistry, CardService] [existingListener, registry, _] in sharedCardStates {
+            if existingListener === httpListener {
+                found = registry;
+                break;
+            }
+        }
+    }
+    if found is CardRegistry {
+        found.remove(mountPath);
     }
 }
 

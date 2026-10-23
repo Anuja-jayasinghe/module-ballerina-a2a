@@ -163,10 +163,7 @@ public isolated class RestListener {
     private final string interfaceScheme;
     private final string? publicUrl;
     private final boolean validateInputModes;
-    // The cards of the services attached so far; one agent per listener.
-    private final CardRegistry registry = new;
     private AttachedService[] attached = [];
-    private CardService? cardService = ();
 
     # Creates a RestListener.
     #
@@ -250,27 +247,13 @@ public isolated class RestListener {
         AgentCard & readonly served = cards.publicCard(supplied).cloneReadOnly();
         RestDispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
                 self.interfaceScheme, self.publicUrl, self.streamTiming, mountPath, self.validateInputModes);
-        error? cardResult = ();
-        lock {
-            check self.registry.add(served, HTTP_JSON, mountPath);
-            // Created and mounted under the same lock, so a concurrent attach
-            // sees either no card service or a mounted one, never one that is
-            // about to fail to mount.
-            if self.cardService is () {
-                CardService created = new (self.registry, self.interfaceScheme, self.publicUrl);
-                cardResult = self.httpListener.attach(created);
-                if cardResult is () {
-                    self.cardService = created;
-                }
-            }
-            if cardResult is () {
-                self.attached.push({agentService: a2aService, dispatcher: dispatcherService, mountPath});
-            } else {
-                self.registry.remove(mountPath);
-            }
+        CardRegistry|error registry = cardRegistryFor(self.httpListener, self.interfaceScheme, self.publicUrl);
+        if registry is error {
+            return wrapTransportError(registry);
         }
-        if cardResult is error {
-            return wrapTransportError(cardResult);
+        check registry.add(served, HTTP_JSON, mountPath);
+        lock {
+            self.attached.push({agentService: a2aService, dispatcher: dispatcherService, mountPath});
         }
         error? result = self.httpListener.attach(dispatcherService, mountPath);
         if result is error {
@@ -290,7 +273,7 @@ public isolated class RestListener {
             foreach int i in 0 ..< self.attached.length() {
                 if self.attached[i].agentService === a2aService {
                     dispatcherService = self.attached[i].dispatcher;
-                    self.registry.remove(self.attached[i].mountPath);
+                    removeCardBinding(self.httpListener, self.attached[i].mountPath);
                     _ = self.attached.remove(i);
                     break;
                 }
@@ -312,7 +295,7 @@ public isolated class RestListener {
     # + mountPath - The path it was being attached at
     private isolated function forget(Service a2aService, string mountPath) {
         lock {
-            self.registry.remove(mountPath);
+            removeCardBinding(self.httpListener, mountPath);
             foreach int i in 0 ..< self.attached.length() {
                 if self.attached[i].agentService === a2aService {
                     _ = self.attached.remove(i);
