@@ -237,6 +237,9 @@ isolated function isDisallowedIpLiteral(string host) returns boolean {
     // folded into one 16-bit number: 169*256+254 = 43518). A strict
     // 4-octet-only check lets all of these connect while believing it had
     // blocked the same address written the usual way.
+    if isAmbiguousNumericIPv4(host) {
+        return true;
+    }
     int[]? v4 = parseIPv4Numeric(host);
     if v4 is int[] {
         return isDisallowedIPv4Octets(v4);
@@ -474,11 +477,11 @@ isolated function parseIPv4(string host) returns int[]? {
 # rule, confirmed against `java.net.InetAddress.getByName` (what a
 # JVM-based HTTP client resolves a host through): "127.1" -> 127.0.0.1,
 # "10.1" -> 10.0.0.1, "2130706433" -> 127.0.0.1, "169.254.43518" ->
-# 169.254.169.254. Hex (`0x7f...`) and full octal (`017700000001`) forms
-# are not accepted by that same resolver, so they need no handling here;
-# a leading zero on a decimal part is decimal, not octal (`0177.0.0.1` ->
-# 177.0.0.1), matching `int:fromString`'s own behaviour, relied on below
-# instead of hand-rolling digit validation.
+# 169.254.169.254. A leading zero on a decimal part is read as decimal
+# here (`0177.0.0.1` -> 177.0.0.1), as `int:fromString` and the JVM read it.
+# A C resolver's `inet_aton` reads it as octal, and also accepts hex
+# (`0x7f.1`), so `isAmbiguousNumericIPv4` refuses both forms before this
+# parser sees them.
 #
 # + host - The candidate host string
 # + return - The four octets, or `()` if `host` is not a valid literal in
@@ -532,6 +535,62 @@ isolated function parseIPv4Numeric(string host) returns int[]? {
         result.push((lastValue >> ((trailingOctets - 1 - i) * 8)) & 0xff);
     }
     return result;
+}
+
+# Whether a host is an IPv4 address in a form that resolvers disagree on: every
+# dot-separated part is a number, and at least one is hex (`0x7f`) or a
+# multi-digit decimal with a leading zero (`0177`).
+#
+# The JVM reads `0177.0.0.1` as 177.0.0.1 and refuses hex, but a C resolver's
+# `inet_aton` reads both `0177.0.0.1` and `0x7f.1` as 127.0.0.1. A webhook URL
+# never needs either form, so the check fails closed on them rather than
+# depending on which resolver a deployment ends up using.
+#
+# + host - The lowercased host, brackets and port already stripped
+# + return - Whether the host is an ambiguous numeric IPv4 address
+isolated function isAmbiguousNumericIPv4(string host) returns boolean {
+    string[] parts = [];
+    string remaining = host;
+    while true {
+        int? dotIdx = remaining.indexOf(".");
+        if dotIdx is () {
+            parts.push(remaining);
+            break;
+        }
+        parts.push(remaining.substring(0, dotIdx));
+        remaining = remaining.substring(dotIdx + 1);
+    }
+    if parts.length() > 4 {
+        return false;
+    }
+    boolean ambiguous = false;
+    foreach string part in parts {
+        if part.startsWith("0x") {
+            if !allCharsIn(part.substring(2), "0123456789abcdef") {
+                return false;
+            }
+            ambiguous = true;
+        } else if part.length() > 0 && allCharsIn(part, "0123456789") {
+            if part.length() > 1 && part.startsWith("0") {
+                ambiguous = true;
+            }
+        } else {
+            return false;
+        }
+    }
+    return ambiguous;
+}
+
+# + value - The string to check
+# + allowed - The characters it may contain
+# + return - Whether every character of `value` is in `allowed`
+isolated function allCharsIn(string value, string allowed) returns boolean {
+    foreach string:Char c in value {
+        if !allowed.includes(c) {
+            return false;
+        }
+    }
+    return true;
 }
 
 # Builds the typed error for a rejected webhook URL.

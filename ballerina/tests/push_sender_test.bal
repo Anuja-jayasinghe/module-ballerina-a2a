@@ -36,6 +36,11 @@ isolated function urlValidationCases() returns [string, boolean][] => [
     // A legitimate address in one of the short numbers-and-dots forms must still be allowed --
     // the parser isn't a blanket rejection of anything short. 16909060 is 1.2.3.4.
     ["http://16909060/hook", true],
+    // A hostname whose labels are not all numbers is not caught by the hex and leading-zero
+    // check, even when a label starts with "0x" or "0".
+    ["http://0x.example.com/hook", true],
+    ["http://0day.example.com/hook", true],
+    ["http://deadbeef.example.com/hook", true],
     // Rejected: scheme.
     ["ftp://example.com/", false],
     ["example.com/webhook", false],
@@ -60,6 +65,15 @@ isolated function urlValidationCases() returns [string, boolean][] => [
     ["http://10.1/hook", false], // 10.0.0.1
     ["http://2130706433/hook", false], // 127.0.0.1, as one 32-bit decimal
     ["http://169.254.43518/hook", false], // 169.254.169.254, the cloud metadata address
+    // Rejected: IPv4 in a hex or leading-zero form. The JVM reads `0177.0.0.1` as 177.0.0.1
+    // and refuses hex, but a C resolver's inet_aton reads every one of these as 127.0.0.1,
+    // so they fail closed whichever resolver a deployment uses.
+    ["http://0177.0.0.1/hook", false],
+    ["http://0x7f.1/hook", false],
+    ["http://0x7f000001/hook", false],
+    ["http://0x7f.0.0.1/hook", false],
+    ["http://017700000001/hook", false],
+    ["http://08.8.8.8/hook", false], // a leading zero is refused even when the address would be public
     // Rejected: IPv6, compressed and full forms.
     ["http://[::1]:8080/hook", false],
     ["http://[0:0:0:0:0:0:0:1]/hook", false], // ::1, written out in full
